@@ -26,6 +26,8 @@ export interface Toast {
 export const PANEL_MIN = 300;
 export const PANEL_MAX = 520;
 export const PANEL_DEFAULT = 360;
+// Below this width the nav rail starts collapsed and the agent panel becomes an overlay sheet.
+export const NARROW_QUERY = '(max-width: 899px)';
 
 interface UIState {
   theme: ThemeSetting;
@@ -33,8 +35,10 @@ interface UIState {
   toggleAppearance: () => void;
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
+  // Effective state: below the breakpoint the rail is always collapsed until opened, and then it overlays.
   navCollapsed: boolean;
   setNavCollapsed: (collapsed: boolean) => void;
+  navNarrow: boolean;
   panelWidth: number;
   setPanelWidth: (width: number) => void;
   panelCollapsed: boolean;
@@ -64,7 +68,11 @@ let toastCounter = 0;
 export function UIProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeSetting>(readTheme);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [navCollapsed, setNavCollapsedState] = useState(() => readBoolean('agentcrm.nav.collapsed', false));
+  const navNarrow = useMediaQuery(NARROW_QUERY);
+  // The stored choice only applies at 900px and wider. Below that the rail starts collapsed on every visit.
+  const [navPreference, setNavPreference] = useState(() => readBoolean('agentcrm.nav.collapsed', false));
+  const [navNarrowOpen, setNavNarrowOpen] = useState(false);
+  const navCollapsed = navNarrow ? !navNarrowOpen : navPreference;
   const [panelWidth, setPanelWidthState] = useState(() =>
     readNumber('agentcrm.panel.width', PANEL_DEFAULT, PANEL_MIN, PANEL_MAX),
   );
@@ -89,10 +97,21 @@ export function UIProvider({ children }: { children: ReactNode }) {
     setTheme(effectiveDark ? 'light' : 'dark');
   }, [theme, setTheme]);
 
-  const setNavCollapsed = useCallback((collapsed: boolean) => {
-    setNavCollapsedState(collapsed);
-    writeStorage('agentcrm.nav.collapsed', String(collapsed));
-  }, []);
+  useEffect(() => {
+    setNavNarrowOpen(false);
+  }, [navNarrow]);
+
+  const setNavCollapsed = useCallback(
+    (collapsed: boolean) => {
+      if (navNarrow) {
+        setNavNarrowOpen(!collapsed);
+        return;
+      }
+      setNavPreference(collapsed);
+      writeStorage('agentcrm.nav.collapsed', String(collapsed));
+    },
+    [navNarrow],
+  );
 
   const setPanelWidth = useCallback((width: number) => {
     const clamped = Math.min(PANEL_MAX, Math.max(PANEL_MIN, Math.round(width)));
@@ -139,6 +158,7 @@ export function UIProvider({ children }: { children: ReactNode }) {
       setPaletteOpen,
       navCollapsed,
       setNavCollapsed,
+      navNarrow,
       panelWidth,
       setPanelWidth,
       panelCollapsed,
@@ -158,6 +178,7 @@ export function UIProvider({ children }: { children: ReactNode }) {
       paletteOpen,
       navCollapsed,
       setNavCollapsed,
+      navNarrow,
       panelWidth,
       setPanelWidth,
       panelCollapsed,

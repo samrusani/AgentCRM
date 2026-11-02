@@ -1,8 +1,9 @@
+import { useEffect } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useWorkspace } from '../api/hooks';
 import { useServerEvents } from '../api/events';
 import { Icon, type IconName } from '../components/Icons';
-import { useMediaQuery, useUI } from '../lib/ui';
+import { NARROW_QUERY, useMediaQuery, useUI } from '../lib/ui';
 import { AgentPanel } from './AgentPanel';
 import { CommandPalette } from './CommandPalette';
 
@@ -13,13 +14,26 @@ const DESTINATIONS: Array<{ to: string; label: string; icon: IconName }> = [
   { to: '/research', label: 'Research', icon: 'research' },
 ];
 
-function NavItem({ to, label, icon, collapsed }: { to: string; label: string; icon: IconName; collapsed: boolean }) {
+function NavItem({
+  to,
+  label,
+  icon,
+  collapsed,
+  onNavigate,
+}: {
+  to: string;
+  label: string;
+  icon: IconName;
+  collapsed: boolean;
+  onNavigate?: () => void;
+}) {
   return (
     <NavLink
       to={to}
       className={({ isActive }) => `nav__link${isActive ? ' is-active' : ''}`}
       title={collapsed ? label : undefined}
       aria-label={collapsed ? label : undefined}
+      onClick={onNavigate}
     >
       <Icon name={icon} />
       {collapsed ? null : <span>{label}</span>}
@@ -28,37 +42,53 @@ function NavItem({ to, label, icon, collapsed }: { to: string; label: string; ic
 }
 
 function NavRail() {
-  const { navCollapsed, setNavCollapsed } = useUI();
+  const { navCollapsed, setNavCollapsed, navNarrow } = useUI();
+  const overlay = navNarrow && !navCollapsed;
+  // After picking a destination in the overlay, put the rail away so the content is visible.
+  const closeOverlay = overlay ? () => setNavCollapsed(true) : undefined;
+
+  useEffect(() => {
+    if (!overlay) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) setNavCollapsed(true);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [overlay, setNavCollapsed]);
+
   return (
-    <nav className="nav" aria-label="Main" data-collapsed={navCollapsed}>
-      <div className="nav__top">
-        {navCollapsed ? null : <span className="nav__brand">AgentCRM</span>}
-        <button
-          type="button"
-          className="icon-btn"
-          onClick={() => setNavCollapsed(!navCollapsed)}
-          aria-label={navCollapsed ? 'Expand navigation' : 'Collapse navigation'}
-          aria-expanded={!navCollapsed}
-        >
-          <Icon name={navCollapsed ? 'chevronRight' : 'chevronLeft'} />
-        </button>
-      </div>
-      <div className="nav__links">
-        {DESTINATIONS.map((item) => (
-          <NavItem key={item.to} {...item} collapsed={navCollapsed} />
-        ))}
-      </div>
-      <div className="nav__bottom">
-        <NavItem to="/settings" label="Settings" icon="settings" collapsed={navCollapsed} />
-      </div>
-    </nav>
+    <div className="nav-slot">
+      {overlay ? <div className="scrim scrim--nav" onClick={() => setNavCollapsed(true)} aria-hidden="true" /> : null}
+      <nav className="nav" aria-label="Main" data-collapsed={navCollapsed} data-overlay={overlay}>
+        <div className="nav__top">
+          {navCollapsed ? null : <span className="nav__brand">AgentCRM</span>}
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => setNavCollapsed(!navCollapsed)}
+            aria-label={navCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+            aria-expanded={!navCollapsed}
+          >
+            <Icon name={navCollapsed ? 'chevronRight' : 'chevronLeft'} />
+          </button>
+        </div>
+        <div className="nav__links">
+          {DESTINATIONS.map((item) => (
+            <NavItem key={item.to} {...item} collapsed={navCollapsed} onNavigate={closeOverlay} />
+          ))}
+        </div>
+        <div className="nav__bottom">
+          <NavItem to="/settings" label="Settings" icon="settings" collapsed={navCollapsed} onNavigate={closeOverlay} />
+        </div>
+      </nav>
+    </div>
   );
 }
 
 function Header() {
   const workspace = useWorkspace();
   const { setPaletteOpen, panelCollapsed, setPanelCollapsed, panelSheetOpen, setPanelSheetOpen } = useUI();
-  const narrow = useMediaQuery('(max-width: 899px)');
+  const narrow = useMediaQuery(NARROW_QUERY);
   const panelOpen = narrow ? panelSheetOpen : !panelCollapsed;
   const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
 

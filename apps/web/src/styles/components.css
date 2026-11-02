@@ -340,8 +340,9 @@ textarea.input {
   z-index: 10;
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
   width: 480px;
-  max-width: 100%;
+  max-width: min(100%, 100vw);
   background: var(--surface);
   border-left: 1px solid var(--line);
   animation: sheet-in var(--duration) var(--ease);
@@ -358,6 +359,7 @@ textarea.input {
 }
 .sheet--wide {
   width: 720px;
+  max-width: min(100%, 100vw);
 }
 .sheet__header {
   display: flex;
@@ -585,6 +587,8 @@ textarea.input {
 
 /* Approval card */
 .approval {
+  box-sizing: border-box;
+  max-width: 100%;
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line));
   border-radius: var(--radius-lg);
@@ -613,6 +617,7 @@ textarea.input {
 }
 .approval__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 10px;
 }
@@ -777,6 +782,8 @@ textarea.input {
   }
 }
 .run-card {
+  box-sizing: border-box;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: 2px;

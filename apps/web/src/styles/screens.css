@@ -21,6 +21,9 @@
 }
 
 /* Nav rail */
+.nav-slot {
+  display: contents;
+}
 .nav {
   flex: none;
   width: var(--nav-width);
@@ -151,14 +154,34 @@
   right: 0;
   bottom: 0;
   z-index: 50;
+  height: auto;
   width: min(420px, 100vw);
-  animation: sheet-in var(--duration) var(--ease);
+  max-width: 100vw;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  box-shadow: -8px 0 24px color-mix(in srgb, var(--ink) 14%, transparent);
 }
 .scrim {
   position: fixed;
   inset: 0;
   z-index: 45;
   background: color-mix(in srgb, var(--ink) 28%, transparent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .panel--overlay {
+    animation: panel-overlay-in var(--duration) var(--ease);
+  }
+  .scrim {
+    animation: fade-in var(--duration) var(--ease);
+  }
+}
+@keyframes panel-overlay-in {
+  from {
+    transform: translateX(16px);
+  }
+  to {
+    transform: none;
+  }
 }
 .panel__resize {
   position: absolute;
@@ -445,6 +468,8 @@
   padding: 4px 2px;
 }
 .card {
+  box-sizing: border-box;
+  max-width: 100%;
   padding: 8px 8px 8px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
@@ -566,6 +591,24 @@
 }
 
 @media (max-width: 899px) {
+  /* The rail holds a 56px slot and an expanded rail overlays the content instead of squeezing it. */
+  .nav-slot {
+    display: block;
+    position: relative;
+    flex: none;
+    width: var(--nav-width-collapsed);
+  }
+  .nav {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 46;
+  }
+  .nav[data-overlay='true'] {
+    width: var(--nav-width);
+    box-shadow: 8px 0 24px color-mix(in srgb, var(--ink) 14%, transparent);
+  }
   .toasts {
     left: 12px;
   }

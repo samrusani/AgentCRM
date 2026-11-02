@@ -8,7 +8,7 @@ import { Icon } from '../components/Icons';
 import { LiveRun } from '../components/ledger';
 import { isRunActive } from '../lib/format';
 import { formatUsd, modelName } from '../lib/models';
-import { PANEL_MAX, PANEL_MIN, useMediaQuery, useUI } from '../lib/ui';
+import { NARROW_QUERY, PANEL_MAX, PANEL_MIN, useMediaQuery, useUI } from '../lib/ui';
 
 interface ChatItem {
   id: number;
@@ -355,7 +355,7 @@ function StatusDot() {
 }
 
 export function AgentPanel() {
-  const narrow = useMediaQuery('(max-width: 899px)');
+  const narrow = useMediaQuery(NARROW_QUERY);
   const { panelWidth, setPanelWidth, panelCollapsed, setPanelCollapsed, panelSheetOpen, setPanelSheetOpen } = useUI();
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const dragging = useRef(false);
