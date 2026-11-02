@@ -1,0 +1,22 @@
+{
+  "name": "agentcrm",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A local first, open source CRM built for agent workflows",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "setup": "npm install --no-audit --no-fund && npm install --prefix apps/server --no-audit --no-fund && npm install --prefix apps/web --no-audit --no-fund",
+    "dev": "concurrently -n server,web -c blue,green \"npm run dev --prefix apps/server\" \"npm run dev --prefix apps/web\"",
+    "seed": "npm run seed --prefix apps/server",
+    "build": "npm run build --prefix apps/server && npm run build --prefix apps/web",
+    "test": "npm run test --prefix apps/server",
+    "doctor": "npm run doctor --prefix apps/server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

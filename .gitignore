@@ -1,0 +1,27 @@
+# Dependencies and build output
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Local data and environment
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.env
+.env.*
+!.env.example
+
+# Internal working notes, never published
+wiki/
+
+# Local tool config
+.claude/
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+*.log
