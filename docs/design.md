@@ -55,6 +55,7 @@ The viridian accent is the product's color identity. Amber is reserved for exact
 ```
 
 - Nav rail: 208px, collapsible to 56px icon rail. Destinations: Today, Relationships, Pipeline, Research. Settings pinned at the bottom. Active item gets accent text and a 2px accent bar on the left edge, no filled pill.
+- Settings layout: sectioned, never one long page. A 168px sub navigation on the left lists General, Model providers, Connectors, Qualification, and Suppressions, each its own route under /settings. The active item gets accent text on an accent tint pill. A section whose configuration needs attention shows a small amber dot in the sub navigation. Below 900px the sub navigation becomes a horizontal strip above the content that scrolls sideways. Links elsewhere in the app point at the specific section (for example /settings/models from a model attention notice).
 - Header: 48px, contains workspace name, global search field that opens the command palette (cmd k or ctrl k), and the agent panel toggle.
 - Agent panel: right side, default 360px, drag to resize between 300 and 520, collapses to a 28px edge tab that keeps a status dot (accent pulse while a run is active, amber when an approval waits). State persists in localStorage. Below 900px viewport width it becomes an overlay sheet.
 - Content is left aligned, full width, no centered max width column. Tables run edge to edge of the content area with a hairline under the header row only; row separation comes from 1px `--line` rules, no zebra striping.

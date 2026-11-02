@@ -3,7 +3,11 @@ import { EmptyState } from './components/common';
 import { Pipeline } from './screens/Pipeline';
 import { Relationships } from './screens/Relationships';
 import { Research } from './screens/Research';
-import { Settings } from './screens/Settings';
+import { ConnectorSettings } from './screens/ConnectorSettings';
+import { ModelProviderSettings } from './screens/ModelProviderSettings';
+import { QualificationSettings } from './screens/QualificationSettings';
+import { GeneralSettings, Settings } from './screens/Settings';
+import { SuppressionSettings } from './screens/SuppressionSettings';
 import { Today } from './screens/Today';
 import { AppShell } from './shell/AppShell';
 
@@ -16,7 +20,14 @@ export function App() {
         <Route path="/relationships" element={<Relationships />} />
         <Route path="/pipeline" element={<Pipeline />} />
         <Route path="/research" element={<Research />} />
-        <Route path="/settings" element={<Settings />} />
+        <Route path="/settings" element={<Settings />}>
+          <Route index element={<Navigate to="/settings/general" replace />} />
+          <Route path="general" element={<GeneralSettings />} />
+          <Route path="models" element={<ModelProviderSettings />} />
+          <Route path="connectors" element={<ConnectorSettings />} />
+          <Route path="qualification" element={<QualificationSettings />} />
+          <Route path="suppressions" element={<SuppressionSettings />} />
+        </Route>
         <Route
           path="*"
           element={

@@ -60,7 +60,7 @@ export function PrepareToSend({
         <p className="muted" id={noteId}>
           {blocked.message}{' '}
           {blocked.settingsLink ? (
-            <Link className="link" to="/settings">
+            <Link className="link" to="/settings/connectors">
               Open Settings
             </Link>
           ) : null}

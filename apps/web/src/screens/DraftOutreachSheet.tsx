@@ -82,7 +82,7 @@ export function DraftOutreachSheet({
         <div className="state">
           <p className="state__body">
             {attention} No drafts can be written until it is fixed.{' '}
-            <Link className="link" to="/settings">
+            <Link className="link" to="/settings/models">
               Open Settings
             </Link>
           </p>
@@ -94,7 +94,7 @@ export function DraftOutreachSheet({
           <p className="state__body">
             No model provider is connected, so no drafts can be written. Connect one in Settings and choose it, then
             draft outreach.{' '}
-            <Link className="link" to="/settings">
+            <Link className="link" to="/settings/models">
               Open Settings
             </Link>
           </p>

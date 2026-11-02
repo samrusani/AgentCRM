@@ -195,7 +195,7 @@ export function ImportSetupSheet({
             {connector?.status === 'error'
               ? `The Apify connection has an error: ${connector.statusMessage ?? 'the last check of the token failed.'} `
               : 'Apify is not connected. Add your Apify API token to import results from the Apify store. '}
-            <Link className="link" to="/settings">
+            <Link className="link" to="/settings/connectors">
               Open Settings
             </Link>
           </p>

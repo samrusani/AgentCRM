@@ -227,7 +227,7 @@ function PanelBody({ onCollapse }: { onCollapse: () => void }) {
         {attention ? (
           <span className="panel__model panel__model--attention" role="status">
             {attention}{' '}
-            <Link className="link" to="/settings">
+            <Link className="link" to="/settings/models">
               Open Settings
             </Link>
           </span>

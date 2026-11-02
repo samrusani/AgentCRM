@@ -143,7 +143,7 @@ export function QualificationSection({
           {result.criteria.length === 0 ? (
             <p className="muted">
               No criteria are enabled. Add some in{' '}
-              <Link className="link" to="/settings">
+              <Link className="link" to="/settings/qualification">
                 Settings
               </Link>
               .
