@@ -988,6 +988,44 @@ textarea.input {
   font-size: 14px;
   font-weight: 600;
 }
+.connector__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.connector__chevron {
+  flex: none;
+  color: var(--ink-muted);
+}
+.connector__summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ink-muted);
+}
+.connector__chips {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.connector__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 .connector__heading {
   font-size: 13px;
   font-weight: 600;

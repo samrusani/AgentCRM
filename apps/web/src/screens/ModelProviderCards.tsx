@@ -8,6 +8,7 @@ import {
 } from '../api/hooks';
 import type { Connector, ModelProviderKind, ModelProviderSelection } from '../api/types';
 import { Chip, errorMessage } from '../components/common';
+import { Icon } from '../components/Icons';
 import { RemoveControl, TokenForm, TokenLine } from '../components/connector';
 import {
   OLLAMA_DEFAULT_BASE_URL,
@@ -24,18 +25,48 @@ interface CardProps {
   active: ModelProviderSelection | null;
 }
 
-function CardHeader({ name, connector }: { name: string; connector: Connector | null }) {
+// The card header is a disclosure: collapsed it still says what is connected, which model, and what is in use.
+function CardToggle({
+  preset,
+  connector,
+  active,
+  open,
+  onToggle,
+  bodyId,
+}: CardProps & { open: boolean; onToggle: () => void; bodyId: string }) {
   const hasError = connector?.status === 'error';
+  const activeHere = active?.kind === preset.kind;
   return (
-    <header className="connector__header">
-      <h3 className="connector__name">{name}</h3>
-      {connector ? (
-        hasError ? <Chip tone="danger">Error</Chip> : <Chip tone="neutral">Connected</Chip>
-      ) : (
-        <Chip tone="neutral">Not connected</Chip>
-      )}
-    </header>
+    <h3 className="connector__name">
+      <button
+        type="button"
+        className="connector__toggle"
+        aria-expanded={open}
+        aria-controls={open ? bodyId : undefined}
+        onClick={onToggle}
+      >
+        <Icon name={open ? 'chevronDown' : 'chevronRight'} className="connector__chevron" />
+        <span>{preset.name}</span>
+        {!open && connector?.model ? <span className="connector__summary">{modelName(connector.model)}</span> : null}
+        <span className="connector__chips">
+          {hasError ? (
+            <Chip tone="danger">Error</Chip>
+          ) : activeHere ? (
+            <Chip tone="accent">In use</Chip>
+          ) : (
+            <Chip tone="neutral">{connector ? 'Connected' : 'Not connected'}</Chip>
+          )}
+        </span>
+      </button>
+    </h3>
   );
+}
+
+// Open when the user says so; a card whose connection has an error opens on its own so the problem is not hidden.
+function useCardOpen(connector: Connector | null): [boolean, () => void] {
+  const [choice, setChoice] = useState<boolean | null>(null);
+  const open = choice ?? connector?.status === 'error';
+  return [open, () => setChoice(!open)];
 }
 
 // Exactly one configured provider is in use. The active card says so in text, others offer a quiet switch.
@@ -182,10 +213,15 @@ export function KeyedProviderCard({ preset, connector, active }: CardProps) {
     label: `${modelHint(model)}${model.id === preset.defaultModelId ? ' (default)' : ''}`,
   }));
 
+  const [open, toggle] = useCardOpen(connector);
+  const bodyId = `${preset.kind}-card-body`;
+
   return (
     <article className="connector" aria-label={`${preset.name} connector`}>
-      <CardHeader name={preset.name} connector={connector} />
+      <CardToggle preset={preset} connector={connector} active={active} open={open} onToggle={toggle} bodyId={bodyId} />
 
+      {open ? (
+        <div className="connector__body" id={bodyId}>
       {connector ? (
         <>
           <TokenLine connector={connector} noun="key" />
@@ -240,6 +276,8 @@ export function KeyedProviderCard({ preset, connector, active }: CardProps) {
           warning={removeWarning(preset, active, 'key')}
         />
       ) : null}
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -286,10 +324,15 @@ export function OllamaCard({ preset, connector, active }: CardProps) {
 
   const disclosureAddress = savedUrl ?? address;
 
+  const [open, toggle] = useCardOpen(connector);
+  const bodyId = 'ollama-card-body';
+
   return (
     <article className="connector" aria-label={`${preset.name} connector`}>
-      <CardHeader name={preset.name} connector={connector} />
+      <CardToggle preset={preset} connector={connector} active={active} open={open} onToggle={toggle} bodyId={bodyId} />
 
+      {open ? (
+        <div className="connector__body" id={bodyId}>
       {connector ? (
         <>
           <p className="connector__token">
@@ -386,6 +429,8 @@ export function OllamaCard({ preset, connector, active }: CardProps) {
             warning={removeWarning(preset, active, 'address')}
           />
         </>
+      ) : null}
+        </div>
       ) : null}
     </article>
   );
