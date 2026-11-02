@@ -14,10 +14,15 @@ import {
   failJob,
   failRun,
   type JobRecord,
+  mailReconcileJobKind,
   maxJobAttempts,
+  processQueuedIntents,
   qualifyJobKind,
+  reconcileIntent,
   recoverStaleJobs,
+  recoverSubmittingIntents,
   rescheduleJob,
+  syncMailIfDue,
 } from '../actions/index.js';
 import { workerTickMilliseconds } from '../config.js';
 
@@ -100,7 +105,7 @@ async function runDraftJob(ctx: ActionContext, job: JobRecord): Promise<void> {
 
 // Processes every simulated job that is due. Single writer: this runs on the server's event loop, one job at a time.
 export function processJobs(ctx: ActionContext): number {
-  const jobs = claimDueJobs(ctx, 10, { excludeKinds: [apifyJobKind, draftJobKind] });
+  const jobs = claimDueJobs(ctx, 10, { excludeKinds: [apifyJobKind, draftJobKind, mailReconcileJobKind] });
   for (const job of jobs) runJob(ctx, job);
   return jobs.length;
 }
@@ -117,8 +122,27 @@ export async function processDraftJobs(ctx: ActionContext): Promise<number> {
   return jobs.length;
 }
 
+// Mail sending is its own lane: queued messages one at a time, then reconciliation of sends with an unknown outcome.
+// The poll of the inbox is a separate lane (syncMailIfDue) because it can take several seconds.
+export async function processMailJobs(ctx: ActionContext): Promise<number> {
+  let handled = await processQueuedIntents(ctx);
+  const jobs = claimDueJobs(ctx, 10, { kinds: [mailReconcileJobKind] });
+  for (const job of jobs) {
+    const jobContext: ActionContext = { ...ctx, workspaceId: String(job.payload.workspaceId), actor: 'system' };
+    try {
+      await reconcileIntent(jobContext, job.payload);
+      completeJob(ctx, job.id);
+    } catch {
+      if (job.attempts < maxJobAttempts) rescheduleJob(ctx, job.id, addMilliseconds(ctx.now(), 1000 * job.attempts), false);
+      else failJob(ctx, job.id);
+    }
+    handled += 1;
+  }
+  return handled;
+}
+
 export async function processAllJobs(ctx: ActionContext): Promise<number> {
-  return processJobs(ctx) + (await processApifyJobs(ctx)) + (await processDraftJobs(ctx));
+  return processJobs(ctx) + (await processApifyJobs(ctx)) + (await processDraftJobs(ctx)) + (await processMailJobs(ctx));
 }
 
 export interface Worker {
@@ -129,11 +153,19 @@ export interface Worker {
 export function startWorker(
   ctx: ActionContext,
   onError: (error: unknown) => void,
-  options: { recover?: boolean } = {},
+  // Only the API server sends and syncs mail. The MCP process never does, so an agent session cannot submit a message.
+  options: { recover?: boolean; mail?: boolean } = {},
 ): Worker {
-  if (options.recover ?? true) recoverStaleJobs(ctx);
+  const mail = options.mail ?? true;
+  if (options.recover ?? true) {
+    recoverStaleJobs(ctx);
+    // A message that was on the wire when the process stopped has an unknown outcome.
+    if (mail) recoverSubmittingIntents(ctx);
+  }
   let apifyBusy = false;
   let draftBusy = false;
+  let mailBusy = false;
+  let syncBusy = false;
   const timer = setInterval(() => {
     try {
       processJobs(ctx);
@@ -155,6 +187,22 @@ export function startWorker(
         .catch(onError)
         .finally(() => {
           draftBusy = false;
+        });
+    }
+    if (mail && !mailBusy) {
+      mailBusy = true;
+      processMailJobs({ ...ctx, actor: 'system' })
+        .catch(onError)
+        .finally(() => {
+          mailBusy = false;
+        });
+    }
+    if (mail && !syncBusy) {
+      syncBusy = true;
+      syncMailIfDue({ ...ctx, actor: 'system' })
+        .catch(onError)
+        .finally(() => {
+          syncBusy = false;
         });
     }
   }, workerTickMilliseconds);

@@ -5,9 +5,11 @@ import type { Approval } from '../api/types';
 import { formatDateTime, isSimulatedApproval, summarizePayload } from '../lib/format';
 import { draftCountLabel, parseDraftReviewPayload } from '../lib/drafts';
 import { parseImportReviewPayload } from '../lib/imports';
+import { isMessageComplete, messageCountLabel, parseSendReviewPayload } from '../lib/mail';
 import { SimulatedChip, errorMessage } from './common';
 import { DraftReviewBody } from './draftReview';
 import { ImportReviewBody } from './importReview';
+import { SendReviewBody, SendReviewSummary } from './sendReview';
 
 export interface Settled {
   approval: Approval;
@@ -70,12 +72,17 @@ export function ApprovalCard({
 
   const review = approval.kind === 'import_review' ? parseImportReviewPayload(approval.payload) : null;
   const drafts = approval.kind === 'draft_review' ? parseDraftReviewPayload(approval.payload) : null;
-  const lines = review || drafts ? [] : summarizePayload(approval.payload);
+  const send = approval.kind === 'send_review' ? parseSendReviewPayload(approval.payload) : null;
+  const lines = review || drafts || send ? [] : summarizePayload(approval.payload);
+  // A send is never decided from a surface that cannot show every message in full.
+  const decisionOnOtherSurface = send !== null && compact === true;
   const approveLabel = review
     ? 'Approve staged rows'
     : drafts
       ? `Save ${draftCountLabel(drafts.count)}`
-      : 'Approve';
+      : send
+        ? `Send ${messageCountLabel(send.messages.length)}`
+        : 'Approve';
 
   const submit = (next: 'approve' | 'reject') => {
     setPendingDecision(next);
@@ -112,6 +119,7 @@ export function ApprovalCard({
       </p>
       {review ? <ImportReviewBody approval={approval} review={review} /> : null}
       {drafts ? <DraftReviewBody review={drafts} expanded={expandDrafts === true} /> : null}
+      {send ? decisionOnOtherSurface ? <SendReviewSummary review={send} /> : <SendReviewBody review={send} /> : null}
       {lines.length > 0 ? (
         <ul className="approval__payload">
           {lines.map((line) => (
@@ -124,28 +132,33 @@ export function ApprovalCard({
           {errorMessage(decide.error)} The approval is still pending.
         </p>
       ) : null}
-      <div className="approval__actions">
-        <button
-          type="button"
-          className="btn btn--primary"
-          onClick={() => submit('approve')}
-          disabled={
-            decide.isPending || (review !== null && review.counts.staged === 0) || (drafts !== null && (drafts.count === 0 || drafts.drafts.length === 0))
-          }
-          aria-label={review || drafts ? `${approveLabel}: ${approval.title}` : `Approve ${approval.title}`}
-        >
-          {pendingDecision === 'approve' ? (drafts ? 'Saving...' : 'Approving...') : approveLabel}
-        </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => submit('reject')}
-          disabled={decide.isPending}
-          aria-label={`Reject ${approval.title}`}
-        >
-          {pendingDecision === 'reject' ? 'Rejecting...' : 'Reject'}
-        </button>
-      </div>
+      {decisionOnOtherSurface ? null : (
+        <div className="approval__actions">
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={() => submit('approve')}
+            disabled={
+              decide.isPending ||
+              (review !== null && review.counts.staged === 0) ||
+              (drafts !== null && (drafts.count === 0 || drafts.drafts.length === 0)) ||
+              (send !== null && (send.messages.length === 0 || !send.messages.every(isMessageComplete)))
+            }
+            aria-label={review || drafts || send ? `${approveLabel}: ${approval.title}` : `Approve ${approval.title}`}
+          >
+            {pendingDecision === 'approve' ? (drafts ? 'Saving...' : 'Approving...') : approveLabel}
+          </button>
+          <button
+            type="button"
+            className={send ? 'btn btn--quiet' : 'btn'}
+            onClick={() => submit('reject')}
+            disabled={decide.isPending}
+            aria-label={`Reject ${approval.title}`}
+          >
+            {pendingDecision === 'reject' ? 'Rejecting...' : 'Reject'}
+          </button>
+        </div>
+      )}
     </article>
   );
 }

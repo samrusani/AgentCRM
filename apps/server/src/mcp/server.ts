@@ -55,7 +55,7 @@ export async function startMcpServer(): Promise<void> {
   const workspace = ensureWorkspace(db);
   const ctx = createContext(db, workspace.id, { actor: 'agent:mcp' });
   // Runs started here must advance even when the API server is not running.
-  const worker = startWorker(ctx, (error) => console.error(error), { recover: false });
+  const worker = startWorker(ctx, (error) => console.error(error), { recover: false, mail: false });
   const server = new McpServer({ name: 'agentcrm', version: serverVersion });
 
   server.registerTool(
@@ -118,15 +118,15 @@ export async function startMcpServer(): Promise<void> {
     {
       title: 'Get a record',
       description:
-        'Returns a person, organization, or opportunity by id, with its field claims (evidence), activity, and linked records.',
+        'Returns a person, organization, or opportunity by id, with its field claims (evidence), activity, and linked records. Inbound email text is left out.',
       inputSchema: { id: z.string().min(1).max(64) },
       annotations: { readOnlyHint: true },
     },
     async ({ id }) =>
       guarded(() => {
-        if (id.startsWith('per_')) return { entityType: 'person', record: getPersonDetail(db, workspace.id, id) };
-        if (id.startsWith('org_')) return { entityType: 'organization', record: getOrganizationDetail(db, workspace.id, id) };
-        if (id.startsWith('opp_')) return { entityType: 'opportunity', record: getOpportunityDetail(db, workspace.id, id) };
+        if (id.startsWith('per_')) return { entityType: 'person', record: getPersonDetail(db, workspace.id, id, { forModel: true }) };
+        if (id.startsWith('org_')) return { entityType: 'organization', record: getOrganizationDetail(db, workspace.id, id, { forModel: true }) };
+        if (id.startsWith('opp_')) return { entityType: 'opportunity', record: getOpportunityDetail(db, workspace.id, id, { forModel: true }) };
         throw validationError('The id must start with per_, org_, or opp_.');
       }),
   );

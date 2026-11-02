@@ -2,7 +2,7 @@ import type { Db } from '../db.js';
 import { notFound } from '../errors.js';
 import { type Row, toOpportunity, toOrganization, toPerson, toTask } from '../records.js';
 import { containsPattern, paginate, type Page } from './pagination.js';
-import { listActivities } from './activities.js';
+import { listActivities, modelHiddenActivityKinds } from './activities.js';
 import { listClaims } from './claims.js';
 import { opportunitySelect } from './opportunities.js';
 import { taskSelect } from './tasks.js';
@@ -83,7 +83,12 @@ export function listPeople(
   });
 }
 
-export function getPersonDetail(db: Db, workspaceId: string, id: string) {
+export interface DetailOptions {
+  // True when a model will read the result: inbound email text is left out of the activity list.
+  forModel?: boolean;
+}
+
+export function getPersonDetail(db: Db, workspaceId: string, id: string, options: DetailOptions = {}) {
   const person = requirePerson(db, workspaceId, id);
   const organizationRow = person.organizationId
     ? (db
@@ -118,7 +123,12 @@ export function getPersonDetail(db: Db, workspaceId: string, id: string) {
     organization,
     affiliationsSummary: parts.length > 0 ? parts.join('. ') : 'No affiliations recorded.',
     claims: listClaims(db, workspaceId, 'person', id),
-    activities: listActivities(db, workspaceId, { entityType: 'person', entityId: id, limit: 50 }).items,
+    activities: listActivities(db, workspaceId, {
+      entityType: 'person',
+      entityId: id,
+      limit: 50,
+      ...(options.forModel ? { excludeKinds: modelHiddenActivityKinds } : {}),
+    }).items,
     tasks,
     opportunities,
     qualification: getQualificationPayload(db, workspaceId, id),

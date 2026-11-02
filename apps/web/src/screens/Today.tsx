@@ -1,8 +1,11 @@
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useStartRun, useToday } from '../api/hooks';
 import { ApprovalCard, useSettledApprovals } from '../components/approvals';
 import { EmptyState, ErrorState, Loading, PageHeader, errorMessage } from '../components/common';
 import { LiveRun } from '../components/ledger';
+import { Outbox } from '../components/outbox';
+import { StagedBanner, type StagedNotice } from '../components/prepareSend';
+import { Replies } from '../components/replies';
 import { TaskRow } from '../components/TaskRow';
 import { describeDue } from '../lib/format';
 import { useUI } from '../lib/ui';
@@ -10,6 +13,8 @@ import { useUI } from '../lib/ui';
 export function Today() {
   const today = useToday();
   const navigate = useNavigate();
+  const location = useLocation();
+  const staged = (location.state as { staged?: StagedNotice } | null)?.staged ?? null;
   const startRun = useStartRun();
   const { pushToast } = useUI();
   const settled = useSettledApprovals();
@@ -55,6 +60,12 @@ export function Today() {
           <h2 className="section__title" id="today-approvals">
             Approvals waiting
           </h2>
+          {staged ? (
+            <StagedBanner
+              notice={staged}
+              onDismiss={() => navigate(location.pathname, { replace: true, state: null })}
+            />
+          ) : null}
           {approvals.length === 0 ? (
             <EmptyState
               message="Nothing needs a decision. Agent proposals that need your approval will appear here."
@@ -69,6 +80,20 @@ export function Today() {
               ))}
             </div>
           )}
+        </section>
+
+        <section className="section" aria-labelledby="today-outbox">
+          <h2 className="section__title" id="today-outbox">
+            Outbox
+          </h2>
+          <Outbox />
+        </section>
+
+        <section className="section" aria-labelledby="today-replies">
+          <h2 className="section__title" id="today-replies">
+            Replies
+          </h2>
+          <Replies tasks={tasksDue} />
         </section>
 
         <section className="section" aria-labelledby="today-tasks">

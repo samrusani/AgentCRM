@@ -2,21 +2,29 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   abortRemoteRunIfNeeded,
+  addSuppression,
+  configureAgentmailConnector,
   configureAnthropicConnector,
   configureApifyConnector,
   controlRun,
+  controlSendIntent,
   createActivity,
+  createAgentmailInbox,
   createContext,
   createOpportunity,
   createOrganization,
   createPerson,
   createTask,
   decideApproval,
+  disconnectAgentmailConnector,
   disconnectAnthropicConnector,
   disconnectApifyConnector,
   getApifyActor,
+  liftSuppression,
+  listAgentmailInboxes,
   moveOpportunityStage,
   parseInput,
+  prepareSendIntents,
   previewCsvFile,
   saveQualificationConfig,
   searchApifyActors,
@@ -41,6 +49,7 @@ import { listPipelines } from '../queries/pipelines.js';
 import { readQualificationConfig } from '../qualification/config.js';
 import { getRunDetail, listApprovals, listRuns, requireApproval } from '../queries/runs.js';
 import { searchAll } from '../queries/search.js';
+import { getMailSummary, listSendIntents, listSuppressions } from '../queries/sendIntents.js';
 import { listTasks } from '../queries/tasks.js';
 import { getToday } from '../queries/today.js';
 import { requireWorkspace } from '../queries/workspace.js';
@@ -232,6 +241,45 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
     disconnectAnthropicConnector(context());
     return reply.status(204).send();
   });
+  app.put('/api/connectors/agentmail', async (request, reply) => {
+    const { connector, created } = await configureAgentmailConnector(context(), request.body);
+    reply.status(created ? 201 : 200);
+    return connector;
+  });
+  app.delete('/api/connectors/agentmail', async (_request, reply) => {
+    disconnectAgentmailConnector(context());
+    return reply.status(204).send();
+  });
+  app.get('/api/connectors/agentmail/inboxes', async () => listAgentmailInboxes(context()));
+  app.post('/api/connectors/agentmail/inboxes', async (request, reply) => {
+    const inbox = await createAgentmailInbox(context(), request.body);
+    reply.status(201);
+    return inbox;
+  });
+
+  app.post('/api/send-intents', async (request, reply) => {
+    const result = prepareSendIntents(context(), request.body);
+    reply.status(result.approval ? 201 : 200);
+    return result;
+  });
+  app.get('/api/send-intents', async (request) =>
+    listSendIntents(db, workspaceId(), parseInput(statusQuery, request.query)),
+  );
+  app.post('/api/send-intents/:id/control', async (request) =>
+    controlSendIntent(context(), idParam(request.params), request.body),
+  );
+  app.get('/api/suppressions', async (request) => listSuppressions(db, workspaceId(), parseInput(z.object(pagingQuery), request.query)));
+  app.post('/api/suppressions', async (request, reply) => {
+    const suppression = addSuppression(context(), request.body);
+    reply.status(201);
+    return suppression;
+  });
+  app.delete('/api/suppressions/:id', async (request, reply) => {
+    liftSuppression(context(), idParam(request.params));
+    return reply.status(204).send();
+  });
+  app.get('/api/mail/summary', async () => getMailSummary(db, workspaceId(), (options.now ?? (() => new Date().toISOString()))()));
+
   app.get('/api/connectors/apify/actors', async (request) => searchApifyActors(context(), request.query));
   app.get('/api/connectors/apify/actors/:id', async (request) => getApifyActor(context(), idParam(request.params)));
 

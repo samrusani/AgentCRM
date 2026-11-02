@@ -1,4 +1,5 @@
 import { normalizeCounts } from '../lib/imports';
+import { DAILY_SEND_CAP, parseExcluded } from '../lib/mail';
 import type {
   Activity,
   AgentMessageInput,
@@ -20,6 +21,9 @@ import type {
   CsvPreview,
   DraftOutreachInput,
   Health,
+  MailInbox,
+  MailReply,
+  MailSummary,
   ImportBatch,
   ImportBatchPage,
   ImportRow,
@@ -36,6 +40,10 @@ import type {
   Run,
   RunCounts,
   SearchResults,
+  SendIntent,
+  StageSendInput,
+  StageSendResult,
+  Suppression,
   Task,
   TodayData,
   Workspace,
@@ -285,8 +293,116 @@ function normalizeConnector(raw: unknown): Connector {
     ),
     allowlist: toArray<unknown>(allowlistSource).filter((entry): entry is string => typeof entry === 'string'),
     model: textOrNull(settings.model ?? record.model),
+    inboxId: textOrNull(settings.inboxId ?? record.inboxId),
+    inboxEmail: textOrNull(settings.inboxEmail ?? settings.email ?? record.inboxEmail),
     tokenMasked: textOrNull(record.tokenMasked ?? settings.tokenMasked),
     updatedAt: textOrNull(record.updatedAt),
+  };
+}
+
+function normalizeInbox(raw: unknown): MailInbox | null {
+  const record = objectOrEmpty(raw);
+  const id = textOrNull(record.id ?? record.inboxId);
+  if (!id) return null;
+  // The provider uses the address as the inbox id, so either field can stand in for the other.
+  const email = textOrNull(record.email ?? record.inboxEmail ?? record.address) ?? id;
+  return { id, email };
+}
+
+function normalizeInboxList(data: unknown): MailInbox[] {
+  const source = objectOrEmpty(data);
+  const list = Array.isArray(data) ? data : source.items ?? source.inboxes ?? source.data;
+  return asPage<unknown>(list)
+    .items.map(normalizeInbox)
+    .filter((inbox): inbox is MailInbox => inbox !== null);
+}
+
+function normalizeIntent(raw: unknown): SendIntent {
+  const record = objectOrEmpty(raw);
+  return {
+    id: textOrNull(record.id) ?? '',
+    personId: textOrNull(record.personId),
+    personName: textOrNull(record.personName),
+    toEmail: textOrNull(record.toEmail ?? record.to) ?? '',
+    subject: textOrNull(record.subject) ?? '',
+    status: textOrNull(record.status) ?? 'unknown',
+    error: messageFrom(record.error, record.reason, record.statusMessage),
+    providerMessageId: textOrNull(record.providerMessageId),
+    submittedAt: textOrNull(record.submittedAt),
+    updatedAt: textOrNull(record.updatedAt),
+  };
+}
+
+function normalizeSuppression(raw: unknown): Suppression {
+  const record = objectOrEmpty(raw);
+  return {
+    id: textOrNull(record.id) ?? '',
+    email: textOrNull(record.email) ?? '',
+    reason: textOrNull(record.reason) ?? 'manual',
+    createdAt: textOrNull(record.createdAt),
+    matchedWording: textOrNull(record.matchedWording ?? record.matchedText ?? record.matched),
+  };
+}
+
+function normalizeReply(raw: unknown, index: number): MailReply {
+  const record = objectOrEmpty(raw);
+  const optOutField = record.optOut ?? record.optedOut;
+  const optOutRecord = objectOrEmpty(optOutField);
+  const suppression = objectOrEmpty(record.suppression);
+  const kind = textOrNull(record.kind ?? record.type ?? record.reason);
+  const matched = textOrNull(
+    record.matchedWording ??
+      record.matchedText ??
+      record.matchedPhrase ??
+      record.matched ??
+      optOutRecord.matchedWording ??
+      optOutRecord.matched ??
+      optOutRecord.wording ??
+      suppression.matchedWording,
+  );
+  const suppressionId = textOrNull(record.suppressionId ?? optOutRecord.suppressionId ?? suppression.id);
+  return {
+    id: textOrNull(record.id ?? record.messageId) ?? `reply-${index}`,
+    personId: textOrNull(record.personId),
+    personName: textOrNull(record.personName),
+    fromEmail: textOrNull(record.fromEmail ?? record.from ?? record.email),
+    subject: textOrNull(record.subject),
+    preview: textOrNull(record.body ?? record.text ?? record.snippet ?? record.preview),
+    receivedAt: textOrNull(record.receivedAt ?? record.createdAt ?? record.at),
+    taskId: textOrNull(record.taskId),
+    taskTitle: textOrNull(record.taskTitle),
+    optOut:
+      optOutField === true ||
+      Object.keys(optOutRecord).length > 0 ||
+      kind === 'opt_out' ||
+      suppressionId !== null ||
+      matched !== null,
+    matchedWording: matched,
+    suppressionId,
+  };
+}
+
+function normalizeMailSummary(data: unknown): MailSummary {
+  const record = objectOrEmpty(data);
+  const counts: Record<string, number> = {};
+  for (const [status, value] of Object.entries(objectOrEmpty(record.counts))) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) counts[status] = Math.max(0, Math.floor(parsed));
+  }
+  const remaining = numberOrNull(record.remainingDailyCap);
+  const cap = numberOrNull(record.dailyCap);
+  const attention = record.repliesNeedingAttention;
+  const attentionRecord = objectOrEmpty(attention);
+  const list = Array.isArray(attention) ? attention : toArray<unknown>(attentionRecord.items ?? record.replies);
+  const replies = list.map(normalizeReply);
+  const reported = typeof attention === 'number' ? attention : numberOrNull(attentionRecord.count);
+  return {
+    counts,
+    remainingDailyCap: remaining === null ? null : Math.max(0, Math.floor(remaining)),
+    dailyCap: cap !== null && cap > 0 ? Math.floor(cap) : DAILY_SEND_CAP,
+    lastSyncAt: textOrNull(record.lastSyncAt),
+    replies,
+    repliesNeedingAttention: Math.max(replies.length, reported === null ? 0 : Math.floor(reported)),
   };
 }
 
@@ -635,6 +751,40 @@ export const api = {
     saveAnthropic: async (input: { token?: string; model?: string }) =>
       normalizeConnector(await request<unknown>('PUT', '/connectors/anthropic', { body: input })),
     removeAnthropic: () => request<unknown>('DELETE', '/connectors/anthropic'),
+    // Token connects or reconnects. Inbox fields select the sending inbox on an existing connector.
+    saveAgentMail: async (input: { token?: string; inboxId?: string; inboxEmail?: string }) =>
+      normalizeConnector(await request<unknown>('PUT', '/connectors/agentmail', { body: input })),
+    removeAgentMail: () => request<unknown>('DELETE', '/connectors/agentmail'),
+  },
+
+  mail: {
+    inboxes: async (): Promise<MailInbox[]> => normalizeInboxList(await request<unknown>('GET', '/connectors/agentmail/inboxes')),
+    createInbox: async (username?: string): Promise<MailInbox | null> => {
+      const data = await request<unknown>('POST', '/connectors/agentmail/inboxes', {
+        body: username ? { username } : {},
+      });
+      const record = objectOrEmpty(data);
+      return normalizeInbox(record.inbox ?? data);
+    },
+    stage: async (input: StageSendInput): Promise<StageSendResult> => {
+      const data = objectOrEmpty(await request<unknown>('POST', '/send-intents', { body: input }));
+      const approval = data.approval && typeof data.approval === 'object' ? normalizeApproval(data.approval as Approval) : null;
+      return { approval, excluded: parseExcluded(data.excluded) };
+    },
+    intents: async (status?: string): Promise<SendIntent[]> =>
+      asPage<unknown>(await request<unknown>('GET', '/send-intents', { query: { status, limit: 200 } })).items.map(
+        normalizeIntent,
+      ),
+    control: (id: string, action: 'cancel' | 'acknowledge') =>
+      request<unknown>('POST', `/send-intents/${encodeURIComponent(id)}/control`, { body: { action } }),
+    suppressions: async (): Promise<Suppression[]> =>
+      asPage<unknown>(await request<unknown>('GET', '/suppressions', { query: { limit: 200 } })).items.map(
+        normalizeSuppression,
+      ),
+    addSuppression: (email: string) =>
+      request<unknown>('POST', '/suppressions', { body: { email, reason: 'manual' } }),
+    liftSuppression: (id: string) => request<unknown>('DELETE', `/suppressions/${encodeURIComponent(id)}`),
+    summary: async (): Promise<MailSummary> => normalizeMailSummary(await request<unknown>('GET', '/mail/summary', { preserve: ['counts'] })),
   },
 
   apify: {

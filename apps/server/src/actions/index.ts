@@ -1,4 +1,5 @@
 export { abortRemoteRunIfNeeded, advanceApifyRun, apifyActor, apifyJobKind, apifyKind } from './apifyScrape.js';
+export * from './agentmailConnector.js';
 export * from './approvals.js';
 export * from './changes.js';
 export * from './connectors.js';
@@ -18,3 +19,15 @@ export {
 } from './qualify.js';
 export * from './runs.js';
 export * from './workspace.js';
+export { syncMail, syncMailIfDue } from './mailSync.js';
+export {
+  controlSendIntent,
+  mailReconcileJobKind,
+  prepareSendIntents,
+  processQueuedIntents,
+  recoverSubmittingIntents,
+  reconcileIntent,
+  sendOutreachKind,
+  sendReviewKind,
+} from './sendIntents.js';
+export * from './suppressions.js';

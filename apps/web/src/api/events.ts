@@ -22,9 +22,12 @@ export function useEventConnection(): Connection {
   return useSyncExternalStore(subscribe, () => connection, () => 'connecting' as Connection);
 }
 
+// Send intents, the mail summary, and suppressions change with run, approval, and record events.
+const MAIL_KEYS = ['send-intents', 'mail-summary', 'suppressions'];
+
 const KEYS_BY_EVENT: Record<ServerEventName, string[]> = {
   run_updated: ['today', 'runs', 'run', 'approvals', 'import', 'connectors', 'people', 'person', 'qualification'],
-  approval_updated: ['today', 'approvals', 'runs', 'run', 'import'],
+  approval_updated: ['today', 'approvals', 'runs', 'run', 'import', ...MAIL_KEYS],
   record_updated: [
     'today',
     'import',
@@ -39,6 +42,7 @@ const KEYS_BY_EVENT: Record<ServerEventName, string[]> = {
     'activities',
     'search',
     'qualification',
+    ...MAIL_KEYS,
   ],
 };
 

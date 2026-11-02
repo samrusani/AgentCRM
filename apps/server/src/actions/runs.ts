@@ -11,6 +11,7 @@ import { defaultTargetCount, demoStepTitles, maxTargetCount, scheduleDemoRun } f
 import { csvImportKind, scheduleCsvImportRun } from './csvImport.js';
 import { defaultAgentBudgetUsd, draftKind, draftScopeSchema, draftStepTitles, scheduleDraftRun } from './draftOutreach.js';
 import { closeImportBatchForRun } from './importReview.js';
+import { cancelIntentsForRunIn } from './sendIntents.js';
 import { qualifyKind, qualifyScopeSchema, qualifyStepTitles, scheduleQualifyRun } from './qualify.js';
 
 const demoRunSchema = z
@@ -198,6 +199,9 @@ export function controlRun(ctx: ActionContext, runId: string, input: unknown) {
     const run = requireRun(tx.db, tx.workspaceId, runId);
     const now = tx.now();
     if (action === 'pause') {
+      if (run.kind === 'send_outreach') {
+        throw conflict('A send cannot be paused. Cancel the run to stop messages that have not started sending.');
+      }
       if (run.status !== 'running' && run.status !== 'queued') {
         throw conflict(`A run that is ${run.status.replace('_', ' ')} cannot be paused.`);
       }
@@ -237,6 +241,7 @@ export function cancelRunIn(tx: Tx, runId: string, reason: string): void {
     }
   }
   closeImportBatchForRun(tx, runId, 'rejected', reason);
+  cancelIntentsForRunIn(tx, runId, reason);
   const pending = tx.db
     .prepare("SELECT id FROM approval WHERE run_id = ? AND status = 'pending'")
     .all(runId) as { id: string }[];

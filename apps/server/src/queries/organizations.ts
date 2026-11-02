@@ -1,7 +1,8 @@
 import type { Db } from '../db.js';
 import { notFound } from '../errors.js';
 import { type Row, toOpportunity, toOrganization, toPerson } from '../records.js';
-import { listActivities } from './activities.js';
+import { listActivities, modelHiddenActivityKinds } from './activities.js';
+import type { DetailOptions } from './people.js';
 import { listClaims } from './claims.js';
 import { opportunitySelect } from './opportunities.js';
 import { containsPattern, paginate, type Page } from './pagination.js';
@@ -53,7 +54,7 @@ export function listOrganizations(
   });
 }
 
-export function getOrganizationDetail(db: Db, workspaceId: string, id: string) {
+export function getOrganizationDetail(db: Db, workspaceId: string, id: string, options: DetailOptions = {}) {
   const organization = requireOrganization(db, workspaceId, id);
   const people = (
     db
@@ -72,7 +73,12 @@ export function getOrganizationDetail(db: Db, workspaceId: string, id: string) {
     ...organization,
     people,
     claims: listClaims(db, workspaceId, 'organization', id),
-    activities: listActivities(db, workspaceId, { entityType: 'organization', entityId: id, limit: 50 }).items,
+    activities: listActivities(db, workspaceId, {
+      entityType: 'organization',
+      entityId: id,
+      limit: 50,
+      ...(options.forModel ? { excludeKinds: modelHiddenActivityKinds } : {}),
+    }).items,
     opportunities,
   };
 }

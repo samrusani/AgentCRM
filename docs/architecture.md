@@ -32,7 +32,7 @@ IDs are prefixed strings, for example `per_a1b2c3`, generated from random bytes.
 | stage | pipeline_id, name, seq |
 | opportunity | workspace_id, version, name, pipeline_id, stage_id, organization_id, person_id, amount_target, currency, owner, status (open, passed, lost, nurture), reason, next_action_at, stage_changed_at, updated_at |
 | stage_event | opportunity_id, from_stage_id, to_stage_id, at, actor |
-| activity | workspace_id, entity_type, entity_id, kind (note, email_draft, stage_change, agent), body, actor |
+| activity | workspace_id, entity_type, entity_id, kind (note, email_draft, email_out, email_in, stage_change, agent), body, actor |
 | task | workspace_id, version, title, entity_type, entity_id, due_at, status (open, done), updated_at |
 | field_claim | workspace_id, entity_type, entity_id, field, value, source_url, source_type, observed_at, extraction_method (for apify claims, the actor id), status (imported, extracted, corroborated, human_confirmed) |
 | run | workspace_id, kind, title, status, scope (JSON), counts (JSON), started_at, finished_at |
@@ -40,7 +40,10 @@ IDs are prefixed strings, for example `per_a1b2c3`, generated from random bytes.
 | approval | workspace_id, run_id, kind, title, payload (JSON), payload_hash, status (pending, approved, rejected), note, decided_at, decided_by |
 | job | kind, payload (JSON), run_at, attempts, status (queued, running, done, failed), updated_at |
 | audit_event | workspace_id, actor, action, entity_type, entity_id, detail (JSON) |
-| connector | workspace_id, kind (apify, anthropic), settings (JSON, no secrets), secret (API token, never returned by any endpoint), status (connected, error), updated_at |
+| connector | workspace_id, kind (apify, anthropic, agentmail), settings (JSON, no secrets), secret (API token, never returned by any endpoint), status (connected, error), updated_at |
+| email_message | workspace_id, provider_message_id (unique), provider_thread_id, direction (in, out), person_id (nullable), from_email, to (JSON array), subject, preview, body_text (nullable until fetched), labels (JSON), provider_timestamp, created_at |
+| send_intent | workspace_id, person_id, draft_activity_id, inbox_id, to_email, subject, body, payload_hash, status (awaiting_approval, approved, queued, submitting, accepted, failed, unknown, blocked, cancelled, replied, bounced), approval_id, provider_message_id, provider_thread_id, error, submitted_at, updated_at. The intent id doubles as the provider idempotency key |
+| suppression | workspace_id, email (unique, normalized lowercase), reason (bounce, opt_out, manual, demo_address), source, created_at |
 | model_call | workspace_id, run_id (nullable), purpose (chat, draft), model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, estimated_usd, pending (a row written before the provider call and finalized after, so a crash leaves a visible possibly billed record), subject_id, created_at |
 | import_batch | workspace_id, run_id, source_kind (apify, csv), source_ref (JSON: for apify the actor id, apify run id, dataset id; for csv the file name, row count, delimiter), status (staging, awaiting_review, accepted, rejected, failed), counts (JSON), updated_at |
 | qualification_result | workspace_id, person_id (one row per person), run_id, payload (JSON), updated_at |
@@ -125,6 +128,40 @@ Run kind `draft_outreach`: scope `{ personIds?, tag?, instructions?, maxPeople (
 Counts for draft runs: `processed`, `found` (drafted), `flagged` (skipped or failed, with reasons), plus `estimatedUsd` observed. Agent origin may start `draft_outreach` under the same one active agent run rule as Apify; drafting spends the user's model budget, so the cap applies.
 
 API facts the implementation must follow (current as of this writing): thinking is always on for these models, so the `thinking` parameter is omitted; depth is controlled with `output_config.effort` (`low` for chat, `medium` for drafting). Forced `tool_choice` `any` or `tool` returns a 400 on these models; tools use `auto` with `strict: true` schemas. Structured outputs use `output_config.format`. Refusals surface as HTTP 200 with `stop_reason: "refusal"`; server side fallbacks are enabled with `fallbacks: "default"` plus the beta header `server-side-fallback-2026-07-01`. The stable system prompt carries a `cache_control` breakpoint so batch drafting reuses the prompt cache.
+
+## Email: the AgentMail connector and sending
+
+Email is the only place AgentCRM touches the outside world on the user's behalf, so it carries the strictest rules in the product. Nothing is ever submitted to the provider without a human approving the exact frozen message, and an unknown outcome is surfaced, never resolved by guessing.
+
+Connector kind `agentmail`: API key (`am_...`), validated against the API, stored under the same secret rules as the other connectors. Settings hold the selected inbox (`inboxId`, `email`) and sync cursors. The user picks an existing inbox from a list or explicitly creates one (optional username; creation uses the provider's `client_id` idempotency). Base URL `https://api.agentmail.to/v0`, overridable with `AGENTCRM_AGENTMAIL_BASE` for tests. Provider facts the implementation relies on: Bearer auth; `POST /v0/inboxes/{inboxId}/messages/send` with an `Idempotency-Key` header where a retry with the same key returns the original `message_id` and `thread_id` and sends no second email, and the same key with a different payload returns 409; `GET /v0/inboxes/{inboxId}/messages` with `after` plus `ascending=true` and `page_token` for inbound sync, message direction read from the `received` and `sent` labels; `GET /v0/inboxes/{inboxId}/messages/{messageId}` for full bodies; `GET /v0/inboxes/{inboxId}/events` (label.added, label.removed, newest first, no after filter, so the poller pages until it meets a seen event id) for bounce evidence via the `bounced` label. List response shapes are not fully documented, so the adapter parses defensively. No public webhook is used; everything is outbound polling, every poll interval default 60 seconds (`AGENTCRM_MAIL_POLL_MS`).
+
+The send intent state machine, per the product spec:
+
+- "Prepare to send" on a saved draft (one person) or on a draft run's detail (all its drafts) creates a run of kind `send_outreach` holding the intents in `awaiting_approval` plus one approval of kind `send_review` whose hashed payload is `{ messages: [{ intentId, personName, to, subject, body, inboxEmail }], excluded: [{ personName, toEmail, reason }], remainingDailyCap, runId? }`. Exclusion and block reasons use the codes suppressed, demo_address, invalid_recipient, duplicate_open_intent, no_inbox, daily_cap, reply_received, and connector_removed. Preflight at creation excludes, with listed reasons: suppressed addresses, demo addresses (example.com, example.org, example.net and subdomains are blocked with reason demo_address so synthetic data can never generate real mail), missing or invalid recipient, an already open intent for the same person and subject, no connected inbox, and no room in the daily cap.
+- Approving moves the intents to `queued`. Editing anything invalidates the approval (hash mismatch refuses the decision). Cancelling a single intent before the decision is subtraction only: approve then queues only the intents still awaiting whose message matches the approved payload and reports the cancelled ones as skipped; approving when everything was cancelled resolves as a rejection with a note. Rejecting cancels them all.
+- The worker submits queued intents one at a time per inbox. Immediately before each submit it rechecks: payload hash against the approval, suppression, a reply arrived from that person since approval (blocks with reason), connector still configured, daily cap. A failed recheck moves the intent to `blocked` with the reason; blocked intents need a fresh human decision, never an automatic retry. A queued intent whose approval is more than a day old is blocked the same way ("Approved more than a day ago. Review and approve again."), and the `send_outreach` run stays running until every intent settles, then resolves honestly (partial when anything failed, bounced, blocked, or stayed unknown).
+- Submit uses the intent id as the `Idempotency-Key`. Success stores `provider_message_id` and `provider_thread_id`, sets `accepted`, and writes an activity on the person that says provider accepted, which is not delivery. A definitive 4xx sets `failed` with the reason. A timeout, network failure, or 409 sets `unknown`; reconciliation retries the same request with the same key on a backoff schedule, which the provider's duplicate protection makes safe for about a day after the attempt. Past that window the intent is never retried: it stays `unknown` with a task telling the user to check the provider's sent mail. An intent that is `unknown` never becomes `failed`, and nothing is ever resent with a new key.
+- Daily cap: 50 accepted sends per inbox per day (server local day), checked at preflight and at submit, with the remaining budget shown in the UI. 25 intents per approval at most.
+
+Inbound sync: the poller fetches new messages after the cursor, dedupes by provider message id, stores them, links them to people by sender address, and fetches full text for inbound messages. A message on an accepted intent's thread (or from a person with open intents) marks that intent `replied`, creates a task to respond, and blocks any queued or approved intents to that person. Inbound text matching opt out wording (unsubscribe, stop, opt out, remove me) creates a suppression row with reason opt_out plus a review task; the suppression applies immediately and a human can lift it. The events poller maps a `bounced` label to the intent (`bounced`), writes a suppression row with reason bounce, and creates a task. Open tracking is off: `track_opens` is never sent, and opened labels are ignored.
+
+Agents never touch sending: MCP and the chat endpoint cannot create, approve, or submit send intents, and the CLI refuses to decide send_review approvals because it cannot show the full messages. Sending is a human flow through the UI, enforced by the backend. Inbound email content is excluded from every model facing surface (draft prompts, chat tools, MCP record reads); it appears only in the human UI.
+
+Email endpoints:
+
+| Method and path | Purpose |
+| --- | --- |
+| PUT `/api/connectors/agentmail` | `{ token?, inboxId?, inboxEmail? }`: token validates and stores the key; inbox fields select the inbox. Masked shape like the other connectors |
+| DELETE `/api/connectors/agentmail` | Remove the connector and key. Queued and approved intents become blocked with the reason; nothing in flight is abandoned silently |
+| GET `/api/connectors/agentmail/inboxes` | Proxied inbox list (id, email), defensively parsed |
+| POST `/api/connectors/agentmail/inboxes` | Explicitly create an inbox `{ username? }`, idempotent via client_id |
+| POST `/api/send-intents` | `{ draftActivityIds?: string[], runId? }`: stage intents plus the send_review approval; returns the approval and the excluded list with reasons |
+| GET `/api/send-intents?status=` | Intents with person names, newest first |
+| POST `/api/send-intents/:id/control` | `{ action: "cancel" }` for intents not yet submitting; a human acknowledgement action `{ action: "acknowledge" }` clears surfaced unknown or blocked intents into cancelled |
+| GET `/api/suppressions` | Suppression list |
+| POST `/api/suppressions` | `{ email, reason: "manual" }` add one |
+| DELETE `/api/suppressions/:id` | Lift a suppression (human action, audited) |
+| GET `/api/mail/summary` | `{ counts (by status, snake keys), dailyCap, remainingDailyCap, lastSyncAt, repliesNeedingAttention: { count, items: [{ personId, personName, fromEmail, subject, snippet, receivedAt, taskTitle, optOut? }] } }` |
 
 ## API contract
 
@@ -215,7 +252,7 @@ Exit codes: 0 success, 1 expected failure with a printed reason, 2 usage error.
 ## Conventions
 
 - Loopback only. The server binds 127.0.0.1 and additionally rejects requests whose Host header is not 127.0.0.1, localhost, or [::1] (any port) with 403, as a DNS rebinding guard.
-- Environment overrides: `AGENTCRM_DB` (database path), `AGENTCRM_PORT`, `AGENTCRM_LOG_LEVEL`, `AGENTCRM_STEP_MS` (demo run step interval), `AGENTCRM_APIFY_BASE` (provider base URL, for tests), `AGENTCRM_APIFY_TIMEOUT_MS` (poll timeout, default 600000), `AGENTCRM_APIFY_POLL_MS` (poll interval, default 3000), `AGENTCRM_ANTHROPIC_BASE` (provider base URL, for tests), `AGENTCRM_ANTHROPIC_RETRIES` (SDK retry count, default 2).
+- Environment overrides: `AGENTCRM_DB` (database path), `AGENTCRM_PORT`, `AGENTCRM_LOG_LEVEL`, `AGENTCRM_STEP_MS` (demo run step interval), `AGENTCRM_APIFY_BASE` (provider base URL, for tests), `AGENTCRM_APIFY_TIMEOUT_MS` (poll timeout, default 600000), `AGENTCRM_APIFY_POLL_MS` (poll interval, default 3000), `AGENTCRM_ANTHROPIC_BASE` (provider base URL, for tests), `AGENTCRM_ANTHROPIC_RETRIES` (SDK retry count, default 2), `AGENTCRM_AGENTMAIL_BASE` and `AGENTCRM_AGENTMAIL_TIMEOUT_MS` (mail provider, for tests), `AGENTCRM_MAIL_POLL_MS` (inbound poll, default 60000, min 5000), `AGENTCRM_MAIL_RECONCILE_MS` (reconcile schedule override).
 - Known limitation: keyset cursors compare against the cursor row's sort keys at read time, so a record edited between pages can shift page boundaries for name, date, or recency ordered lists. A composite cursor that freezes the sort key is planned.
 - All server code TypeScript, ESM, strict mode.
 - Tests with vitest cover the action service: version conflicts, workspace scoping, approval decisions, run transitions.

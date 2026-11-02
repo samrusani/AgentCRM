@@ -120,6 +120,26 @@ describe('crm import', () => {
     expect(env.db.prepare('SELECT COUNT(*) AS n FROM import_batch').get()).toEqual(before);
   });
 
+  it('refuses to decide a send approval, in either direction, and leaves it pending', () => {
+    const runId = env.ctx.newId('run');
+    env.db
+      .prepare("INSERT INTO run (id, created_at, workspace_id, kind, title, status) VALUES (?, ?, ?, 'send_outreach', 'Send 1 email for review', 'waiting_approval')")
+      .run(runId, env.ctx.now(), env.workspaceId);
+    const approvalId = env.ctx.newId('apr');
+    env.db
+      .prepare(
+        "INSERT INTO approval (id, created_at, workspace_id, run_id, kind, title, payload, payload_hash, status) VALUES (?, ?, ?, ?, 'send_review', 'Send 1 email', '{}', 'hash', 'pending')",
+      )
+      .run(approvalId, env.ctx.now(), env.workspaceId, runId);
+    for (const decision of ['approve', 'reject']) {
+      const result = crm('approvals', 'decide', approvalId, decision);
+      expect(result.code).toBe(1);
+      expect(result.err).toContain('Send approvals are decided in the app, where the full messages are shown.');
+    }
+    expect(env.db.prepare('SELECT status FROM approval WHERE id = ?').get(approvalId)).toEqual({ status: 'pending' });
+    expect(env.db.prepare('SELECT status FROM run WHERE id = ?').get(runId)).toEqual({ status: 'waiting_approval' });
+  });
+
   it('says when the approvals list is cut at 200', () => {
     const runId = (env.db.prepare("SELECT id FROM run WHERE kind = 'csv_import' ORDER BY created_at").get() as { id: string }).id;
     const existing = (env.db.prepare('SELECT COUNT(*) AS n FROM approval').get() as { n: number }).n;

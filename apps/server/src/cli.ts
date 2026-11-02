@@ -314,8 +314,13 @@ async function approvalsCommand(parsed: Parsed): Promise<number> {
       throw new UsageError('Use "crm approvals decide <id> approve|reject", for example: crm approvals decide apr_0123456789ab approve');
     }
     const { createContext, decideApproval } = await import('./actions/index.js');
+    const { requireApproval } = await import('./queries/runs.js');
     const { db, workspace } = await openWorkspace();
     try {
+      // A send shows every full message in the app. A terminal decision would approve mail nobody read in full.
+      if (requireApproval(db, workspace.id, id).kind === 'send_review') {
+        throw new Error('Send approvals are decided in the app, where the full messages are shown.');
+      }
       const result = decideApproval(createContext(db, workspace.id, { actor: 'user' }), id, {
         decision,
         ...(parsed.note ? { note: parsed.note } : {}),

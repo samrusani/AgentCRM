@@ -14,6 +14,7 @@ import type {
   DraftOutreachInput,
   Opportunity,
   QualificationConfig,
+  StageSendInput,
 } from './types';
 import { isRunActive } from '../lib/format';
 import { useUI } from '../lib/ui';
@@ -436,6 +437,159 @@ export function useQualifyRun() {
       queryClient.setQueryData(['run', run.id], run);
       void queryClient.invalidateQueries({ queryKey: ['runs'] });
       void queryClient.invalidateQueries({ queryKey: ['today'] });
+    },
+  });
+}
+
+export function useAgentMailConnector() {
+  const query = useConnectors();
+  const connector = query.data?.find((entry) => entry.kind === 'agentmail') ?? null;
+  return { query, connector };
+}
+
+export function useSaveAgentMailConnector() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { token?: string; inboxId?: string; inboxEmail?: string }) =>
+      api.connectors.saveAgentMail(input),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['connectors'] });
+      void queryClient.invalidateQueries({ queryKey: ['mail-inboxes'] });
+      void queryClient.invalidateQueries({ queryKey: ['mail-summary'] });
+    },
+  });
+}
+
+export function useRemoveAgentMailConnector() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.connectors.removeAgentMail(),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['connectors'] });
+      void queryClient.removeQueries({ queryKey: ['mail-inboxes'] });
+      void queryClient.invalidateQueries({ queryKey: ['send-intents'] });
+      void queryClient.invalidateQueries({ queryKey: ['mail-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['approvals'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+    },
+  });
+}
+
+export function useMailInboxes(enabled: boolean) {
+  return useQuery({
+    queryKey: ['mail-inboxes'],
+    queryFn: api.mail.inboxes,
+    enabled,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
+export function useCreateMailInbox() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (username?: string) => api.mail.createInbox(username),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['mail-inboxes'] });
+    },
+  });
+}
+
+export type MailReadiness =
+  | { state: 'loading' }
+  | { state: 'ready'; inboxEmail: string | null }
+  | { state: 'blocked'; message: string; settingsLink: boolean };
+
+// Whether a send can be prepared: AgentMail connected, healthy, with a sending inbox chosen.
+export function useMailReadiness(): MailReadiness {
+  const { query, connector } = useAgentMailConnector();
+  if (query.isPending) return { state: 'loading' };
+  if (query.isError) {
+    return { state: 'blocked', message: 'Could not check the AgentMail connection, so sending cannot be prepared.', settingsLink: false };
+  }
+  if (!connector) {
+    return { state: 'blocked', message: 'AgentMail is not connected, so nothing can be prepared for sending.', settingsLink: true };
+  }
+  if (connector.status === 'error') {
+    return {
+      state: 'blocked',
+      message: 'The AgentMail connection has an error, so nothing can be prepared for sending.',
+      settingsLink: true,
+    };
+  }
+  if (!connector.inboxId) {
+    return { state: 'blocked', message: 'AgentMail has no sending inbox selected.', settingsLink: true };
+  }
+  return { state: 'ready', inboxEmail: connector.inboxEmail };
+}
+
+export function useSendIntents() {
+  const connection = useEventConnection();
+  return useQuery({
+    queryKey: ['send-intents', 'all'],
+    queryFn: () => api.mail.intents(),
+    refetchInterval: connection === 'open' ? false : 5000,
+  });
+}
+
+export function useMailSummary() {
+  const connection = useEventConnection();
+  return useQuery({
+    queryKey: ['mail-summary'],
+    queryFn: api.mail.summary,
+    refetchInterval: connection === 'open' ? false : 5000,
+  });
+}
+
+export function useStageSend() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: StageSendInput) => api.mail.stage(input),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['approvals'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+      void queryClient.invalidateQueries({ queryKey: ['run'] });
+      void queryClient.invalidateQueries({ queryKey: ['send-intents'] });
+      void queryClient.invalidateQueries({ queryKey: ['mail-summary'] });
+    },
+  });
+}
+
+export function useControlSendIntent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string; action: 'cancel' | 'acknowledge' }) =>
+      api.mail.control(input.id, input.action),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['send-intents'] });
+      void queryClient.invalidateQueries({ queryKey: ['mail-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['approvals'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+    },
+  });
+}
+
+export function useSuppressions() {
+  return useQuery({ queryKey: ['suppressions'], queryFn: api.mail.suppressions });
+}
+
+export function useAddSuppression() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (email: string) => api.mail.addSuppression(email),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['suppressions'] });
+    },
+  });
+}
+
+export function useLiftSuppression() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.mail.liftSuppression(id),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['suppressions'] });
+      void queryClient.invalidateQueries({ queryKey: ['mail-summary'] });
     },
   });
 }

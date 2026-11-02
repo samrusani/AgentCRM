@@ -170,7 +170,7 @@ export function PersonSheet({
 
           <SheetSection title="Activity">
             <NoteForm entityType="person" entityId={id} />
-            <Timeline activities={person.activities} />
+            <Timeline activities={person.activities} prepareSend />
           </SheetSection>
           <p className="muted sheet__foot">Updated {formatAgo(person.updatedAt)}, version <span className="num">{person.version}</span></p>
         </>

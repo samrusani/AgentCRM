@@ -16,7 +16,8 @@ import { Icon } from '../components/Icons';
 import { DraftRunIssuesView } from '../components/draftReview';
 import { batchHref } from '../components/importReview';
 import { CountsList, RunLedger } from '../components/ledger';
-import { parseDraftRunIssues } from '../lib/drafts';
+import { PrepareToSend } from '../components/prepareSend';
+import { parseDraftReviewPayload, parseDraftRunIssues } from '../lib/drafts';
 import { formatAgo, formatDateTime, isSimulatedRun } from '../lib/format';
 import { DraftOutreachSheet } from './DraftOutreachSheet';
 import { ImportBatchSheet, ImportSetupSheet } from './ImportSheets';
@@ -193,6 +194,11 @@ function RunDetail({ id }: { id: string }) {
   const approvals = run.approvals ?? [];
   const isApify = run.kind === 'apify_scrape';
   const isDraft = run.kind === 'draft_outreach';
+  const savedDrafts = isDraft
+    ? approvals
+        .filter((approval) => approval.kind === 'draft_review' && approval.status === 'approved')
+        .reduce((total, approval) => total + parseDraftReviewPayload(approval.payload).drafts.length, 0)
+    : 0;
   const batchId = typeof run.scope.batchId === 'string' && run.scope.batchId !== '' ? run.scope.batchId : null;
 
   const act = (action: 'pause' | 'resume' | 'cancel') => {
@@ -223,8 +229,19 @@ function RunDetail({ id }: { id: string }) {
       {isDraft ? (
         <p className="muted">
           Costs are estimates from list prices. Drafts are created for review: approved drafts are saved on each
-          person as drafts that were not sent, and nothing is ever sent.
+          person as drafts that were not sent. Saving drafts never sends anything.
         </p>
+      ) : null}
+      {savedDrafts > 0 ? (
+        <section className="section" aria-label="Send saved drafts">
+          <PrepareToSend
+            label={`Prepare ${savedDrafts.toLocaleString()} ${savedDrafts === 1 ? 'draft' : 'drafts'} for sending`}
+            input={{ runId: run.id }}
+          />
+          <p className="muted">
+            This creates a review of the exact messages on Today. Nothing is sent until you approve them there.
+          </p>
+        </section>
       ) : null}
       {isDraft ? <DraftRunIssuesView issues={parseDraftRunIssues(run.scope)} /> : null}
 

@@ -9,6 +9,7 @@ import { Chip, ErrorState, Loading, errorMessage } from '../components/common';
 import { RemoveControl, TokenForm, TokenLine } from '../components/connector';
 import { Icon } from '../components/Icons';
 import { normalizeActorId } from '../lib/imports';
+import { AgentMailConnectorCard } from './AgentMailConnectorCard';
 import { AnthropicConnectorCard } from './AnthropicConnectorCard';
 
 function ApifyRemoveControl() {
@@ -176,6 +177,7 @@ function ApifyCard({ connector }: { connector: Connector | null }) {
 export function ConnectorSettings() {
   const { query, connector } = useApifyConnector();
   const anthropic = query.data?.find((entry) => entry.kind === 'anthropic') ?? null;
+  const agentmail = query.data?.find((entry) => entry.kind === 'agentmail') ?? null;
 
   return (
     <section className="section" aria-labelledby="settings-connectors">
@@ -188,6 +190,7 @@ export function ConnectorSettings() {
         <div className="connector-list">
           <ApifyCard connector={connector} />
           <AnthropicConnectorCard connector={anthropic} />
+          <AgentMailConnectorCard connector={agentmail} />
         </div>
       ) : null}
     </section>

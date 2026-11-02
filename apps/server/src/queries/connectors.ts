@@ -2,7 +2,7 @@ import type { Db } from '../db.js';
 import { defaultModel, isSupportedModel, type ModelId } from '../providers/anthropic.js';
 import { type Row } from '../records.js';
 
-export type ConnectorKind = 'apify' | 'anthropic';
+export type ConnectorKind = 'apify' | 'anthropic' | 'agentmail';
 
 export interface ApifyConnectorSettings {
   allowlist: string[];
@@ -11,6 +11,16 @@ export interface ApifyConnectorSettings {
 
 export interface AnthropicConnectorSettings {
   model: ModelId;
+}
+
+export interface AgentmailConnectorSettings {
+  inboxId: string | null;
+  inboxEmail: string | null;
+  // High water marks for the inbound sync. Neither one is a secret.
+  lastMessageTimestamp: string | null;
+  seenEventId: string | null;
+  lastSyncAt: string | null;
+  lastSyncError: string | null;
 }
 
 // Settings hold the allowlist, the account name, the model choice, and the last error sentence. They never hold the secret.
@@ -31,6 +41,7 @@ function parseObject(value: unknown): Record<string, unknown> {
 const errorMessages: Record<ConnectorKind, string> = {
   apify: 'Apify rejected the saved API token.',
   anthropic: 'Anthropic rejected the saved API key.',
+  agentmail: 'AgentMail rejected the saved API key.',
 };
 
 interface ConnectorBase {
@@ -45,7 +56,8 @@ interface ConnectorBase {
 
 export type ApifyConnector = ConnectorBase & { kind: 'apify'; settings: ApifyConnectorSettings };
 export type AnthropicConnector = ConnectorBase & { kind: 'anthropic'; settings: AnthropicConnectorSettings };
-export type Connector = ApifyConnector | AnthropicConnector;
+export type AgentmailConnector = ConnectorBase & { kind: 'agentmail'; settings: AgentmailConnectorSettings };
+export type Connector = ApifyConnector | AnthropicConnector | AgentmailConnector;
 
 export function toConnector(row: Row): Connector {
   const kind = String(row.kind) as ConnectorKind;
@@ -63,6 +75,21 @@ export function toConnector(row: Row): Connector {
   if (kind === 'anthropic') {
     return { ...base, kind, settings: { model: isSupportedModel(stored.model) ? stored.model : defaultModel } };
   }
+  if (kind === 'agentmail') {
+    const field = (key: string): string | null => (typeof stored[key] === 'string' && stored[key] !== '' ? (stored[key] as string) : null);
+    return {
+      ...base,
+      kind,
+      settings: {
+        inboxId: field('inboxId'),
+        inboxEmail: field('inboxEmail'),
+        lastMessageTimestamp: field('lastMessageTimestamp'),
+        seenEventId: field('seenEventId'),
+        lastSyncAt: field('lastSyncAt'),
+        lastSyncError: field('lastSyncError'),
+      },
+    };
+  }
   return {
     ...base,
     kind: 'apify',
@@ -75,6 +102,7 @@ export function toConnector(row: Row): Connector {
 
 export function getConnector(db: Db, workspaceId: string, kind: 'apify'): ApifyConnector | null;
 export function getConnector(db: Db, workspaceId: string, kind: 'anthropic'): AnthropicConnector | null;
+export function getConnector(db: Db, workspaceId: string, kind: 'agentmail'): AgentmailConnector | null;
 export function getConnector(db: Db, workspaceId: string, kind: ConnectorKind): Connector | null;
 export function getConnector(db: Db, workspaceId: string, kind: ConnectorKind): Connector | null {
   const row = db.prepare('SELECT * FROM connector WHERE workspace_id = ? AND kind = ?').get(workspaceId, kind) as

@@ -1,7 +1,8 @@
 import type { Db } from '../db.js';
 import { notFound } from '../errors.js';
 import { type Row, toOpportunity, toStageEvent, toTask } from '../records.js';
-import { listActivities } from './activities.js';
+import { listActivities, modelHiddenActivityKinds } from './activities.js';
+import type { DetailOptions } from './people.js';
 import { listClaims } from './claims.js';
 import { paginate, type Page } from './pagination.js';
 import { taskSelect } from './tasks.js';
@@ -70,7 +71,7 @@ export function listOpportunities(
   });
 }
 
-export function getOpportunityDetail(db: Db, workspaceId: string, id: string) {
+export function getOpportunityDetail(db: Db, workspaceId: string, id: string, options: DetailOptions = {}) {
   const opportunity = requireOpportunity(db, workspaceId, id);
   const stageEvents = (
     db
@@ -92,7 +93,12 @@ export function getOpportunityDetail(db: Db, workspaceId: string, id: string) {
     ...opportunity,
     stageEvents,
     claims: listClaims(db, workspaceId, 'opportunity', id),
-    activities: listActivities(db, workspaceId, { entityType: 'opportunity', entityId: id, limit: 50 }).items,
+    activities: listActivities(db, workspaceId, {
+      entityType: 'opportunity',
+      entityId: id,
+      limit: 50,
+      ...(options.forModel ? { excludeKinds: modelHiddenActivityKinds } : {}),
+    }).items,
     tasks,
   };
 }

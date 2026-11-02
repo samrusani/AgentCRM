@@ -1537,3 +1537,222 @@ textarea.input {
   border-radius: var(--radius);
   background: var(--bg);
 }
+
+/* Send review, outbox, replies, suppressions */
+.send-review {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+.send-review .counts {
+  margin: 0;
+}
+.send-review__fixed {
+  margin: 0;
+  font-weight: 600;
+}
+.send-excluded {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.send-excluded__title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.send-excluded__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.send-excluded__item {
+  overflow-wrap: anywhere;
+}
+.send-excluded__reason {
+  display: block;
+}
+.send-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.send-message {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow-wrap: anywhere;
+}
+.send-message__position {
+  margin: 0 0 4px;
+  font-size: 12px;
+}
+.send-message__fields > div {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 8px;
+  padding: 2px 0;
+}
+.send-message__fields dt {
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+.send-message__body {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  white-space: pre-wrap;
+}
+.prepare-send {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 6px;
+}
+.staged-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.outbox,
+.reply-list,
+.outbox-list,
+.suppression-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.outbox {
+  gap: 8px;
+}
+.outbox-row,
+.reply-row,
+.suppression {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.outbox-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  align-items: start;
+}
+.outbox-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.outbox-row__side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.outbox-row__confirm,
+.outbox-row__error {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.outbox-row__subject {
+  font-weight: 550;
+}
+.reply-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+.reply-row__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.reply-row__age {
+  margin-left: auto;
+}
+.reply-row__subject,
+.reply-row__preview {
+  margin: 0;
+}
+.reply-row__subject {
+  font-weight: 550;
+}
+.reply-row__preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  color: var(--ink-muted);
+}
+.reply-row__optout {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.reply-row__optout p {
+  margin: 0;
+}
+.reply-row__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.reply-row__actions .btn {
+  text-decoration: none;
+}
+.suppression {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+.suppression__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.suppression__email {
+  overflow-wrap: anywhere;
+}
+.suppression-add {
+  margin-top: 12px;
+}
+.lift {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.lift__confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--danger);
+}

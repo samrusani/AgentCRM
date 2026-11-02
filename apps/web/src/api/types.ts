@@ -65,7 +65,7 @@ export interface Claim {
   status: ClaimStatus | string;
 }
 
-export type ActivityKind = 'note' | 'email_draft' | 'stage_change' | 'agent' | string;
+export type ActivityKind = 'note' | 'email_draft' | 'email_out' | 'email_in' | 'stage_change' | 'agent' | string;
 
 export interface Activity {
   id: string;
@@ -270,12 +270,15 @@ export type ConnectorStatus = 'connected' | 'error' | string;
 
 export interface Connector {
   id: string | null;
-  kind: 'apify' | 'anthropic' | string;
+  kind: 'apify' | 'anthropic' | 'agentmail' | string;
   status: ConnectorStatus;
   statusMessage: string | null;
   allowlist: string[];
   // Anthropic only: the chosen model id from settings.model.
   model: string | null;
+  // AgentMail only: the selected sending inbox from settings.
+  inboxId: string | null;
+  inboxEmail: string | null;
   tokenMasked: string | null;
   updatedAt: string | null;
 }
@@ -481,3 +484,99 @@ export interface QualificationResult extends QualificationSummary {
 }
 
 export type ServerEventName = 'run_updated' | 'approval_updated' | 'record_updated';
+
+export interface MailInbox {
+  id: string;
+  email: string;
+}
+
+export type SendIntentStatus =
+  | 'awaiting_approval'
+  | 'approved'
+  | 'queued'
+  | 'submitting'
+  | 'accepted'
+  | 'failed'
+  | 'unknown'
+  | 'blocked'
+  | 'cancelled'
+  | 'replied'
+  | 'bounced';
+
+export interface SendIntent {
+  id: string;
+  personId: string | null;
+  personName: string | null;
+  toEmail: string;
+  subject: string;
+  status: SendIntentStatus | string;
+  error: string | null;
+  providerMessageId: string | null;
+  submittedAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface SendExcluded {
+  personName: string | null;
+  toEmail: string | null;
+  reason: string;
+}
+
+// One frozen message as the send_review approval holds it. Approving sends exactly this text.
+export interface SendReviewMessage {
+  intentId: string | null;
+  personName: string | null;
+  to: string | null;
+  subject: string | null;
+  body: string | null;
+  inboxEmail: string | null;
+}
+
+export interface SendReviewPayload {
+  messages: SendReviewMessage[];
+  excluded: SendExcluded[];
+  remainingDailyCap: number | null;
+}
+
+export interface StageSendInput {
+  draftActivityIds?: string[];
+  runId?: string;
+}
+
+export interface StageSendResult {
+  approval: Approval | null;
+  excluded: SendExcluded[];
+}
+
+export interface Suppression {
+  id: string;
+  email: string;
+  reason: string;
+  createdAt: string | null;
+  matchedWording: string | null;
+}
+
+export interface MailReply {
+  id: string;
+  personId: string | null;
+  personName: string | null;
+  fromEmail: string | null;
+  subject: string | null;
+  preview: string | null;
+  receivedAt: string | null;
+  taskId: string | null;
+  taskTitle: string | null;
+  optOut: boolean;
+  matchedWording: string | null;
+  suppressionId: string | null;
+}
+
+export interface MailSummary {
+  counts: Record<string, number>;
+  remainingDailyCap: number | null;
+  dailyCap: number;
+  lastSyncAt: string | null;
+  replies: MailReply[];
+  // The server may report only a number. It is at least the number of rows in replies.
+  repliesNeedingAttention: number;
+}

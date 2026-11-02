@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { createAnthropicProvider, type ModelCallReport, ModelProviderError } from '../providers/anthropic.js';
 import { getConnector, getConnectorSecret } from '../queries/connectors.js';
-import { listActivities } from '../queries/activities.js';
+import { listActivities, modelHiddenActivityKinds } from '../queries/activities.js';
 import { listClaims } from '../queries/claims.js';
 import { getRunModelUsage } from '../queries/modelCalls.js';
 import { getOrganization } from '../queries/organizations.js';
@@ -408,7 +408,13 @@ function recordContext(ctx: ActionContext, personId: string) {
       sourceType: claim.sourceType,
       observedAt: claim.observedAt,
     }));
-  const activities = listActivities(ctx.db, ctx.workspaceId, { entityType: 'person', entityId: personId, limit: 5 }).items.map(
+  const activities = listActivities(ctx.db, ctx.workspaceId, {
+    entityType: 'person',
+    entityId: personId,
+    limit: 5,
+    // Inbound email is text from outside the app, so a model never sees it here.
+    excludeKinds: modelHiddenActivityKinds,
+  }).items.map(
     (activity) => ({ kind: activity.kind, createdAt: activity.createdAt, body: activity.body.slice(0, 300) }),
   );
   const record = {

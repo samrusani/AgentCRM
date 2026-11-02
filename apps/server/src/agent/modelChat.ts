@@ -141,9 +141,9 @@ export function runChatTool(ctx: ActionContext, call: ChatToolCall): ChatToolRes
       const parsed = recordInput.safeParse(call.input);
       if (!parsed.success) return failureResult('get_record needs entityType and entityId.');
       const { entityType, entityId } = parsed.data;
-      if (entityType === 'person') return dataResult(getPersonDetail(db, workspaceId, entityId));
-      if (entityType === 'organization') return dataResult(getOrganizationDetail(db, workspaceId, entityId));
-      return dataResult(getOpportunityDetail(db, workspaceId, entityId));
+      if (entityType === 'person') return dataResult(getPersonDetail(db, workspaceId, entityId, { forModel: true }));
+      if (entityType === 'organization') return dataResult(getOrganizationDetail(db, workspaceId, entityId, { forModel: true }));
+      return dataResult(getOpportunityDetail(db, workspaceId, entityId, { forModel: true }));
     }
     if (call.name === 'today_summary') {
       const today = getToday(db, workspaceId);

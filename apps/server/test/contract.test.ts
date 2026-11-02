@@ -5,6 +5,9 @@ import { processAllJobs, processJobs } from '../src/jobs/worker.js';
 import { seedDatabase } from '../src/seed/seed.js';
 import { type ApifyStub, startApifyStub, stubToken, useStub } from './apifyStub.js';
 import { type AnthropicStub, draftFor, startAnthropicStub, stubApiKey, textReply, useAnthropicStub } from './anthropicStub.js';
+import { type AgentmailStub, startAgentmailStub, stubAgentmailKey, stubInboxId, useAgentmailStub } from './agentmailStub.js';
+import { createContext } from '../src/actions/index.js';
+import { requireWorkspace } from '../src/queries/workspace.js';
 import { createTestEnvironment } from './helpers.js';
 
 // One success case for every route the web client calls, against a temporary database and no live server.
@@ -14,12 +17,16 @@ let stub: ApifyStub;
 let restoreEnvironment: () => void;
 let anthropic: AnthropicStub;
 let restoreAnthropic: () => void;
+let agentmail: AgentmailStub;
+let restoreAgentmail: () => void;
 
 beforeAll(async () => {
   stub = await startApifyStub();
   restoreEnvironment = useStub(stub);
   anthropic = await startAnthropicStub();
   restoreAnthropic = useAnthropicStub(anthropic);
+  agentmail = await startAgentmailStub();
+  restoreAgentmail = useAgentmailStub(agentmail);
   seedDatabase(env.db, { now: new Date('2026-03-01T12:00:00.000Z') });
   app = buildApp({ db: env.db, bus: env.bus, databasePath: env.databasePath, logLevel: 'silent', now: env.ctx.now });
   await app.ready();
@@ -29,6 +36,8 @@ afterAll(async () => {
   await app.close();
   await stub.close();
   await anthropic.close();
+  await agentmail.close();
+  restoreAgentmail();
   restoreAnthropic();
   restoreEnvironment();
   env.cleanup();
@@ -310,5 +319,114 @@ describe('web client contract', () => {
     expect(detail.body.qualification).toMatchObject({ total: 3, excluded: false, excludedReasons: [] });
     expect(detail.body.qualification.criteria[0]).toHaveProperty('evidence');
     expect(['matched', 'not_matched', 'unknown']).toContain(detail.body.qualification.criteria[0].outcome);
+  });
+
+  it('serves the agentmail connector, send intent, suppression, and mail summary routes', async () => {
+    const ctx = createContext(env.db, requireWorkspace(env.db).id, { bus: env.bus, now: env.ctx.now });
+
+    const connected = await call('PUT', '/api/connectors/agentmail', { token: stubAgentmailKey });
+    expect(connected.status).toBe(201);
+    expect(connected.body.kind).toBe('agentmail');
+    const inboxes = await call('GET', '/api/connectors/agentmail/inboxes');
+    expect(inboxes.status).toBe(200);
+    expect(inboxes.body).toEqual({ items: [{ id: stubInboxId, email: stubInboxId }], nextCursor: null });
+    const created = await call('POST', '/api/connectors/agentmail/inboxes', { username: 'contract' });
+    expect(created.status).toBe(201);
+    expect(created.body).toEqual({ id: 'contract@stub-mail.invalid', email: 'contract@stub-mail.invalid' });
+    const selected = await call('PUT', '/api/connectors/agentmail', { inboxId: stubInboxId });
+    expect(selected.status).toBe(200);
+    expect(selected.body.settings.inboxId).toBe(stubInboxId);
+
+    const empty = await call('GET', '/api/mail/summary');
+    expect(empty.status).toBe(200);
+    expect(empty.body).toMatchObject({
+      dailyCap: 50,
+      remainingDailyCap: 50,
+      lastSyncAt: null,
+      repliesNeedingAttention: { count: 0, items: [] },
+    });
+    expect(Object.keys(empty.body.counts).sort()).toEqual(
+      ['accepted', 'approved', 'awaiting_approval', 'blocked', 'bounced', 'cancelled', 'failed', 'queued', 'replied', 'submitting', 'unknown'],
+    );
+
+    const person = await call('POST', '/api/people', { firstName: 'Contract', lastName: 'Sender', email: 'contract.sender@lanternrow.invalid' });
+    expect(person.status).toBe(201);
+    const seeded = (await call('GET', '/api/people?limit=1')).body.items[0];
+    const addDraft = (personId: string, subject: string): string => {
+      const id = ctx.newId('act');
+      env.db
+        .prepare("INSERT INTO activity (id, created_at, workspace_id, entity_type, entity_id, kind, body, actor) VALUES (?, ?, ?, 'person', ?, 'email_draft', ?, 'user')")
+        .run(id, ctx.now(), ctx.workspaceId, personId, `Draft, not sent.\n\nSubject: ${subject}\n\nBody for ${subject}.`);
+      return id;
+    };
+
+    const demo = await call('POST', '/api/send-intents', { draftActivityIds: [addDraft(seeded.id, 'Demo')] });
+    expect(demo.status).toBe(200);
+    expect(demo.body).toMatchObject({ approval: null, intents: [], excluded: [{ reason: 'demo_address' }] });
+    expect((await call('POST', '/api/send-intents', {})).status).toBe(400);
+    expect((await call('POST', '/api/send-intents', { draftActivityIds: ['act_000000000000'] })).status).toBe(404);
+
+    const staged = await call('POST', '/api/send-intents', { draftActivityIds: [addDraft(person.body.id, 'Contract hello')] });
+    expect(staged.status).toBe(201);
+    expect(staged.body.approval).toMatchObject({ kind: 'send_review', status: 'pending' });
+    expect(staged.body.approval.payload.messages[0]).toMatchObject({
+      personName: 'Contract Sender',
+      to: 'contract.sender@lanternrow.invalid',
+      subject: 'Contract hello',
+      inboxEmail: stubInboxId,
+    });
+    expect(staged.body.approval.payload.remainingDailyCap).toBe(49);
+    expect(staged.body.excluded).toEqual([]);
+    const intentId = staged.body.intents[0].id;
+
+    const waiting = await call('GET', '/api/send-intents?status=awaiting_approval');
+    expect(waiting.status).toBe(200);
+    expect(waiting.body.items[0]).toMatchObject({
+      id: intentId,
+      personName: 'Contract Sender',
+      to: 'contract.sender@lanternrow.invalid',
+      status: 'awaiting_approval',
+      error: null,
+      providerMessageId: null,
+      submittedAt: null,
+    });
+    expect(waiting.body.items[0]).toHaveProperty('updatedAt');
+    expect(waiting.body.nextCursor).toBeNull();
+    expect((await call('GET', '/api/send-intents?status=delivered')).status).toBe(400);
+
+    const decided = await call('POST', `/api/approvals/${staged.body.approval.id}/decision`, { decision: 'approve' });
+    expect(decided.status).toBe(200);
+    expect(decided.body).toMatchObject({ queued: 1, skipped: [], alreadyDecided: false });
+    await processAllJobs(ctx);
+    const accepted = await call('GET', '/api/send-intents?status=accepted,failed');
+    expect(accepted.body.items[0]).toMatchObject({ id: intentId, status: 'accepted' });
+    expect(accepted.body.items[0].providerMessageId).toMatch(/^msg_stub_/);
+    expect(accepted.body.items[0].submittedAt).not.toBeNull();
+    expect((await call('POST', `/api/send-intents/${intentId}/control`, { action: 'cancel' })).status).toBe(409);
+    expect((await call('POST', `/api/send-intents/${intentId}/control`, { action: 'explode' })).status).toBe(400);
+    expect((await call('POST', '/api/send-intents/snd_000000000000/control', { action: 'cancel' })).status).toBe(404);
+
+    const another = await call('POST', '/api/send-intents', { draftActivityIds: [addDraft(person.body.id, 'Second hello')] });
+    const cancelled = await call('POST', `/api/send-intents/${another.body.intents[0].id}/control`, { action: 'cancel' });
+    expect(cancelled.status).toBe(200);
+    expect(cancelled.body).toMatchObject({ status: 'cancelled', personName: 'Contract Sender' });
+
+    const summary = await call('GET', '/api/mail/summary');
+    expect(summary.body.counts.accepted).toBe(1);
+    expect(summary.body.remainingDailyCap).toBe(49);
+    expect(summary.body.inbox).toMatchObject({ connected: true, inboxEmail: stubInboxId });
+
+    const added = await call('POST', '/api/suppressions', { email: 'Muted@Lanternrow.invalid', reason: 'manual' });
+    expect(added.status).toBe(201);
+    expect(added.body).toMatchObject({ email: 'muted@lanternrow.invalid', reason: 'manual' });
+    expect((await call('POST', '/api/suppressions', { email: 'muted@lanternrow.invalid' })).status).toBe(409);
+    expect((await call('POST', '/api/suppressions', { email: 'nope' })).status).toBe(400);
+    const list = await call('GET', '/api/suppressions');
+    expect(list.body.items).toHaveLength(1);
+    expect(list.body.nextCursor).toBeNull();
+    expect((await call('DELETE', `/api/suppressions/${added.body.id}`)).status).toBe(204);
+    expect((await call('DELETE', `/api/suppressions/${added.body.id}`)).status).toBe(404);
+
+    expect((await call('DELETE', '/api/connectors/agentmail')).status).toBe(204);
   });
 });

@@ -55,5 +55,40 @@ export const anthropicChatTimeoutMilliseconds = 30_000;
 export const anthropicDraftTimeoutMilliseconds = 60_000;
 export const anthropicKeyCheckTimeoutMilliseconds = 10_000;
 
+export const defaultAgentmailBase = 'https://api.agentmail.to/v0';
+
+export function agentmailBaseUrl(): string {
+  const raw = process.env.AGENTCRM_AGENTMAIL_BASE;
+  return (raw && raw.length > 0 ? raw : defaultAgentmailBase).replace(/\/+$/, '');
+}
+
+// Every AgentMail request gives up after this long. Tests shorten it to exercise the unknown outcome path.
+export function agentmailRequestTimeoutMilliseconds(): number {
+  return positiveIntegerFromEnvironment('AGENTCRM_AGENTMAIL_TIMEOUT_MS', 15_000);
+}
+
+export const minimumMailPollMilliseconds = 5000;
+
+// How often the inbox is polled. Default 60 seconds, never faster than every 5 seconds.
+export function mailPollMilliseconds(): number {
+  return Math.max(minimumMailPollMilliseconds, positiveIntegerFromEnvironment('AGENTCRM_MAIL_POLL_MS', 60_000));
+}
+
+export const defaultMailReconcileDelays: readonly number[] = [30_000, 120_000, 600_000];
+
+// Waits before each reconciliation attempt for a send whose outcome is unknown: 30 seconds, 2 minutes, 10 minutes.
+// AGENTCRM_MAIL_RECONCILE_MS replaces them with one number (used for every attempt) or a comma list.
+export function mailReconcileDelays(): readonly number[] {
+  const raw = process.env.AGENTCRM_MAIL_RECONCILE_MS;
+  if (raw === undefined || raw.trim() === '') return defaultMailReconcileDelays;
+  const parsed = raw.split(',').map((part) => Number(part.trim()));
+  if (parsed.some((value) => !Number.isFinite(value) || value < 0)) return defaultMailReconcileDelays;
+  const delays = parsed.map((value) => Math.trunc(value));
+  return delays.length === 1 ? [delays[0]!, delays[0]!, delays[0]!] : delays;
+}
+
+export const dailySendCap = 50;
+export const maxIntentsPerApproval = 25;
+
 export const workerTickMilliseconds = 300;
 export const serverVersion = '0.1.0';

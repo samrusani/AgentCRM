@@ -4,6 +4,7 @@ import { modelName } from '../lib/models';
 import { useUI, type ThemeSetting } from '../lib/ui';
 import { ConnectorSettings } from './ConnectorSettings';
 import { QualificationSettings } from './QualificationSettings';
+import { SuppressionSettings } from './SuppressionSettings';
 
 const THEMES: Array<{ value: ThemeSetting; label: string; hint: string }> = [
   { value: 'system', label: 'System', hint: 'Follow the operating system setting' },
@@ -45,6 +46,8 @@ export function Settings() {
         </section>
 
         <ConnectorSettings />
+
+        <SuppressionSettings />
 
         <QualificationSettings />
 

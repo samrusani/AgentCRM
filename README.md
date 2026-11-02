@@ -2,7 +2,7 @@
 
 AgentCRM is a local first, open source CRM built for agent workflows. People and coding agents work through the same core: one action service behind the web UI, the CLI, and an MCP server. Your data lives in a SQLite file on your own computer, so there is no network round trip between you and your records.
 
-Status: early development, not yet ready for real work. The app runs locally with synthetic demo data, and a simulated research run shows the run and approval machinery end to end. Apify imports are the first live provider: bring your own Apify account, run any store Actor, and review staged results before they become records. Model backed chat and outreach drafting work with your own Anthropic API key; every cost shown is an estimate from list prices, and drafts are never sent because email connectors are not built yet. Connector tokens and keys are stored unencrypted in the local database file, which is created with owner only permissions.
+Status: early development, not yet ready for real work. The app runs locally with synthetic demo data, and a simulated research run shows the run and approval machinery end to end. Apify imports are the first live provider: bring your own Apify account, run any store Actor, and review staged results before they become records. Model backed chat and outreach drafting work with your own Anthropic API key; every cost shown is an estimate from list prices. Sending works through your own AgentMail account: every message is approved word for word before it goes out, submits reuse the provider's duplicate protection so retries do not send twice within its roughly one day window (an attempt whose outcome stays unknown past that window is surfaced to you, never retried), replies and opt outs are handled, and neither MCP, chat, nor the CLI can approve or submit a send. Connector tokens and keys are stored unencrypted in the local database file, which is created with owner only permissions.
 
 ## Why another CRM
 
@@ -47,7 +47,7 @@ Open http://127.0.0.1:5173 in your browser. The API listens on http://127.0.0.1:
 | Qualification: editable criteria, per criterion verdicts with evidence, fit sort | Working; unknown never counts as a match |
 | MCP server over stdio | Working, read and propose tools; can start qualify runs, allowlisted Apify runs, and budgeted draft runs |
 | CLI: doctor, seed, serve, search, runs | Working |
-| Email connectors (AgentMail, Gmail) | Not built |
+| Email: AgentMail connector, reviewed sends with idempotent submits, replies, opt outs, bounces, suppressions | Working, verified against a stubbed AgentMail API; bring your own account. Gmail not built |
 | Model costs: per call usage rows, per run estimates from list prices | Working, always labelled estimates |
 
 ## Documentation

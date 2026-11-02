@@ -6,6 +6,7 @@ import type { Activity, Claim, Opportunity } from '../api/types';
 import { formatAge, formatAgo, formatAmount, formatDateTime, humanize } from '../lib/format';
 import { Chip, ChipButton, errorMessage } from './common';
 import { Icon } from './Icons';
+import { PrepareToSend } from './prepareSend';
 
 function camel(value: string): string {
   return value.replace(/_([a-z0-9])/g, (_match, char: string) => char.toUpperCase());
@@ -252,11 +253,14 @@ export function EditableValue({
 const KIND_LABELS: Record<string, string> = {
   note: 'Note',
   email_draft: 'Email draft',
+  email_out: 'Sent (provider accepted)',
+  email_in: 'Reply received',
   stage_change: 'Stage change',
   agent: 'Agent',
 };
 
-export function Timeline({ activities }: { activities: Activity[] }) {
+// Drafts can be prepared for sending only on a person, where the send review names the recipient.
+export function Timeline({ activities, prepareSend = false }: { activities: Activity[]; prepareSend?: boolean }) {
   if (activities.length === 0) {
     return <p className="muted">No activity yet. Notes, stage changes, and agent work appear here.</p>;
   }
@@ -269,12 +273,16 @@ export function Timeline({ activities }: { activities: Activity[] }) {
             {activity.kind === 'email_draft' ? (
               <Chip tone="neutral">{/^demo draft/i.test(activity.body) ? 'Demo draft, not sent' : 'Draft, not sent'}</Chip>
             ) : null}
+
             <span className="muted num timeline__age" title={formatDateTime(activity.createdAt)}>
               {formatAge(activity.createdAt)}
             </span>
           </div>
           <p className="timeline__body">{activity.body}</p>
           <span className="muted">{activity.actor}</span>
+          {activity.kind === 'email_draft' && prepareSend && !/^demo draft/i.test(activity.body) ? (
+            <PrepareToSend label="Prepare to send" input={{ draftActivityIds: [activity.id] }} />
+          ) : null}
         </li>
       ))}
     </ol>

@@ -6,6 +6,7 @@ import { applyDrafts } from './draftOutreach.js';
 import { acceptImportBatch } from './importReview.js';
 import { applyShortlist, hashPayload } from './demoResearch.js';
 import { cancelRunIn } from './runs.js';
+import { approveSendReview, rejectSendReview, sendReviewKind, startSendingRunIn } from './sendIntents.js';
 
 const decisionSchema = z
   .object({
@@ -41,12 +42,32 @@ export function decideApproval(ctx: ActionContext, approvalId: string, input: un
     }
 
     const now = tx.now();
+    let sendReview: ReturnType<typeof approveSendReview> | null = null;
     tx.db
       .prepare('UPDATE approval SET status = ?, note = ?, decided_at = ?, decided_by = ? WHERE id = ?')
       .run(wanted, data.note ?? null, now, tx.actor, approvalId);
     tx.audit(`approval.${data.decision}`, 'approval', approvalId, { runId: run.id, note: data.note ?? null });
 
-    if (approval.kind === 'import_review') {
+    if (approval.kind === sendReviewKind) {
+      if (data.decision === 'approve') {
+        sendReview = approveSendReview(tx, approval);
+        if (sendReview.nothingToSend) {
+          // Every message was cancelled, so approving changes nothing. The approval resolves as rejected.
+          const note = 'Every message in this approval was cancelled, so nothing was approved or sent.';
+          tx.db.prepare("UPDATE approval SET status = 'rejected', note = ? WHERE id = ?").run(note, approvalId);
+          tx.audit('approval.reject', 'approval', approvalId, { runId: run.id, reason: 'all_cancelled' });
+          cancelRunIn(tx, run.id, 'Every message was cancelled.');
+          tx.audit('run.cancelled', 'run', run.id, { reason: 'all_cancelled' });
+        } else {
+          // The run keeps running until every message has left the queue, then it settles.
+          startSendingRunIn(tx, run, sendReview);
+        }
+      } else {
+        const cancelled = rejectSendReview(tx, approvalId);
+        cancelRunIn(tx, run.id, 'The send was rejected.');
+        tx.audit('run.cancelled', 'run', run.id, { reason: 'approval_rejected', messagesCancelled: cancelled });
+      }
+    } else if (approval.kind === 'import_review') {
       if (data.decision === 'approve') {
         const outcome = acceptImportBatch(tx, run.id, run.scope);
         const finalStatus = outcome.truncated ? 'partial' : 'succeeded';
@@ -98,6 +119,9 @@ export function decideApproval(ctx: ActionContext, approvalId: string, input: un
       approval: requireApproval(tx.db, tx.workspaceId, approvalId),
       run: getRun(tx.db, tx.workspaceId, run.id)!,
       alreadyDecided: false,
+      ...(sendReview
+        ? { queued: sendReview.queued, blocked: sendReview.blocked, skipped: sendReview.skipped, nothingToSend: sendReview.nothingToSend }
+        : {}),
     };
   });
 }
