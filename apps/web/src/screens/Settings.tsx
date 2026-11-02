@@ -71,23 +71,22 @@ export function GeneralSettings() {
         <h2 className="section__title" id="settings-appearance">
           Appearance
         </h2>
-        <div className="radio-group" role="radiogroup" aria-label="Appearance">
+        <div className="segmented" role="radiogroup" aria-label="Appearance">
           {THEMES.map((option) => (
-            <label key={option.value} className="radio">
+            <label key={option.value} className="segmented__option">
               <input
                 type="radio"
                 name="appearance"
                 checked={theme === option.value}
                 onChange={() => setTheme(option.value)}
               />
-              <span>
-                {option.label}
-                <span className="muted"> {option.hint}</span>
-              </span>
+              <span>{option.label}</span>
             </label>
           ))}
         </div>
-        <p className="muted">This choice is stored in this browser only.</p>
+        <p className="muted">
+          {THEMES.find((option) => option.value === theme)?.hint}. This choice is stored in this browser only.
+        </p>
       </section>
 
       <section className="section" aria-labelledby="settings-workspace">

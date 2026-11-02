@@ -5,8 +5,8 @@ import {
   useSaveApifyConnector,
 } from '../api/hooks';
 import type { Connector } from '../api/types';
-import { Chip, ErrorState, Loading, errorMessage } from '../components/common';
-import { CardToggle, RemoveControl, TokenForm, TokenLine, useCardOpen } from '../components/connector';
+import { ErrorState, Loading, errorMessage } from '../components/common';
+import { CONNECTOR_MARKS, CardToggle, RemoveControl, TokenForm, TokenLine, useCardOpen } from '../components/connector';
 import { Icon } from '../components/Icons';
 import { normalizeActorId } from '../lib/imports';
 import { AgentMailConnectorCard } from './AgentMailConnectorCard';
@@ -134,13 +134,14 @@ function ApifyCard({ connector }: { connector: Connector | null }) {
     <article className="connector" aria-label="Apify connector">
       <CardToggle
         name="Apify"
+        mark={CONNECTOR_MARKS.apify}
         summary={connector ? `${allowed} ${allowed === 1 ? 'actor' : 'actors'} allowed for agents` : null}
-        chip={
-          hasError ? (
-            <Chip tone="danger">Error</Chip>
-          ) : (
-            <Chip tone="neutral">{connector ? 'Connected' : 'Not connected'}</Chip>
-          )
+        state={
+          hasError
+            ? { tone: 'danger', label: 'Error' }
+            : connector
+              ? { tone: 'neutral', label: 'Connected' }
+              : { tone: 'off', label: 'Not connected' }
         }
         open={open}
         onToggle={toggle}

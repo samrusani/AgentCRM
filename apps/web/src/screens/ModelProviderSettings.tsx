@@ -27,17 +27,22 @@ export function ModelProviderSettings() {
           active ? (
             attention ? (
               <>
-                <p className="provider-summary">
+                <p className="status-line status-line--attention">
+                  <span className="status-line__dot" aria-hidden="true" />
                   {attention}
                 </p>
                 <p className="muted">Chat uses the rule based helper and drafting cannot start until this is fixed.</p>
               </>
             ) : (
-              <p className="provider-summary">{activeProviderSentence(active.kind, active.model)}</p>
+              <p className="status-line status-line--ready">
+                <span className="status-line__dot" aria-hidden="true" />
+                {activeProviderSentence(active.kind, active.model)}
+              </p>
             )
           ) : (
             <>
-              <p className="provider-summary">
+              <p className="status-line status-line--none">
+                <span className="status-line__dot" aria-hidden="true" />
                 {anyConfigured && connectors.isSuccess
                   ? 'No model provider is in use. Choose one below.'
                   : 'No model provider is connected.'}

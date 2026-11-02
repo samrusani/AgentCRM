@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import {
   useModelConnector,
   useOllamaModels,
@@ -7,8 +7,16 @@ import {
   useSetModelProvider,
 } from '../api/hooks';
 import type { Connector, ModelProviderKind, ModelProviderSelection } from '../api/types';
-import { Chip, errorMessage } from '../components/common';
-import { CardToggle, RemoveControl, TokenForm, TokenLine, useCardOpen } from '../components/connector';
+import { errorMessage } from '../components/common';
+import {
+  CONNECTOR_MARKS,
+  CardToggle,
+  RemoveControl,
+  TokenForm,
+  TokenLine,
+  useCardOpen,
+  type CardState,
+} from '../components/connector';
 import {
   OLLAMA_DEFAULT_BASE_URL,
   localModelHint,
@@ -25,10 +33,10 @@ interface CardProps {
 }
 
 // Collapsed, a provider card still says which model is chosen and whether this provider is the one in use.
-function providerChip({ preset, connector, active }: CardProps): ReactNode {
-  if (connector?.status === 'error') return <Chip tone="danger">Error</Chip>;
-  if (active?.kind === preset.kind) return <Chip tone="accent">In use</Chip>;
-  return <Chip tone="neutral">{connector ? 'Connected' : 'Not connected'}</Chip>;
+function providerState({ preset, connector, active }: CardProps): CardState {
+  if (connector?.status === 'error') return { tone: 'danger', label: 'Error' };
+  if (active?.kind === preset.kind) return { tone: 'accent', label: 'In use' };
+  return connector ? { tone: 'neutral', label: 'Connected' } : { tone: 'off', label: 'Not connected' };
 }
 
 // Exactly one configured provider is in use. The active card says so in text, others offer a quiet switch.
@@ -182,8 +190,10 @@ export function KeyedProviderCard({ preset, connector, active }: CardProps) {
     <article className="connector" aria-label={`${preset.name} connector`}>
       <CardToggle
         name={preset.name}
+        mark={CONNECTOR_MARKS[preset.kind] ?? preset.name.slice(0, 1)}
+        markActive={active?.kind === preset.kind}
         summary={connector?.model ? modelName(connector.model) : null}
-        chip={providerChip({ preset, connector, active })}
+        state={providerState({ preset, connector, active })}
         open={open}
         onToggle={toggle}
         bodyId={bodyId}
@@ -300,8 +310,10 @@ export function OllamaCard({ preset, connector, active }: CardProps) {
     <article className="connector" aria-label={`${preset.name} connector`}>
       <CardToggle
         name={preset.name}
+        mark={CONNECTOR_MARKS.ollama}
+        markActive={active?.kind === preset.kind}
         summary={connector?.model ? modelName(connector.model) : null}
-        chip={providerChip({ preset, connector, active })}
+        state={providerState({ preset, connector, active })}
         open={open}
         onToggle={toggle}
         bodyId={bodyId}

@@ -4,18 +4,38 @@ import { formatAgo } from '../lib/format';
 import { errorMessage } from './common';
 import { Icon } from './Icons';
 
-// The card header is a disclosure: collapsed it still names the card, a short summary, and its state chip.
+export interface CardState {
+  tone: 'accent' | 'danger' | 'neutral' | 'off';
+  label: string;
+}
+
+// Two letter marks for the card identity badges. Plain initials, not brand logos.
+export const CONNECTOR_MARKS: Record<string, string> = {
+  anthropic: 'An',
+  openai: 'Oa',
+  deepseek: 'De',
+  zai: 'Z',
+  ollama: 'Ol',
+  apify: 'Ap',
+  agentmail: 'Am',
+};
+
+// The card header is a disclosure: collapsed it still names the card, a short summary, and its state.
 export function CardToggle({
   name,
+  mark,
+  markActive = false,
   summary,
-  chip,
+  state,
   open,
   onToggle,
   bodyId,
 }: {
   name: string;
+  mark: string;
+  markActive?: boolean;
   summary?: string | null;
-  chip: ReactNode;
+  state: CardState;
   open: boolean;
   onToggle: () => void;
   bodyId: string;
@@ -29,10 +49,16 @@ export function CardToggle({
         aria-controls={open ? bodyId : undefined}
         onClick={onToggle}
       >
-        <Icon name={open ? 'chevronDown' : 'chevronRight'} className="connector__chevron" />
-        <span>{name}</span>
+        <span className={`connector__mark${markActive ? ' connector__mark--accent' : ''}`} aria-hidden="true">
+          {mark}
+        </span>
+        <span className="connector__title">{name}</span>
         {!open && summary ? <span className="connector__summary">{summary}</span> : null}
-        <span className="connector__chips">{chip}</span>
+        <span className={`connector__state connector__state--${state.tone}`}>
+          <span className="connector__state-dot" aria-hidden="true" />
+          {state.label}
+        </span>
+        <Icon name="chevronRight" className={`connector__chevron${open ? ' is-open' : ''}`} />
       </button>
     </h3>
   );

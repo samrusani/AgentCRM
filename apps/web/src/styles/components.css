@@ -970,19 +970,13 @@ textarea.input {
 
 /* Connector card */
 .connector {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background: var(--surface);
+  transition: border-color var(--duration) var(--ease);
 }
-.connector__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+.connector:hover {
+  border-color: color-mix(in srgb, var(--ink) 16%, var(--line));
 }
 .connector__name {
   font-size: 14px;
@@ -991,19 +985,50 @@ textarea.input {
 .connector__toggle {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
-  padding: 0;
+  padding: 11px 14px;
   border: 0;
+  border-radius: var(--radius-lg);
   background: none;
   font: inherit;
   color: inherit;
   text-align: left;
   cursor: pointer;
 }
+.connector__toggle:focus-visible {
+  outline-offset: -2px;
+}
+.connector__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--ink) 4%, var(--surface));
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-muted);
+}
+.connector__mark--accent {
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+.connector__title {
+  flex: none;
+}
 .connector__chevron {
   flex: none;
   color: var(--ink-muted);
+  transition: transform var(--duration) var(--ease);
+}
+.connector__chevron.is-open {
+  transform: rotate(90deg);
 }
 .connector__summary {
   min-width: 0;
@@ -1014,17 +1039,58 @@ textarea.input {
   font-weight: 400;
   color: var(--ink-muted);
 }
-.connector__chips {
-  display: flex;
+.connector__state {
+  display: inline-flex;
   flex: none;
   align-items: center;
   gap: 6px;
   margin-left: auto;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+.connector__state-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ink-muted) 55%, transparent);
+}
+.connector__state--accent {
+  color: var(--accent);
+}
+.connector__state--accent .connector__state-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+.connector__state--danger {
+  color: var(--danger);
+}
+.connector__state--danger .connector__state-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-tint);
+}
+.connector__state--off .connector__state-dot {
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--ink-muted) 60%, transparent);
 }
 .connector__body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding: 2px 14px 14px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .connector__body {
+    animation: connector-open var(--duration) var(--ease);
+  }
+  @keyframes connector-open {
+    from {
+      opacity: 0;
+      transform: translateY(-2px);
+    }
+  }
 }
 .connector__heading {
   font-size: 13px;
@@ -1061,9 +1127,6 @@ textarea.input {
   align-items: flex-start;
   gap: 6px;
   font-size: 13px;
-  font-weight: 500;
-}
-.provider-summary {
   font-weight: 500;
 }
 .connector__remove {

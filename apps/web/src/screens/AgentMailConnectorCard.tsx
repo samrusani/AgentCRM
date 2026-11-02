@@ -6,8 +6,8 @@ import {
   useSaveAgentMailConnector,
 } from '../api/hooks';
 import type { Connector } from '../api/types';
-import { Chip, errorMessage } from '../components/common';
-import { CardToggle, RemoveControl, TokenForm, TokenLine, useCardOpen } from '../components/connector';
+import { errorMessage } from '../components/common';
+import { CONNECTOR_MARKS, CardToggle, RemoveControl, TokenForm, TokenLine, useCardOpen } from '../components/connector';
 import { DAILY_SEND_CAP } from '../lib/mail';
 
 function InboxSection({ connector }: { connector: Connector }) {
@@ -192,13 +192,14 @@ export function AgentMailConnectorCard({ connector }: { connector: Connector | n
     <article className="connector" aria-label="AgentMail connector">
       <CardToggle
         name="AgentMail"
+        mark={CONNECTOR_MARKS.agentmail}
         summary={summary}
-        chip={
-          hasError ? (
-            <Chip tone="danger">Error</Chip>
-          ) : (
-            <Chip tone="neutral">{connector ? 'Connected' : 'Not connected'}</Chip>
-          )
+        state={
+          hasError
+            ? { tone: 'danger', label: 'Error' }
+            : connector
+              ? { tone: 'neutral', label: 'Connected' }
+              : { tone: 'off', label: 'Not connected' }
         }
         open={open}
         onToggle={toggle}
