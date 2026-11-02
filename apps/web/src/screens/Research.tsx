@@ -22,6 +22,7 @@ import { formatAgo, formatDateTime, isSimulatedRun } from '../lib/format';
 import { isLocalProvider } from '../lib/models';
 import { DraftOutreachSheet } from './DraftOutreachSheet';
 import { ImportBatchSheet, ImportSetupSheet } from './ImportSheets';
+import { LeadCaptureCard } from './LeadCaptureCard';
 import { useUI } from '../lib/ui';
 
 export function Research() {
@@ -127,12 +128,9 @@ export function Research() {
   return (
     <div className="screen screen--split">
       <PageHeader title="Research">{startButton}</PageHeader>
-      {items.length === 0 && !selectedId ? (
-        <EmptyState
-          message="No research runs yet. A demo run is simulated: it shows the ledger, counts, and approval flow with synthetic data. An Apify import is real: it runs an actor on your own Apify account. A CSV import starts from the People tab in Relationships. Draft outreach needs a connected model provider: it writes drafts for you to review and sends nothing."
-        />
-      ) : (
-        <div className="research">
+      <div className="research">
+        <div className="run-side">
+          <LeadCaptureCard onStarted={(run) => select(run.id)} />
           <nav className="run-list" aria-label="Runs">
             <ul>
               {items.map((run) => (
@@ -142,9 +140,17 @@ export function Research() {
               ))}
             </ul>
           </nav>
-          <div className="run-detail">{selectedId ? <RunDetail id={selectedId} /> : null}</div>
         </div>
-      )}
+        <div className="run-detail">
+          {items.length === 0 && !selectedId ? (
+            <EmptyState
+              message="No research runs yet. A demo run is simulated: it shows the ledger, counts, and approval flow with synthetic data. An Apify import is real: it runs an actor on your own Apify account. A LinkedIn post capture is real too: it runs actors on your Apify account and stages the people who engaged for your review. A CSV import starts from the People tab in Relationships. Draft outreach needs a connected model provider: it writes drafts for you to review and sends nothing."
+            />
+          ) : selectedId ? (
+            <RunDetail id={selectedId} />
+          ) : null}
+        </div>
+      </div>
       {batchId ? (
         <ImportBatchSheet key={batchId} id={batchId} onClose={closeBatch} />
       ) : importOpen ? (
@@ -193,7 +199,9 @@ function RunDetail({ id }: { id: string }) {
   const canResume = run.status === 'paused';
   const canCancel = canPause || canResume;
   const approvals = run.approvals ?? [];
-  const isApify = run.kind === 'apify_scrape';
+  // Lead capture runs one to three Apify actors, so the Apify wording about billing and pausing applies.
+  const isLead = run.kind === 'lead_capture';
+  const isApify = run.kind === 'apify_scrape' || isLead;
   const isDraft = run.kind === 'draft_outreach';
   const savedDrafts = isDraft
     ? approvals
@@ -223,6 +231,13 @@ function RunDetail({ id }: { id: string }) {
       {isSimulatedRun(run) ? (
         <p className="muted">
           No model is connected. This run is simulated and creates synthetic candidates tagged demo-candidate.
+        </p>
+      ) : null}
+
+      {isLead ? (
+        <p className="muted">
+          This run is real. It runs actors on your own Apify account and stages people for your review. Nothing enters
+          the CRM until you approve the import.
         </p>
       ) : null}
 
@@ -274,7 +289,9 @@ function RunDetail({ id }: { id: string }) {
           ) : null}
           {confirmCancel ? (
             <span className="run-controls__confirm" role="alert">
-              {isApify
+              {isLead
+                ? 'Cancel this run? Cancelling is final. It also asks Apify to stop any actor run still in progress. Apify still bills for the time the actors already ran.'
+                : isApify
                 ? 'Cancel this run? Cancelling is final. It also asks Apify to stop the actor run. Apify still bills for the time the actor already ran.'
                 : isDraft
                   ? 'Cancel this run? Cancelling is final and no drafts are saved. Model calls already made are still billed to your own model provider account, unless the provider is a local Ollama server.'
@@ -291,8 +308,9 @@ function RunDetail({ id }: { id: string }) {
       ) : null}
       {isApify && (canPause || canResume) ? (
         <p className="muted">
-          Pausing stops processing in this app only. The Apify run keeps going and keeps billing until it finishes or
-          you cancel.
+          {isLead
+            ? 'Pausing stops processing in this app only. An Apify actor run that already started keeps going and keeps billing until it finishes or you cancel.'
+            : 'Pausing stops processing in this app only. The Apify run keeps going and keeps billing until it finishes or you cancel.'}
         </p>
       ) : null}
       {control.isError ? (

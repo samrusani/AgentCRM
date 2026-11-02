@@ -80,6 +80,7 @@ export async function startMcpServer(): Promise<void> {
             'Apply a proposal with expected versions. A stale version fails the whole batch.',
             'Start a simulated research run and read its progress.',
             'Start an Apify import run for an actor on the connector allowlist. Results wait for a person to approve them in the app.',
+            'Start a LinkedIn lead capture from a post URL with start_lead_capture. It reads who reacted or commented through the actors configured in Settings, which can cost money on the Apify account, and every involved actor must be on the Apify allowlist. Results wait for a person to approve them in the app.',
             'Start a qualify run, optionally limited to one tag. It writes per criterion verdicts to qualification results, needs no approval, and changes no records.',
             'Start a draft_outreach run when a model provider is connected. It writes one draft email per person with the active model provider the user chose in Settings, which can cost money (Ollama runs locally and costs nothing), and waits for a person to approve before saving drafts as notes. Nothing is ever sent.',
           ],
@@ -237,6 +238,45 @@ export async function startMcpServer(): Promise<void> {
           status: run.status,
           simulated: true,
           note: 'A worker in this process or in the API server advances this run. Read progress with crm_get_run. Only a person can approve the shortlist.',
+        };
+      }),
+  );
+
+  server.registerTool(
+    'start_lead_capture',
+    {
+      title: 'Start a LinkedIn lead capture',
+      description:
+        'Starts a run that reads who reacted to or commented on a LinkedIn post through the Apify actors configured in Settings, stages those people, and optionally enriches the new ones with profile details. Arguments: postUrl (a linkedin.com/posts/ link ending in activity-<digits> or ugcPost-<digits>, or a linkedin.com/feed/update/urn:li:activity:<digits> link), sources (reactions, comments, or both; default both), maxPeople per source (default 50, max 500), enrich (default true), enrichLimit (default 25, max 200). It spends the user\'s Apify credit, every involved actor id must be on the Apify allowlist, and one agent started run may be open at a time. Only a person can approve the import in the app. Read progress with crm_get_run.',
+      inputSchema: {
+        postUrl: z.string().min(1).max(500),
+        sources: z.array(z.enum(['reactions', 'comments'])).min(1).optional(),
+        maxPeople: z.number().int().min(1).max(500).optional(),
+        enrich: z.boolean().optional(),
+        enrichLimit: z.number().int().min(1).max(200).optional(),
+      },
+    },
+    async ({ postUrl, sources, maxPeople, enrich, enrichLimit }) =>
+      guarded(() => {
+        const run = startRun(
+          ctx,
+          {
+            kind: 'lead_capture',
+            scope: {
+              postUrl,
+              ...(sources ? { sources } : {}),
+              ...(maxPeople !== undefined ? { maxPeople } : {}),
+              ...(enrich !== undefined ? { enrich } : {}),
+              ...(enrichLimit !== undefined ? { enrichLimit } : {}),
+            },
+          },
+          { origin: 'agent' },
+        );
+        return {
+          runId: run.id,
+          status: run.status,
+          simulated: false,
+          note: 'A worker in this process or in the API server advances this run and calls Apify, which can cost the user money. Read progress with crm_get_run. Only a person can approve the import.',
         };
       }),
   );

@@ -10,6 +10,7 @@ import {
   startRun,
 } from '../src/actions/index.js';
 import { mapItem } from '../src/actions/apifyMapping.js';
+import { advanceApifyRun } from '../src/actions/apifyScrape.js';
 import { AppError } from '../src/errors.js';
 import { buildApp } from '../src/http/app.js';
 import { processAllJobs } from '../src/jobs/worker.js';
@@ -441,6 +442,30 @@ describe('apify start safety', () => {
     expect(await untilStartSettled(run.id)).toBe('failed');
     expect(stub.state.startCalls).toBe(0);
     expect(getRunDetail(env.db, env.workspaceId, run.id).steps[1]!.detail).toContain('Apify console');
+  });
+
+  it('does not send a start request when another tick marked the attempt after this one read the run', async () => {
+    const run = startRun(env.ctx, { kind: 'apify_scrape', scope: { actorId, input: {} } });
+    await advanceApifyRun(env.ctx, run.id);
+    await advanceApifyRun(env.ctx, run.id);
+    expect(getRunDetail(env.db, env.workspaceId, run.id).steps[1]!.status).toBe('running');
+    let raced = false;
+    const racing = {
+      ...env.ctx,
+      now: () => {
+        if (!raced) {
+          raced = true;
+          const scope = { ...getRunDetail(env.db, env.workspaceId, run.id).scope, startAttemptedAt: env.ctx.now() };
+          env.db.prepare('UPDATE run SET scope = ? WHERE id = ?').run(JSON.stringify(scope), run.id);
+        }
+        return env.ctx.now();
+      },
+    };
+    await advanceApifyRun(racing, run.id);
+    expect(raced).toBe(true);
+    expect(stub.state.startCalls).toBe(0);
+    expect(await untilStartSettled(run.id)).toBe('failed');
+    expect(stub.state.startCalls).toBe(0);
   });
 
   it('records the attempt before the request and clears it after a rate limit so the retry can start', async () => {

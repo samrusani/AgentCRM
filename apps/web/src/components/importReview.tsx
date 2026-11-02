@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { Approval, ImportCounts, ImportReviewPayload } from '../api/types';
-import { formatCount } from '../lib/imports';
+import { formatCount, profileLabel } from '../lib/imports';
 
 export function ImportCountsRow({ counts, accepted }: { counts: ImportCounts; accepted?: boolean }) {
   const items: Array<{ label: string; value: number }> = [
@@ -33,10 +33,17 @@ export function batchHref(batchId: string, runId: string | null): string {
 export function ImportReviewBody({ approval, review }: { approval: Approval; review: ImportReviewPayload }) {
   const { counts, sample } = review;
   const hidden = Math.max(0, counts.staged - sample.length);
+  // Lead capture samples carry a title and a profile. Other imports do not, so their table keeps three columns.
+  const showPeople = sample.some((row) => row.title !== null || row.linkedinUrl !== null);
   return (
     <div className="import-review">
       <ImportCountsRow counts={counts} />
-      {review.actorId ? (
+      {review.postUrl ? (
+        <p className="muted import-review__source">
+          From a LinkedIn post <span className="import-review__actor">{review.postUrl}</span>
+        </p>
+      ) : null}
+      {review.actorId && !review.postUrl ? (
         <p className="muted import-review__source">
           Actor <span className="import-review__actor">{review.actorId}</span>
         </p>
@@ -50,6 +57,8 @@ export function ImportReviewBody({ approval, review }: { approval: Approval; rev
                 <th scope="col">Name</th>
                 <th scope="col">Email</th>
                 <th scope="col">Company</th>
+                {showPeople ? <th scope="col">Title</th> : null}
+                {showPeople ? <th scope="col">Profile</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -58,6 +67,12 @@ export function ImportReviewBody({ approval, review }: { approval: Approval; rev
                   <td className={row.name ? 'cell-name' : 'muted'}>{row.name ?? 'No name'}</td>
                   <td className={row.email ? '' : 'muted'}>{row.email ?? 'No email'}</td>
                   <td className={row.company ? '' : 'muted'}>{row.company ?? 'No company'}</td>
+                  {showPeople ? <td className={row.title ? '' : 'muted'}>{row.title ?? 'No title'}</td> : null}
+                  {showPeople ? (
+                    <td className={row.linkedinUrl ? '' : 'muted'} title={row.linkedinUrl ?? undefined}>
+                      {row.linkedinUrl ? profileLabel(row.linkedinUrl) : 'No profile'}
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>

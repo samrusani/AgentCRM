@@ -14,6 +14,7 @@ import { markConnectorError } from './connectors.js';
 import { type ActionContext, mutate, type Tx, withTxActor } from './context.js';
 import { setCounts, startStep, type AdvanceResult } from './demoResearch.js';
 import { enqueueJobIn } from './jobs.js';
+import { abortLeadCaptureCalls, failActiveLeadCaptureRuns, leadCaptureKind } from './leadCapture.js';
 import {
   completeStep,
   dedupeImportBatch,
@@ -77,7 +78,7 @@ function formatElapsed(milliseconds: number): string {
   return `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
 }
 
-// Fails every Apify run that is still being processed. Returns their ids so the caller can stop the remote runs.
+// Fails every Apify and lead capture run that is still being processed. Returns their ids so the caller can stop the remote runs.
 export function failActiveApifyRuns(ctx: ActionContext, detail: string): string[] {
   return mutate(ctx, (rawTx) => {
     const tx = withTxActor(rawTx, apifyActor);
@@ -87,7 +88,7 @@ export function failActiveApifyRuns(ctx: ActionContext, detail: string): string[
         .all(tx.workspaceId, apifyKind) as { id: string }[]
     ).map((row) => row.id);
     for (const id of ids) failImportRunIn(tx, id, detail);
-    return ids;
+    return [...ids, ...failActiveLeadCaptureRuns(tx, detail)];
   });
 }
 
@@ -132,6 +133,7 @@ function appendStepNote(tx: Tx, runId: string, seq: number, note: string): void 
 // never change the run state.
 export async function abortRemoteRunIfNeeded(ctx: ActionContext, runId: string): Promise<void> {
   const run = getRun(ctx.db, ctx.workspaceId, runId);
+  if (run?.kind === leadCaptureKind) return abortLeadCaptureCalls(ctx, runId);
   if (!run || run.kind !== apifyKind || (run.status !== 'cancelled' && run.status !== 'failed')) return;
   const scope = readScope(run.scope);
   const remoteId = scope.apifyRunId;
@@ -266,15 +268,20 @@ async function startActorStep(ctx: ActionContext, runId: string, scope: ApifySco
   const token = getConnectorSecret(ctx.db, ctx.workspaceId, 'apify');
   if (!token) return failNow(ctx, runId, 'Apify is not connected. Connect Apify in Settings and start the run again.');
 
-  // Record the attempt in its own transaction before the request leaves this process.
-  const marked = mutate(ctx, (rawTx) => {
+  // Record the attempt in its own transaction before the request leaves this process. The scope is read
+  // again inside the transaction, so a marker or run id written since this tick began is never overwritten.
+  const marked = mutate(ctx, (rawTx): 'marked' | 'already' | 'gone' => {
     const tx = withTxActor(rawTx, apifyActor);
-    if (!liveStep(tx, runId, 2)) return false;
+    if (!liveStep(tx, runId, 2)) return 'gone';
+    const current = readScope(JSON.parse((tx.db.prepare('SELECT scope FROM run WHERE id = ?').get(runId) as { scope: string }).scope));
+    if (current.startAttemptedAt || current.apifyRunId) return 'already';
     patchScope(tx, runId, { startAttemptedAt: tx.now() });
     tx.audit('run.apify_start_attempt', 'run', runId, { actorId: scope.actorId });
-    return true;
+    return 'marked';
   });
-  if (!marked) return { nextRunAt: null };
+  if (marked === 'gone') return { nextRunAt: null };
+  // Another tick got there first. Send nothing; the next tick follows the marker or run id path.
+  if (marked === 'already') return { nextRunAt: soon };
 
   let started;
   try {

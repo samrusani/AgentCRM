@@ -22,9 +22,11 @@ import {
   type ModelConnector,
   type ModelConnectorKind,
   type OllamaConnector,
+  defaultLeadCaptureActors,
   getConnector,
   getConnectorSecret,
   isModelConnectorKind,
+  leadCaptureActorFields,
 } from '../queries/connectors.js';
 import { getActiveModelConnector } from '../queries/modelProvider.js';
 import { abortRemoteRunIfNeeded, failActiveApifyRuns } from './apifyScrape.js';
@@ -32,10 +34,21 @@ import { type ActionContext, mutate, parseInput } from './context.js';
 import { failActiveDraftRuns } from './draftOutreach.js';
 import { activateIfFirstIn, noModelProviderMessage, reassignAfterRemovalIn } from './modelProvider.js';
 
+// The lead capture actor ids a workspace starts with. Edited per workspace in the Apify connector settings.
+export { defaultLeadCaptureActors } from '../queries/connectors.js';
+
 export const tokenRejectedMessage = 'Apify rejected the saved API token. Enter a new one to reconnect.';
 export const connectApifyMessage = 'Apify is not connected. Connect Apify in Settings first.';
 
 const actorIdPattern = /^[A-Za-z0-9_.~/-]+$/;
+
+// An empty string resets the field to its default. Anything else must be a valid actor id.
+const leadCaptureField = z
+  .string()
+  .trim()
+  .max(200)
+  .refine((value) => value === '' || (actorIdPattern.test(value) && !hasDotSegment(value)), 'Use actor ids like username/actor-name')
+  .optional();
 
 const configureSchema = z
   .object({
@@ -57,6 +70,11 @@ const configureSchema = z
           .refine((value) => !hasDotSegment(value), dotSegmentMessage),
       )
       .max(100)
+      .optional(),
+    // Fields that are sent change; fields that are left out stay as they are. An empty string resets one to its default.
+    leadCapture: z
+      .object({ reactionsActor: leadCaptureField, commentsActor: leadCaptureField, profileActor: leadCaptureField })
+      .strict()
       .optional(),
   })
   .strict();
@@ -104,7 +122,9 @@ export async function configureApifyConnector(
   const data = parseInput(configureSchema, input);
   const existing = getConnector(ctx.db, ctx.workspaceId, 'apify');
   if (!data.token && !existing) throw validationError('token: A token is required to connect Apify.');
-  if (!data.token && data.allowlist === undefined) throw validationError('Send a token, an allowlist, or both.');
+  if (!data.token && data.allowlist === undefined && data.leadCapture === undefined) {
+    throw validationError('Send a token, an allowlist, lead capture actors, or any mix of them.');
+  }
 
   let validatedUsername: string | null = null;
   if (data.token) {
@@ -126,7 +146,20 @@ export async function configureApifyConnector(
     const username = data.token ? validatedUsername : (current?.settings.username ?? null);
     const keptMessage = !data.token && current?.status === 'error' ? current.statusMessage : null;
     const allowlist = data.allowlist ? dedupeActorIds(data.allowlist) : (current?.settings.allowlist ?? []);
-    const settings = JSON.stringify({ allowlist, username, statusMessage: keptMessage });
+    // Only ids that differ from the defaults are stored, so a changed default reaches everyone who never edited it.
+    const leadCapture: Record<string, string> = {};
+    for (const field of leadCaptureActorFields) {
+      const wanted = data.leadCapture?.[field];
+      if (wanted === '') continue;
+      if (wanted !== undefined) {
+        leadCapture[field] = normalizeActorId(wanted);
+        continue;
+      }
+      // A field that was not sent keeps what it had. Reads show the default for a field with no saved id.
+      const kept = current?.settings.leadCapture[field];
+      if (kept !== undefined && kept !== defaultLeadCaptureActors[field]) leadCapture[field] = kept;
+    }
+    const settings = JSON.stringify({ allowlist, username, statusMessage: keptMessage, leadCapture });
     const now = tx.now();
     if (current) {
       if (data.token) {
@@ -140,6 +173,7 @@ export async function configureApifyConnector(
         kind: 'apify',
         tokenReplaced: Boolean(data.token),
         allowlistCount: allowlist.length,
+        leadCaptureCustomized: Object.keys(leadCapture).length,
       });
       return false;
     }

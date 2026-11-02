@@ -9,6 +9,18 @@ import { allowlistIncludes, connectApifyMessage, requireActiveModel } from './co
 import { type ActionContext, mutate, parseInput, type Tx } from './context.js';
 import { defaultTargetCount, demoStepTitles, maxTargetCount, scheduleDemoRun } from './demoResearch.js';
 import { csvImportKind, scheduleCsvImportRun } from './csvImport.js';
+import {
+  defaultEnrichLimit,
+  defaultMaxPeople,
+  hardEnrichLimit,
+  hardMaxPeople,
+  hasUnfinishedCall,
+  leadCaptureKind,
+  leadCaptureStepTitles,
+  scheduleLeadCaptureRun,
+  sourceNames,
+} from './leadCapture.js';
+import { isLinkedinPostUrl, postUrlShapesMessage } from './leadCaptureMapping.js';
 import { defaultAgentBudgetUsd, draftKind, draftScopeSchema, draftStepTitlesFor, scheduleDraftRun } from './draftOutreach.js';
 import { closeImportBatchForRun } from './importReview.js';
 import { cancelIntentsForRunIn } from './sendIntents.js';
@@ -64,7 +76,32 @@ const draftRunSchema = z
   })
   .strict();
 
-const startRunSchema = z.discriminatedUnion('kind', [demoRunSchema, apifyRunSchema, qualifyRunSchema, draftRunSchema]);
+const leadCaptureRunSchema = z
+  .object({
+    kind: z.literal('lead_capture'),
+    title: z.string().trim().min(1).max(200).optional(),
+    scope: z
+      .object({
+        postUrl: z
+          .string()
+          .trim()
+          .min(1)
+          .max(500, 'Use a post link of at most 500 characters')
+          .refine(isLinkedinPostUrl, postUrlShapesMessage),
+        sources: z
+          .array(z.enum(sourceNames))
+          .min(1, 'Choose reactions, comments, or both')
+          .default([...sourceNames])
+          .transform((chosen) => sourceNames.filter((name) => chosen.includes(name))),
+        maxPeople: z.number().int().min(1).max(hardMaxPeople).default(defaultMaxPeople),
+        enrich: z.boolean().default(true),
+        enrichLimit: z.number().int().min(1).max(hardEnrichLimit).default(defaultEnrichLimit),
+      })
+      .strict(),
+  })
+  .strict();
+
+const startRunSchema = z.discriminatedUnion('kind', [demoRunSchema, apifyRunSchema, qualifyRunSchema, draftRunSchema, leadCaptureRunSchema]);
 
 export interface StartRunOptions {
   // Runs started by an agent (MCP or the agent endpoint) may only use allowlisted Apify actors.
@@ -82,14 +119,52 @@ function assertApifyRunAllowed(ctx: ActionContext, actorId: string, origin: 'use
   }
 }
 
+// Resolves the three actor ids from the connector settings. The run freezes them, so a later settings edit changes nothing.
+function assertLeadCaptureAllowed(
+  ctx: ActionContext,
+  scope: { sources: readonly string[]; enrich: boolean },
+  origin: 'user' | 'agent',
+) {
+  const connector = getConnector(ctx.db, ctx.workspaceId, 'apify');
+  if (!connector) throw conflict(connectApifyMessage);
+  if (connector.status !== 'connected') throw conflict('Apify rejected the saved API token. Update it in Settings.');
+  const configured = connector.settings.leadCapture;
+  const actors = { reactions: configured.reactionsActor, comments: configured.commentsActor, profile: configured.profileActor };
+  if (origin === 'agent') {
+    const involved = [
+      ...(scope.sources.includes('reactions') ? [actors.reactions] : []),
+      ...(scope.sources.includes('comments') ? [actors.comments] : []),
+      ...(scope.enrich ? [actors.profile] : []),
+    ];
+    const missing = involved.filter((actorId) => !allowlistIncludes(connector, actorId));
+    if (missing.length > 0) {
+      throw conflict(
+        `${missing.length === 1 ? 'Actor' : 'Actors'} ${missing.map((id) => `"${id}"`).join(', ')} ${missing.length === 1 ? 'is' : 'are'} not on the Apify allowlist. Add ${missing.length === 1 ? 'it' : 'them'} to the allowlist in Settings before an agent can run a lead capture.`,
+      );
+    }
+  }
+  return actors;
+}
+
 // Draft runs use the active model provider. The run keeps that provider and model for its whole life.
 function assertDraftRunAllowed(ctx: ActionContext) {
   const { kind, label, model } = requireActiveModel(ctx);
   return { kind, label, model };
 }
 
+// The post link without its query, for run titles.
+function postUrlLabel(postUrl: string): string {
+  try {
+    const url = new URL(postUrl);
+    return `${url.hostname.replace(/^www\./, '')}${url.pathname}`.slice(0, 120);
+  } catch {
+    return postUrl.slice(0, 120);
+  }
+}
+
 export function scheduleRunJob(tx: Tx, kind: string, runId: string, runAt: string): void {
   if (kind === apifyKind) scheduleApifyRun(tx, runId, runAt);
+  else if (kind === leadCaptureKind) scheduleLeadCaptureRun(tx, runId, runAt);
   else if (kind === draftKind) scheduleDraftRun(tx, runId, runAt);
   else if (kind === csvImportKind) scheduleCsvImportRun(tx, runId, runAt);
   else if (kind === qualifyKind) scheduleQualifyRun(tx, runId, runAt);
@@ -100,6 +175,7 @@ export function startRun(ctx: ActionContext, input: unknown, options: StartRunOp
   const data = parseInput(startRunSchema, input);
   const origin = options.origin ?? 'user';
   if (data.kind === 'apify_scrape') assertApifyRunAllowed(ctx, data.scope.actorId, origin);
+  const leadActors = data.kind === 'lead_capture' ? assertLeadCaptureAllowed(ctx, data.scope, origin) : null;
   const draftConnector = data.kind === 'draft_outreach' ? assertDraftRunAllowed(ctx) : null;
   const runId = mutate(ctx, (tx) => {
     const id = tx.newId('run');
@@ -110,12 +186,12 @@ export function startRun(ctx: ActionContext, input: unknown, options: StartRunOp
     let auditScope: Record<string, unknown>;
     let storedScope: Record<string, unknown> = data.scope;
     // Agent started imports and draft runs share one slot, checked inside the write transaction so two processes cannot both pass it.
-    if (origin === 'agent' && (data.kind === 'apify_scrape' || data.kind === 'draft_outreach')) {
+    if (origin === 'agent' && (data.kind === 'apify_scrape' || data.kind === 'draft_outreach' || data.kind === 'lead_capture')) {
       const open = tx.db
         .prepare(
-          "SELECT 1 FROM run WHERE workspace_id = ? AND kind IN (?, ?) AND json_extract(scope, '$.origin') = 'agent' AND status IN ('queued', 'running', 'paused', 'waiting_approval') LIMIT 1",
+          "SELECT 1 FROM run WHERE workspace_id = ? AND kind IN (?, ?, ?) AND json_extract(scope, '$.origin') = 'agent' AND status IN ('queued', 'running', 'paused', 'waiting_approval') LIMIT 1",
         )
-        .get(tx.workspaceId, apifyKind, draftKind);
+        .get(tx.workspaceId, apifyKind, draftKind, leadCaptureKind);
       if (open) {
         throw conflict(
           'One agent started run may be open at a time, and imports and draft runs share that limit. Approve, reject, or cancel the open agent run first.',
@@ -166,6 +242,22 @@ export function startRun(ctx: ActionContext, input: unknown, options: StartRunOp
         accepted: 0,
       };
       auditScope = { actorId: data.scope.actorId, maxItems: data.scope.maxItems, origin };
+    } else if (data.kind === 'lead_capture') {
+      title = data.title ?? `LinkedIn lead capture: ${postUrlLabel(data.scope.postUrl)}`;
+      stepTitles = leadCaptureStepTitles;
+      counts = {
+        processed: 0,
+        found: 0,
+        flagged: 0,
+        requested: data.scope.maxPeople * data.scope.sources.length,
+        fetched: 0,
+        staged: 0,
+        duplicates: 0,
+        invalid: 0,
+        accepted: 0,
+      };
+      storedScope = { ...storedScope, actors: leadActors!, calls: {} };
+      auditScope = { ...data.scope, actors: leadActors, origin };
     } else if (data.kind === 'qualify') {
       title = data.title ?? (data.scope.tag ? `Qualify people tagged ${data.scope.tag}` : 'Qualify people');
       stepTitles = qualifyStepTitles;
@@ -227,6 +319,10 @@ export function controlRun(ctx: ActionContext, runId: string, input: unknown) {
       // A paused or idle run has no job left. Queue one so the worker asks Apify to stop the actor run.
       const scope = run.scope as { apifyRunId?: string; apifyFinished?: boolean; abortRequested?: boolean };
       if (run.kind === apifyKind && scope.apifyRunId && !scope.apifyFinished && !scope.abortRequested) {
+        scheduleRunJob(tx, run.kind, runId, now);
+      }
+      // A lead capture run may have several remote calls. The job asks Apify to stop every unfinished one.
+      if (run.kind === leadCaptureKind && hasUnfinishedCall(run.scope)) {
         scheduleRunJob(tx, run.kind, runId, now);
       }
     }

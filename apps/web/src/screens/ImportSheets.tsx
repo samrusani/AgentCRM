@@ -24,6 +24,9 @@ import {
   mappedCompany,
   mappedEmail,
   mappedName,
+  mappedProfile,
+  mappedTitle,
+  profileLabel,
   rowStatusLabel,
 } from '../lib/imports';
 import { recordLink } from '../lib/links';
@@ -397,11 +400,23 @@ export function ImportBatchSheet({ id, onClose }: { id: string; onClose: () => v
   const batch = query.data?.pages[0]?.batch ?? null;
   const rows = query.data?.pages.flatMap((page) => page.items) ?? [];
   const refreshing = query.isPlaceholderData;
+  // Lead capture rows carry a title and a profile worth showing. Other imports keep their columns.
+  const showPeople = batch?.sourceKind === 'lead_capture';
 
   return (
     <Sheet
       title="Import batch"
-      subtitle={batch?.actorId ? `Actor ${batch.actorId}` : batch?.sourceKind === 'csv' ? 'CSV import' : undefined}
+      subtitle={
+        batch?.sourceKind === 'lead_capture'
+          ? batch.postUrl
+            ? `From a LinkedIn post: ${batch.postUrl}`
+            : 'From a LinkedIn post'
+          : batch?.actorId
+            ? `Actor ${batch.actorId}`
+            : batch?.sourceKind === 'csv'
+              ? 'CSV import'
+              : undefined
+      }
       onClose={onClose}
       wide
     >
@@ -472,7 +487,9 @@ export function ImportBatchSheet({ id, onClose }: { id: string; onClose: () => v
                     ? 'Rows appear here as they are staged. The run is still working.'
                     : batch.sourceKind === 'csv'
                       ? 'This batch has no rows. The file had no usable rows.'
-                      : 'This batch has no rows. The Apify run returned no usable items.'}
+                      : batch.sourceKind === 'lead_capture'
+                        ? 'This batch has no rows. The post had no usable reactions or comments.'
+                        : 'This batch has no rows. The Apify run returned no usable items.'}
               </p>
             ) : (
               <div className="data-table__wrap" aria-busy={refreshing}>
@@ -486,6 +503,8 @@ export function ImportBatchSheet({ id, onClose }: { id: string; onClose: () => v
                       <th scope="col">Name</th>
                       <th scope="col">Email</th>
                       <th scope="col">Company</th>
+                      {showPeople ? <th scope="col">Title</th> : null}
+                      {showPeople ? <th scope="col">Profile</th> : null}
                       <th scope="col">Status</th>
                       <th scope="col">Reason</th>
                     </tr>
@@ -495,12 +514,20 @@ export function ImportBatchSheet({ id, onClose }: { id: string; onClose: () => v
                       const name = mappedName(row.mapped);
                       const email = mappedEmail(row.mapped);
                       const company = mappedCompany(row.mapped);
+                      const title = mappedTitle(row.mapped);
+                      const profile = mappedProfile(row.mapped);
                       return (
                         <tr key={row.seq}>
                           <td className="is-numeric muted">{row.seq}</td>
                           <td className={name ? 'cell-name' : 'muted'}>{name ?? 'No name'}</td>
                           <td className={email ? undefined : 'muted'}>{email ?? 'No email'}</td>
                           <td className={company ? undefined : 'muted'}>{company ?? 'No company'}</td>
+                          {showPeople ? <td className={title ? undefined : 'muted'}>{title ?? 'No title'}</td> : null}
+                          {showPeople ? (
+                            <td className={profile ? undefined : 'muted'} title={profile ?? undefined}>
+                              {profile ? profileLabel(profile) : 'No profile'}
+                            </td>
+                          ) : null}
                           <td>
                             <Chip tone={row.status === 'invalid' ? 'danger' : 'neutral'}>{rowStatusLabel(row.status)}</Chip>
                           </td>

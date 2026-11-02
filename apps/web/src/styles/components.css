@@ -376,6 +376,7 @@ textarea.input {
 }
 .sheet__subtitle {
   color: var(--ink-muted);
+  overflow-wrap: anywhere;
 }
 .sheet__body {
   flex: 1;

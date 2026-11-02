@@ -22,6 +22,20 @@ export interface StubState {
   datasetCalls: number;
   authHeaders: string[];
   paths: string[];
+  // Per actor datasets, keyed by the actor id in username~name form (any case). A start for a registered
+  // actor creates a run with its own dataset holding these items. Other actor ids keep the shared `items`.
+  actorItems: Record<string, unknown[]>;
+  // Poll statuses for runs of one registered actor. Falls back to runStatuses.
+  actorStatuses: Record<string, string[]>;
+  // Start answer for one registered actor. Falls back to startStatus.
+  actorStartStatus: Record<string, number>;
+  // The actor of each start request, in order, lowercased.
+  startActors: string[];
+  // Registered actor runs by Apify run id.
+  runs: Record<string, { actor: string; datasetId: string; polls: number }>;
+  datasets: Record<string, unknown[]>;
+  abortedRuns: string[];
+  datasetReads: string[];
 }
 
 export interface ApifyStub {
@@ -64,6 +78,14 @@ function freshState(): StubState {
     datasetCalls: 0,
     authHeaders: [],
     paths: [],
+    actorItems: {},
+    actorStatuses: {},
+    actorStartStatus: {},
+    startActors: [],
+    runs: {},
+    datasets: {},
+    abortedRuns: [],
+    datasetReads: [],
   };
 }
 
@@ -96,19 +118,30 @@ export async function startApifyStub(): Promise<ApifyStub> {
       const actorMatch = /^\/v2\/acts\/([^/]+)(\/runs)?$/.exec(path);
       if (actorMatch) {
         const id = decodeURIComponent(actorMatch[1]!);
-        if (id !== 'tester~lead-scraper' && id !== 'other~map-finder') {
+        const registered = id.toLowerCase() in state.actorItems;
+        if (id !== 'tester~lead-scraper' && id !== 'other~map-finder' && !registered) {
           return send(response, 404, { error: { type: 'record-not-found', message: 'Actor was not found.' } });
         }
         if (actorMatch[2]) {
           state.startCalls += 1;
           state.startBodies.push(JSON.parse(Buffer.concat(chunks).toString('utf8') || 'null'));
           state.startQueries.push(url.search);
+          const actorKey = id.toLowerCase();
+          if (registered) state.startActors.push(actorKey);
           if (state.startGarbage) {
             response.writeHead(200, { 'content-type': 'application/json' });
             return response.end('not json');
           }
-          if (state.startStatus !== 201) {
-            return send(response, state.startStatus, { error: { type: 'stub-failure', message: 'Stub failure.' } });
+          const startStatus = registered ? (state.actorStartStatus[actorKey] ?? state.startStatus) : state.startStatus;
+          if (startStatus !== 201) {
+            return send(response, startStatus, { error: { type: 'stub-failure', message: 'Stub failure.' } });
+          }
+          if (registered) {
+            const runId = `run_${state.startCalls}`;
+            const datasetId = `ds_${state.startCalls}`;
+            state.runs[runId] = { actor: actorKey, datasetId, polls: 0 };
+            state.datasets[datasetId] = state.actorItems[actorKey] ?? [];
+            return send(response, 201, { data: { id: runId, status: 'READY', defaultDatasetId: datasetId } });
           }
           return send(response, 201, {
             data: { id: `run_${state.startCalls}`, status: 'READY', defaultDatasetId: 'ds_1' },
@@ -125,28 +158,34 @@ export async function startApifyStub(): Promise<ApifyStub> {
       if (runMatch) {
         if (runMatch[2]) {
           state.abortCalls += 1;
+          state.abortedRuns.push(runMatch[1]!);
           return send(response, 200, { data: { id: runMatch[1], status: 'ABORTING' } });
         }
-        const index = Math.min(state.pollCalls, state.runStatuses.length - 1);
+        const meta = state.runs[runMatch[1]!];
+        const statuses = meta ? (state.actorStatuses[meta.actor] ?? state.runStatuses) : state.runStatuses;
+        const index = Math.min(meta ? meta.polls : state.pollCalls, statuses.length - 1);
         state.pollCalls += 1;
+        if (meta) meta.polls += 1;
         if (state.pollStatus !== 200) {
           return send(response, state.pollStatus, { error: { type: 'stub-failure', message: 'Stub failure.' } });
         }
         return send(response, 200, {
           data: {
             id: runMatch[1],
-            status: state.runStatuses[index],
+            status: statuses[index],
             statusMessage: state.statusMessage,
-            defaultDatasetId: 'ds_1',
+            defaultDatasetId: meta ? meta.datasetId : 'ds_1',
           },
         });
       }
       const datasetMatch = /^\/v2\/datasets\/([^/]+)\/items$/.exec(path);
       if (datasetMatch) {
         state.datasetCalls += 1;
+        state.datasetReads.push(datasetMatch[1]!);
         const offset = Number(url.searchParams.get('offset') ?? 0);
         const limit = Number(url.searchParams.get('limit') ?? 100);
-        return send(response, 200, state.items.slice(offset, offset + limit));
+        const source = state.datasets[datasetMatch[1]!] ?? state.items;
+        return send(response, 200, source.slice(offset, offset + limit));
       }
       return send(response, 404, { error: { type: 'not-found', message: 'No such route.' } });
     });

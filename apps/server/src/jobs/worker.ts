@@ -5,6 +5,7 @@ import {
   advanceCsvImportRun,
   advanceDemoRun,
   advanceDraftRun,
+  advanceLeadCaptureRun,
   advanceQualifyRun,
   apifyJobKind,
   claimDueJobs,
@@ -14,6 +15,7 @@ import {
   failJob,
   failRun,
   type JobRecord,
+  leadCaptureJobKind,
   mailReconcileJobKind,
   maxJobAttempts,
   processQueuedIntents,
@@ -65,7 +67,7 @@ async function runApifyJob(ctx: ActionContext, job: JobRecord): Promise<void> {
   const runId = String(job.payload.runId);
   const jobContext: ActionContext = { ...ctx, workspaceId: String(job.payload.workspaceId), actor: 'system' };
   try {
-    const result = await advanceApifyRun(jobContext, runId);
+    const result = await (job.kind === leadCaptureJobKind ? advanceLeadCaptureRun : advanceApifyRun)(jobContext, runId);
     if (result.nextRunAt) rescheduleJob(ctx, job.id, result.nextRunAt, true);
     else completeJob(ctx, job.id);
   } catch (error) {
@@ -105,13 +107,13 @@ async function runDraftJob(ctx: ActionContext, job: JobRecord): Promise<void> {
 
 // Processes every simulated job that is due. Single writer: this runs on the server's event loop, one job at a time.
 export function processJobs(ctx: ActionContext): number {
-  const jobs = claimDueJobs(ctx, 10, { excludeKinds: [apifyJobKind, draftJobKind, mailReconcileJobKind] });
+  const jobs = claimDueJobs(ctx, 10, { excludeKinds: [apifyJobKind, leadCaptureJobKind, draftJobKind, mailReconcileJobKind] });
   for (const job of jobs) runJob(ctx, job);
   return jobs.length;
 }
 
 export async function processApifyJobs(ctx: ActionContext): Promise<number> {
-  const jobs = claimDueJobs(ctx, 10, { kinds: [apifyJobKind] });
+  const jobs = claimDueJobs(ctx, 10, { kinds: [apifyJobKind, leadCaptureJobKind] });
   for (const job of jobs) await runApifyJob(ctx, job);
   return jobs.length;
 }

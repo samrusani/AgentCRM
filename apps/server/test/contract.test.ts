@@ -11,6 +11,7 @@ import { compatKeys, type CompatStub, startCompatStub, useCompatStub } from './o
 import { type OllamaStub, startOllamaStub } from './ollamaStub.js';
 import { requireWorkspace } from '../src/queries/workspace.js';
 import { createTestEnvironment } from './helpers.js';
+import { commentItems, commentsActorId, postUrl, profileActorId, profileItems, reactionItems, reactionsActorId } from './leadCaptureFixtures.js';
 
 // One success case for every route the web client calls, against a temporary database and no live server.
 const env = createTestEnvironment();
@@ -198,6 +199,93 @@ describe('web client contract', () => {
 
     expect((await call('DELETE', '/api/connectors/apify')).status).toBe(204);
   });
+  it('serves the lead capture settings, run, import, and approval shapes', async () => {
+    expect((await call('PUT', '/api/connectors/apify', { token: stubToken })).status).toBe(201);
+    try {
+      const defaults = ['harvestapi/linkedin-post-reactions', 'harvestapi/linkedin-post-comments', 'harvestapi/linkedin-profile-scraper'];
+      const initial = (await call('GET', '/api/connectors')).body.items[0];
+      expect(initial.settings.leadCapture).toEqual({
+        reactionsActor: defaults[0],
+        commentsActor: defaults[1],
+        profileActor: defaults[2],
+      });
+
+      // The web sends only leadCapture, with single fields and empty strings for resets.
+      const edited = await call('PUT', '/api/connectors/apify', { leadCapture: { reactionsActor: 'harvestapi~linkedin-post-reactions', profileActor: 'Custom/Profile' } });
+      expect(edited.status).toBe(200);
+      expect(edited.body.settings.leadCapture).toEqual({
+        reactionsActor: 'harvestapi~linkedin-post-reactions',
+        commentsActor: defaults[1],
+        profileActor: 'custom~profile',
+      });
+      expect(edited.body.tokenMasked).toBe('****1234');
+      const single = await call('PUT', '/api/connectors/apify', { leadCapture: { profileActor: '' } });
+      expect(single.body.settings.leadCapture.profileActor).toBe(defaults[2]);
+      expect((await call('GET', '/api/connectors')).body.items[0].settings.leadCapture.reactionsActor).toBe('harvestapi~linkedin-post-reactions');
+      expect((await call('PUT', '/api/connectors/apify', { leadCapture: { commentsActor: '..' } })).status).toBe(400);
+      expect((await call('PUT', '/api/connectors/apify', {})).status).toBe(400);
+
+      stub.state.actorItems[reactionsActorId] = reactionItems;
+      stub.state.actorItems[commentsActorId] = commentItems;
+      stub.state.actorItems[profileActorId] = profileItems;
+      expect((await call('POST', '/api/runs', { kind: 'lead_capture', scope: { postUrl: 'https://example.com/post' } })).status).toBe(400);
+      expect((await call('POST', '/api/runs', { kind: 'lead_capture', scope: { postUrl, sources: [] } })).status).toBe(400);
+
+      // enrich false and enrichLimit omitted, exactly as the web sends it.
+      const run = await call('POST', '/api/runs', {
+        kind: 'lead_capture',
+        scope: { postUrl, sources: ['reactions', 'comments'], maxPeople: 50, enrich: false },
+      });
+      expect(run.status).toBe(201);
+      expect(run.body).toMatchObject({
+        kind: 'lead_capture',
+        status: 'queued',
+        simulated: false,
+        scope: { postUrl, sources: ['reactions', 'comments'], maxPeople: 50, enrich: false, enrichLimit: 25, calls: {} },
+      });
+      expect(run.body.steps).toHaveLength(8);
+      for (let tick = 0; tick < 60; tick += 1) {
+        env.advance(1000);
+        await processAllJobs(env.ctx);
+        if ((await call('GET', `/api/runs/${run.body.id}`)).body.status === 'waiting_approval') break;
+      }
+      const detail = (await call('GET', `/api/runs/${run.body.id}`)).body;
+      expect(detail.status).toBe('waiting_approval');
+      expect(detail.steps.map((step: { title: string; status: string }) => [step.title, step.status])).toEqual([
+        ['Validate connector, post URL, and limits', 'done'],
+        ['Scrape reactions through Apify', 'done'],
+        ['Scrape comments through Apify', 'done'],
+        ['Stage people from the post', 'done'],
+        ['Check for duplicates', 'done'],
+        ['Enrich new profiles through Apify', 'done'],
+        ['Merge enriched details', 'done'],
+        ['Request import review', 'done'],
+      ]);
+      expect(detail.steps[5].detail).toContain('Skipped');
+      expect(detail.scope.batchId).toMatch(/^imp_/);
+      expect(detail.scope.actors).toEqual({
+        reactions: 'harvestapi~linkedin-post-reactions',
+        comments: defaults[1],
+        profile: defaults[2],
+      });
+      const approval = detail.approvals[0];
+      expect(approval.kind).toBe('import_review');
+      expect(approval.payload.postUrl).toBe(postUrl);
+      expect(approval.payload.actors).toEqual({ reactions: 'harvestapi~linkedin-post-reactions', comments: defaults[1] });
+      expect(approval.payload.batchId).toBe(detail.scope.batchId);
+      const imported = await call('GET', `/api/imports/${detail.scope.batchId}?limit=50&withRaw=true`);
+      expect(imported.status).toBe(200);
+      expect(imported.body.sourceKind).toBe('lead_capture');
+      expect(imported.body.sourceRef.postUrl).toBe(postUrl);
+      expect(imported.body.sourceRef.apifyRunIds).toEqual({ reactions: expect.stringMatching(/^run_/), comments: expect.stringMatching(/^run_/) });
+      expect(imported.body.counts).toMatchObject({ fetched: 7, staged: 6, invalid: 1 });
+      expect(imported.body.items[0].raw.sources[0]).toEqual({ kind: 'reaction', reactionType: 'LIKE' });
+      expect((await call('POST', `/api/runs/${run.body.id}/control`, { action: 'cancel' })).body.status).toBe('cancelled');
+    } finally {
+      await call('DELETE', '/api/connectors/apify');
+    }
+  });
+
   it('serves the anthropic connector, model backed chat, and draft run shapes', async () => {
     expect((await call('PUT', '/api/connectors/anthropic', { token: 'sk-ant-wrong-0000' })).status).toBe(400);
     const saved = await call('PUT', '/api/connectors/anthropic', { token: stubApiKey });

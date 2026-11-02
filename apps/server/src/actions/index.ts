@@ -1,4 +1,5 @@
 export { abortRemoteRunIfNeeded, advanceApifyRun, apifyActor, apifyJobKind, apifyKind } from './apifyScrape.js';
+export { advanceLeadCaptureRun, leadCaptureJobKind, leadCaptureKind } from './leadCapture.js';
 export * from './agentmailConnector.js';
 export * from './approvals.js';
 export * from './changes.js';

@@ -28,18 +28,18 @@ export const fieldAliases = {
   linkedinUrl: ['linkedinUrl', 'linkedin_url', 'linkedin', 'profileUrl', 'profile_url', 'url'],
 } as const;
 
-type Item = Record<string, unknown>;
+export type Item = Record<string, unknown>;
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function clean(value: unknown, max: number): string | null {
+export function clean(value: unknown, max: number): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim().replace(/\s+/g, ' ');
   return trimmed === '' ? null : trimmed.slice(0, max);
 }
 
 // Returns the first usable string among the keys. A nested object with a name or title field counts too.
-function pick(item: Item, keys: readonly string[], max: number): string | null {
+export function pick(item: Item, keys: readonly string[], max: number): string | null {
   for (const key of keys) {
     const value = item[key];
     const direct = clean(value, max);

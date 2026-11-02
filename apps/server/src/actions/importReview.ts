@@ -3,6 +3,7 @@ import { getRun, listRunSteps } from '../queries/runs.js';
 import { AppError } from '../errors.js';
 import { type Row, type RunCounts } from '../records.js';
 import { normalizeName, splitName, type MappedRow } from './apifyMapping.js';
+import { normalizeProfileUrl } from './leadCaptureMapping.js';
 import { type Tx, emitRecord } from './context.js';
 import { createFieldClaimIn, createOrganizationIn, createPersonIn } from './crud.js';
 import { finishStep, hashPayload, startStep } from './demoResearch.js';
@@ -43,6 +44,19 @@ interface StagedRow {
   mapped: MappedRow;
   matchEntityType: string | null;
   matchEntityId: string | null;
+  // Lead capture rows record which call produced each field: reactions, comments, or enrich.
+  fieldSources: Record<string, string>;
+}
+
+function parseFieldSources(raw: unknown): Record<string, string> {
+  try {
+    const parsed = JSON.parse(String(raw)) as { fieldSources?: unknown };
+    const sources = parsed.fieldSources;
+    if (typeof sources !== 'object' || sources === null || Array.isArray(sources)) return {};
+    return Object.fromEntries(Object.entries(sources).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+  } catch {
+    return {};
+  }
 }
 
 function parseMapped(value: unknown): MappedRow {
@@ -67,6 +81,26 @@ function orgKey(mapped: MappedRow): string | null {
   return null;
 }
 
+// People who already have a saved linkedinUrl claim, keyed by the normalized profile.
+function peopleByLinkedinProfile(tx: Tx): Map<string, string> {
+  const peopleByProfile = new Map<string, string>();
+  for (const claim of tx.db
+    .prepare(
+      `SELECT c.entity_id AS id, c.value AS value FROM field_claim c JOIN person p ON p.id = c.entity_id
+       WHERE c.workspace_id = ? AND c.entity_type = 'person' AND c.field = 'linkedinUrl' AND p.workspace_id = ?`,
+    )
+    .all(tx.workspaceId, tx.workspaceId) as { id: string; value: string }[]) {
+    const key = normalizeProfileUrl(claim.value);
+    if (key && !peopleByProfile.has(key)) peopleByProfile.set(key, claim.id);
+  }
+  return peopleByProfile;
+}
+
+// The post link without its query and fragment, so share tracking parameters do not end up in claims.
+function stripUrlQuery(value: string): string {
+  return value.split('#')[0]!.split('?')[0]!;
+}
+
 export interface ImportOutcome {
   accepted: number;
   skipped: number;
@@ -81,8 +115,23 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
   if (!batch) throw new Error('The import batch for this run is missing.');
   const observedAt = tx.now();
   // Apify claims point at the Apify run and record the actor id. CSV claims have no URL and record the file name.
-  const source =
-    batch.sourceKind === 'csv'
+  // Lead capture claims point at the post and name the actor that produced each field.
+  const leadCapture = batch.sourceKind === 'lead_capture';
+  const leadActors = (typeof scope.actors === 'object' && scope.actors !== null ? scope.actors : batch.sourceRef.actors ?? {}) as Record<string, unknown>;
+  const leadActorFor = (origin: string | undefined): string => {
+    const key = origin === 'enrich' ? 'profile' : origin;
+    const chosen = key ? leadActors[key] : undefined;
+    const fallback = leadActors.reactions ?? leadActors.comments ?? leadActors.profile;
+    return String(typeof chosen === 'string' ? chosen : (fallback ?? 'unknown'));
+  };
+  const source = leadCapture
+    ? {
+        type: 'apify',
+        url: stripUrlQuery(String(scope.postUrl ?? batch.sourceRef.postUrl ?? '')) || null,
+        method: 'lead_capture',
+        tag: 'linkedin-leads',
+      }
+    : batch.sourceKind === 'csv'
       ? {
           type: 'import',
           url: null as string | null,
@@ -95,6 +144,8 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
           method: String(scope.actorId ?? 'unknown'),
           tag: 'apify',
         };
+  const methodFor = (row: StagedRow, field: string): string =>
+    leadCapture ? `lead_capture:${leadActorFor(row.fieldSources[field])}`.slice(0, 200) : source.method;
 
   const rows = (
     tx.db.prepare("SELECT * FROM import_row WHERE batch_id = ? AND status = 'staged' ORDER BY seq").all(batch.id) as Row[]
@@ -105,6 +156,7 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
       mapped: parseMapped(row.mapped),
       matchEntityType: row.match_entity_type === null ? null : String(row.match_entity_type),
       matchEntityId: row.match_entity_id === null ? null : String(row.match_entity_id),
+      fieldSources: leadCapture ? parseFieldSources(row.raw) : {},
     }),
   );
 
@@ -114,17 +166,24 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
       .run(status, reason, type, id, rowId);
   };
 
-  // An email can be taken between staging and approval. Skip those rows and say why.
+  // An email, or for lead capture a LinkedIn profile, can be taken between staging and approval.
+  // Skip those rows and say why.
   const importable: StagedRow[] = [];
   let skipped = 0;
+  const knownProfiles = leadCapture ? peopleByLinkedinProfile(tx) : new Map<string, string>();
   for (const row of rows) {
     const taken = row.mapped.email
       ? (tx.db
           .prepare('SELECT id FROM person WHERE workspace_id = ? AND lower(email) = ?')
           .get(tx.workspaceId, row.mapped.email) as { id: string } | undefined)
       : undefined;
+    const profileKey = leadCapture ? normalizeProfileUrl(row.mapped.linkedinUrl) : null;
+    const profileTaken = profileKey ? knownProfiles.get(profileKey) : undefined;
     if (taken) {
       markRow(row.id, 'duplicate', 'A person with this email was added after staging.', 'person', taken.id);
+      skipped += 1;
+    } else if (profileTaken) {
+      markRow(row.id, 'duplicate', 'A person with this LinkedIn profile was added after staging.', 'person', profileTaken);
       skipped += 1;
     } else {
       importable.push(row);
@@ -205,11 +264,11 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
               organizationsByName.set(nameKey, created.id);
               undoLookups.push(() => organizationsByName.delete(nameKey));
             }
-            const orgClaims: [string, string | null][] = [
-              ['name', name],
-              ['domain', mapped.domain],
+            const orgClaims: [string, string | null, string][] = [
+              ['name', name, mapped.company ? 'company' : 'domain'],
+              ['domain', mapped.domain, 'domain'],
             ];
-            for (const [field, value] of orgClaims) {
+            for (const [field, value, originField] of orgClaims) {
               if (!value) continue;
               createFieldClaimIn(tx, {
                 entityType: 'organization',
@@ -220,7 +279,7 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
                 sourceType: source.type,
                 observedAt,
                 status: 'imported',
-                extractionMethod: source.method,
+                extractionMethod: methodFor(row, originField),
               });
             }
           }
@@ -260,7 +319,7 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
           sourceType: source.type,
           observedAt,
           status: 'imported',
-          extractionMethod: source.method,
+          extractionMethod: methodFor(row, field),
         });
       }
       tx.db.exec('RELEASE import_row');
@@ -385,9 +444,41 @@ export function markInvalidRows(tx: Tx, batchId: string, reason: string): { tota
   return { total: rows.length, invalid };
 }
 
+// Staged rows in other import batches that are still waiting on review, keyed by normalized profile and email.
+// The value is the id of the batch that holds the row.
+function pendingBatchKeys(tx: Tx, batchId: string): { profiles: Map<string, string>; emails: Map<string, string> } {
+  const profiles = new Map<string, string>();
+  const emails = new Map<string, string>();
+  const rows = tx.db
+    .prepare(
+      `SELECT r.batch_id AS batchId, r.mapped AS mapped
+       FROM import_row r
+       JOIN import_batch b ON b.id = r.batch_id
+       JOIN run ON run.id = b.run_id
+       WHERE b.workspace_id = ? AND b.id <> ? AND b.status IN ('staging', 'awaiting_review')
+         AND run.workspace_id = ? AND run.status IN ('queued', 'running', 'paused', 'waiting_approval')
+         AND r.status = 'staged'
+       ORDER BY b.created_at, r.seq`,
+    )
+    .all(tx.workspaceId, batchId, tx.workspaceId) as { batchId: string; mapped: string }[];
+  for (const row of rows) {
+    const mapped = parseMapped(row.mapped);
+    const profile = normalizeProfileUrl(mapped.linkedinUrl);
+    if (profile && !profiles.has(profile)) profiles.set(profile, row.batchId);
+    if (mapped.email && !emails.has(mapped.email)) emails.set(mapped.email, row.batchId);
+  }
+  return { profiles, emails };
+}
+
 // Marks staged rows that match an existing person or an earlier row in the same batch. Never merges.
 // Existing people match by normalized email, then by name plus organization.
-export function dedupeImportBatch(tx: Tx, batchId: string): number {
+// With `linkedin` set, a row also matches the person whose saved linkedinUrl claim is the same profile.
+// LinkedIn lead rows carry no email or company before enrichment, so this is the only match they can have.
+// With `pendingBatches` set, a row also matches a staged row of another import that still waits on review in
+// this workspace, so a repeated capture buys no enrichment for people who are already staged.
+export function dedupeImportBatch(tx: Tx, batchId: string, options: { linkedin?: boolean; pendingBatches?: boolean } = {}): number {
+  const peopleByProfile = options.linkedin ? peopleByLinkedinProfile(tx) : new Map<string, string>();
+  const pending = options.pendingBatches ? pendingBatchKeys(tx, batchId) : null;
   const peopleByEmail = new Map<string, string>();
   const peopleByNameAndOrganization = new Map<string, string>();
   for (const person of tx.db
@@ -431,6 +522,10 @@ export function dedupeImportBatch(tx: Tx, batchId: string): number {
     const companyKey = mapped.domain ?? (mapped.company ? normalizeName(mapped.company) : null);
 
     const emailMatch = mapped.email ? peopleByEmail.get(mapped.email) : undefined;
+    const profileKey = options.linkedin ? normalizeProfileUrl(mapped.linkedinUrl) : null;
+    const profileMatch = profileKey ? peopleByProfile.get(profileKey) : undefined;
+    const pendingBatch =
+      (profileKey ? pending?.profiles.get(profileKey) : undefined) ?? (mapped.email ? pending?.emails.get(mapped.email) : undefined);
     const nameMatch =
       normalizedName && organizationId ? peopleByNameAndOrganization.get(`${normalizedName}|${organizationId}`) : undefined;
     const earlierEmail = mapped.email ? seenEmail.get(mapped.email) : undefined;
@@ -439,8 +534,14 @@ export function dedupeImportBatch(tx: Tx, batchId: string): number {
     if (emailMatch) {
       markDuplicate.run('person', emailMatch, 'Email matches an existing person.', row.id);
       duplicates += 1;
+    } else if (profileMatch) {
+      markDuplicate.run('person', profileMatch, 'LinkedIn profile matches an existing person.', row.id);
+      duplicates += 1;
     } else if (nameMatch) {
       markDuplicate.run('person', nameMatch, 'Name and organization match an existing person.', row.id);
+      duplicates += 1;
+    } else if (pendingBatch) {
+      markDuplicate.run(null, null, `Already staged in another pending import (${pendingBatch}).`, row.id);
       duplicates += 1;
     } else if (earlierEmail !== undefined) {
       markDuplicate.run(null, null, `Same email as row ${earlierEmail} in this import.`, row.id);
@@ -494,7 +595,9 @@ export function requestImportReview(tx: Tx, runId: string, seq: number, request:
       .all(batch.id, reviewSampleSize) as { mapped: string }[]
   ).map((row) => {
     const mapped = parseMapped(row.mapped);
-    return { name: mapped.name, email: mapped.email, company: mapped.company };
+    const base = { name: mapped.name, email: mapped.email, company: mapped.company };
+    // Lead capture rows also show the title and the profile, which are what the reviewer approves.
+    return batch.sourceKind === 'lead_capture' ? { ...base, title: mapped.title, linkedinUrl: mapped.linkedinUrl } : base;
   });
   const payload = {
     batchId: batch.id,

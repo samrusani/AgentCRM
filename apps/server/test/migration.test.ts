@@ -170,7 +170,7 @@ describe('migration 003', () => {
       expect(batchesBefore).toEqual([...batches].sort((a, b) => a.id.localeCompare(b.id)));
       expect(rowsBefore).toEqual([...rows].sort((a, b) => a.id.localeCompare(b.id)));
 
-      expect(applyMigrations(db)).toEqual(['003_csv_qualify.sql', '004_lookup_indexes.sql', '005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql']);
+      expect(applyMigrations(db)).toEqual(['003_csv_qualify.sql', '004_lookup_indexes.sql', '005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql']);
 
       expect(snapshot(db, 'import_batch')).toEqual(batchesBefore);
       expect(snapshot(db, 'import_row')).toEqual(rowsBefore);
@@ -269,7 +269,7 @@ describe('migration 005', () => {
       insert(db, 'connector', connector);
       expect(() => insert(db, 'connector', { ...connector, id: 'con_x', kind: 'anthropic' })).toThrow(/CHECK/);
 
-      expect(applyMigrations(db)).toEqual(['005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql']);
+      expect(applyMigrations(db)).toEqual(['005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql']);
       expect(snapshot(db, 'connector')).toEqual([connector]);
       expect(db.pragma('foreign_key_check')).toEqual([]);
       expect(tableSql(db, 'connector')).not.toContain('_new');
@@ -349,7 +349,7 @@ describe('migration 007', () => {
       expect(() => insert(db, 'activity', { ...activity, id: 'act_x', kind: 'email_out' })).toThrow(/CHECK/);
       expect(() => insert(db, 'connector', { ...connector, id: 'con_x', kind: 'agentmail' })).toThrow(/CHECK/);
 
-      expect(applyMigrations(db)).toEqual(['007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql']);
+      expect(applyMigrations(db)).toEqual(['007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql']);
       expect(snapshot(db, 'connector')).toEqual([connector]);
       expect(snapshot(db, 'activity')).toEqual([activity]);
       expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -471,7 +471,7 @@ describe('migration 008', () => {
       insert(db, 'send_intent', intent('snd_3a', 'act_3', 'cancelled', '2026-01-03T00:00:00.000Z', { error: 'Outcome unknown. Acknowledged by a person. Whether this email was sent was never confirmed.' }));
       insert(db, 'send_intent', intent('snd_3b', 'act_3', 'cancelled', '2026-01-04T00:00:00.000Z', { error: 'The send was rejected.' }));
 
-      expect(applyMigrations(db)).toEqual(['008_send_intent_guards.sql', '009_model_providers.sql']);
+      expect(applyMigrations(db)).toEqual(['008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql']);
       expect(db.pragma('foreign_key_check')).toEqual([]);
 
       const statuses = Object.fromEntries((db.prepare('SELECT id, status FROM send_intent').all() as { id: string; status: string }[]).map((row) => [row.id, row.status]));
@@ -549,7 +549,7 @@ describe('migration 009', () => {
       for (const call of calls) insert(db, 'model_call', call);
       expect(() => insert(db, 'connector', { ...connectors[1], id: 'con_x', kind: 'ollama' })).toThrow(/CHECK/);
 
-      expect(applyMigrations(db)).toEqual(['009_model_providers.sql']);
+      expect(applyMigrations(db)).toEqual(['009_model_providers.sql', '010_lead_capture.sql']);
       expect(snapshot(db, 'connector')).toEqual(connectors);
       expect(snapshot(db, 'model_call')).toEqual(calls.map((call) => ({ ...call, provider: 'anthropic' })));
       expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -576,6 +576,60 @@ describe('migration 009', () => {
       expect(indexed('idx_model_call_workspace')).toEqual(['workspace_id', 'created_at']);
       expect(indexed('idx_model_call_run')).toEqual(['run_id']);
       expect(indexed('idx_model_call_subject')).toEqual(['run_id', 'subject_id']);
+    } finally {
+      db.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('migration 010', () => {
+  it('keeps import batches and rows unchanged, allows lead_capture batches, and keeps indexes and keys', () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'agentcrm-migration-'));
+    const db = new Database(path.join(directory, 'old.db'));
+    db.pragma('foreign_keys = ON');
+    try {
+      db.exec('CREATE TABLE migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
+      for (const file of ['001_init.sql', '002_apify.sql', '003_csv_qualify.sql']) {
+        db.exec(readFileSync(path.join(migrationsDirectory, file), 'utf8'));
+        db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, ?)').run(file, '2026-01-01T00:00:00.000Z');
+      }
+      for (const workspace of ['wsp_1', 'wsp_2']) {
+        db.prepare('INSERT INTO workspace (id, created_at, name, template) VALUES (?, ?, ?, ?)').run(workspace, '2026-01-01', `Workspace ${workspace}`, 't');
+      }
+      for (const batch of batches) {
+        db.prepare("INSERT INTO run (id, created_at, workspace_id, kind, title, status) VALUES (?, '2026-01-01', ?, 'apify_scrape', 'r', 'succeeded')").run(batch.run_id, batch.workspace_id);
+        insert(db, 'import_batch', batch);
+      }
+      for (const row of rows) insert(db, 'import_row', row);
+      const batchesBefore = snapshot(db, 'import_batch');
+      const rowsBefore = snapshot(db, 'import_row');
+
+      const applied = applyMigrations(db);
+      expect(applied[applied.length - 1]).toBe('010_lead_capture.sql');
+      expect(snapshot(db, 'import_batch')).toEqual(batchesBefore);
+      expect(snapshot(db, 'import_row')).toEqual(rowsBefore);
+      expect(db.pragma('foreign_key_check')).toEqual([]);
+      expect(db.pragma('integrity_check')).toEqual([{ integrity_check: 'ok' }]);
+      expect(tableSql(db, 'import_row')).not.toContain('_new');
+      expect(tableSql(db, 'import_batch')).not.toContain('_new');
+      expect(db.prepare("SELECT name FROM sqlite_master WHERE name LIKE '%\\_new' ESCAPE '\\'").all()).toEqual([]);
+
+      const rowKeys = db.pragma('foreign_key_list(import_row)') as { table: string; from: string; to: string }[];
+      expect(rowKeys.map((key) => [key.table, key.from, key.to])).toEqual([['import_batch', 'batch_id', 'id']]);
+      const indexColumns = (name: string): string[] => (db.pragma(`index_info(${name})`) as { name: string }[]).map((column) => column.name);
+      expect(indexColumns('idx_import_batch_run')).toEqual(['workspace_id', 'run_id']);
+      expect(indexColumns('idx_import_row_batch')).toEqual(['batch_id', 'seq']);
+      expect(indexColumns('idx_import_row_status')).toEqual(['batch_id', 'status']);
+      expect(() => insert(db, 'import_row', { ...rows[0], id: 'row_dupe' })).toThrow(/UNIQUE/);
+
+      const leadBatch = { ...batches[0]!, id: 'imp_lead', source_kind: 'lead_capture', source_ref: '{"postUrl":"https://www.linkedin.com/posts/x-activity-1"}', status: 'staging' };
+      insert(db, 'import_batch', leadBatch);
+      insert(db, 'import_row', { ...rows[0], id: 'row_lead', batch_id: 'imp_lead' });
+      insert(db, 'import_batch', { ...leadBatch, id: 'imp_csv', source_kind: 'csv' });
+      expect(() => insert(db, 'import_batch', { ...leadBatch, id: 'imp_other', source_kind: 'other' })).toThrow(/CHECK/);
+      expect(() => insert(db, 'import_batch', { ...leadBatch, id: 'imp_status', status: 'unknown' })).toThrow(/CHECK/);
+      expect(() => insert(db, 'import_row', { ...rows[0], id: 'row_orphan', batch_id: 'imp_missing', seq: 1 })).toThrow(/FOREIGN KEY/);
     } finally {
       db.close();
       rmSync(directory, { recursive: true, force: true });

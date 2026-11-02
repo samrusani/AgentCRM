@@ -297,12 +297,39 @@ export interface OllamaModel {
   name: string;
 }
 
+// The three actors lead capture runs. The server always sends effective values, with defaults applied.
+export interface LeadCaptureSettings {
+  reactionsActor: string;
+  commentsActor: string;
+  profileActor: string;
+}
+
+export interface ApifyConnectorInput {
+  token?: string;
+  allowlist?: string[];
+  // Each field is optional. An empty string resets that field to its default.
+  leadCapture?: Partial<LeadCaptureSettings>;
+}
+
+export type LeadSource = 'reactions' | 'comments';
+
+export interface LeadCaptureInput {
+  postUrl: string;
+  sources?: LeadSource[];
+  maxPeople?: number;
+  enrich?: boolean;
+  enrichLimit?: number;
+  title?: string;
+}
+
 export interface Connector {
   id: string | null;
   kind: ConnectorKind | string;
   status: ConnectorStatus;
   statusMessage: string | null;
   allowlist: string[];
+  // Apify only: the actors lead capture runs. Null for other connectors.
+  leadCapture: LeadCaptureSettings | null;
   // Model providers only: the chosen model id from settings.model.
   model: string | null;
   // Ollama only: the server address from settings.baseUrl.
@@ -345,6 +372,8 @@ export interface ImportBatch {
   runId: string | null;
   sourceKind: string;
   actorId: string | null;
+  // Lead capture batches only: the LinkedIn post the people came from.
+  postUrl: string | null;
   apifyRunId: string | null;
   datasetId: string | null;
   status: ImportBatchStatus;
@@ -371,11 +400,16 @@ export interface ImportSampleRow {
   name: string | null;
   email: string | null;
   company: string | null;
+  // Lead capture reviews also show the title and the LinkedIn profile.
+  title: string | null;
+  linkedinUrl: string | null;
 }
 
 export interface ImportReviewPayload {
   batchId: string | null;
   actorId: string | null;
+  // Lead capture reviews: the LinkedIn post the people came from.
+  postUrl: string | null;
   counts: ImportCounts;
   sample: ImportSampleRow[];
 }

@@ -1,4 +1,5 @@
 import { normalizeCounts } from '../lib/imports';
+import { DEFAULT_LEAD_ACTORS } from '../lib/leads';
 import { DAILY_SEND_CAP, parseExcluded } from '../lib/mail';
 import type {
   Activity,
@@ -7,6 +8,7 @@ import type {
   AgentUsage,
   ApifyActorDetail,
   ApifyActorSummary,
+  ApifyConnectorInput,
   ApifyRunInput,
   Approval,
   Claim,
@@ -21,6 +23,8 @@ import type {
   CsvPreview,
   DraftOutreachInput,
   Health,
+  LeadCaptureInput,
+  LeadCaptureSettings,
   MailInbox,
   MailReply,
   ModelProviderInput,
@@ -278,6 +282,17 @@ function messageFrom(...candidates: unknown[]): string | null {
   return null;
 }
 
+// Apify connectors always carry the three actors. An older server that omits them gets the documented defaults.
+function normalizeLeadCapture(kind: unknown, raw: unknown): LeadCaptureSettings | null {
+  if (textOrNull(kind) !== 'apify') return null;
+  const record = objectOrEmpty(raw);
+  return {
+    reactionsActor: textOrNull(record.reactionsActor) ?? DEFAULT_LEAD_ACTORS.reactionsActor,
+    commentsActor: textOrNull(record.commentsActor) ?? DEFAULT_LEAD_ACTORS.commentsActor,
+    profileActor: textOrNull(record.profileActor) ?? DEFAULT_LEAD_ACTORS.profileActor,
+  };
+}
+
 function normalizeConnector(raw: unknown): Connector {
   const record = objectOrEmpty(raw);
   const settings = objectOrEmpty(record.settings);
@@ -296,6 +311,7 @@ function normalizeConnector(raw: unknown): Connector {
       settings.error,
     ),
     allowlist: toArray<unknown>(allowlistSource).filter((entry): entry is string => typeof entry === 'string'),
+    leadCapture: normalizeLeadCapture(record.kind, settings.leadCapture),
     model: textOrNull(settings.model ?? record.model),
     baseUrl: textOrNull(settings.baseUrl ?? record.baseUrl),
     inboxId: textOrNull(settings.inboxId ?? record.inboxId),
@@ -520,6 +536,7 @@ function normalizeImportBatch(raw: Record<string, unknown>): ImportBatch {
     runId: textOrNull(raw.runId),
     sourceKind: textOrNull(raw.sourceKind) ?? 'apify',
     actorId: textOrNull(sourceRef.actorId),
+    postUrl: textOrNull(sourceRef.postUrl),
     apifyRunId: textOrNull(sourceRef.apifyRunId ?? sourceRef.runId),
     datasetId: textOrNull(sourceRef.datasetId),
     status: textOrNull(raw.status) ?? 'staging',
@@ -747,6 +764,10 @@ export const api = {
           },
         }),
       ),
+    startLeadCapture: async (input: LeadCaptureInput) => {
+      const { title, ...scope } = input;
+      return normalizeRun(await request<Run>('POST', '/runs', { body: { kind: 'lead_capture', title, scope } }));
+    },
     startDraftOutreach: async (input: DraftOutreachInput) => {
       const { title, ...scope } = input;
       return normalizeRun(await request<Run>('POST', '/runs', { body: { kind: 'draft_outreach', title, scope } }));
@@ -776,7 +797,7 @@ export const api = {
       return asPage<unknown>(source).items.map(normalizeConnector);
     },
     // The token is optional so the allowlist can be edited while connected.
-    saveApify: async (input: { token?: string; allowlist?: string[] }) =>
+    saveApify: async (input: ApifyConnectorInput) =>
       normalizeConnector(await request<unknown>('PUT', '/connectors/apify', { body: input })),
     removeApify: () => request<unknown>('DELETE', '/connectors/apify'),
     // Model providers share one shape. A token (or an Ollama base URL) connects or reconnects.

@@ -4,11 +4,12 @@ import {
   useRemoveApifyConnector,
   useSaveApifyConnector,
 } from '../api/hooks';
-import type { Connector } from '../api/types';
+import type { Connector, LeadCaptureSettings } from '../api/types';
 import { ErrorState, Loading, errorMessage } from '../components/common';
 import { CONNECTOR_MARKS, CardToggle, RemoveControl, TokenForm, TokenLine, useCardOpen } from '../components/connector';
 import { Icon } from '../components/Icons';
 import { normalizeActorId } from '../lib/imports';
+import { DEFAULT_LEAD_ACTORS } from '../lib/leads';
 import { AgentMailConnectorCard } from './AgentMailConnectorCard';
 
 function ApifyRemoveControl() {
@@ -114,6 +115,125 @@ function Allowlist({ connector }: { connector: Connector }) {
   );
 }
 
+const LEAD_FIELDS: Array<{ key: keyof LeadCaptureSettings; label: string }> = [
+  { key: 'reactionsActor', label: 'Reactions' },
+  { key: 'commentsActor', label: 'Comments' },
+  { key: 'profileActor', label: 'Profile enrichment' },
+];
+
+function sameActor(a: string, b: string): boolean {
+  return (normalizeActorId(a) ?? a.trim()) === (normalizeActorId(b) ?? b.trim());
+}
+
+function LeadCaptureActors({ connector }: { connector: Connector }) {
+  const save = useSaveApifyConnector();
+  const saved = connector.leadCapture ?? DEFAULT_LEAD_ACTORS;
+  // A field holds a draft only while the user is editing it; otherwise it shows the saved value.
+  const [drafts, setDrafts] = useState<Partial<Record<keyof LeadCaptureSettings, string>>>({});
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const valueOf = (key: keyof LeadCaptureSettings) => drafts[key] ?? saved[key];
+  const changed = LEAD_FIELDS.filter(({ key }) => drafts[key] !== undefined && !sameActor(drafts[key] as string, saved[key]));
+
+  const write = (leadCapture: Partial<LeadCaptureSettings>, onDone?: () => void) => {
+    save.mutate({ leadCapture }, { onSuccess: onDone });
+  };
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const body: Partial<LeadCaptureSettings> = {};
+    for (const { key, label } of changed) {
+      const raw = (drafts[key] as string).trim();
+      if (raw === '') {
+        body[key] = '';
+        continue;
+      }
+      const id = normalizeActorId(raw);
+      if (!id) {
+        setProblem(
+          `${label}: enter an actor id such as username~actor-name. Spaces, other characters, and parts that are only dots are not allowed.`,
+        );
+        return;
+      }
+      body[key] = id;
+    }
+    setProblem(null);
+    write(body, () => setDrafts({}));
+  };
+
+  const reset = (key: keyof LeadCaptureSettings) => {
+    setProblem(null);
+    // An empty string asks the server to return this field to its default.
+    write({ [key]: '' }, () =>
+      setDrafts((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      }),
+    );
+  };
+
+  return (
+    <form className="connector__allowlist" onSubmit={submit} aria-labelledby="apify-lead-heading">
+      <h4 className="connector__heading" id="apify-lead-heading">
+        Lead capture actors
+      </h4>
+      {LEAD_FIELDS.map(({ key, label }) => {
+        const isDefault = sameActor(valueOf(key), DEFAULT_LEAD_ACTORS[key]);
+        return (
+          <div className="connector__form" key={key}>
+            <label className="connector__label" htmlFor={`apify-lead-${key}`}>
+              {label}
+            </label>
+            <div className="connector__row">
+              <input
+                id={`apify-lead-${key}`}
+                className="input"
+                type="text"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={DEFAULT_LEAD_ACTORS[key]}
+                value={valueOf(key)}
+                onChange={(event) => {
+                  setDrafts((current) => ({ ...current, [key]: event.target.value }));
+                  setProblem(null);
+                }}
+              />
+              <button
+                type="button"
+                className="btn btn--quiet"
+                disabled={save.isPending || isDefault}
+                aria-label={`Reset ${label} to default`}
+                onClick={() => reset(key)}
+              >
+                Reset to default
+              </button>
+            </div>
+          </div>
+        );
+      })}
+      <div>
+        <button type="submit" className="btn" disabled={save.isPending || changed.length === 0}>
+          {save.isPending ? 'Saving...' : 'Save actors'}
+        </button>
+      </div>
+      <p className="muted">
+        These actors run on your Apify account. Agent started captures need them on the allowlist.
+      </p>
+      {problem ? (
+        <p className="inline-error" role="alert">
+          {problem}
+        </p>
+      ) : null}
+      {save.isError ? (
+        <p className="inline-error" role="alert">
+          {errorMessage(save.error)} The lead capture actors did not change.
+        </p>
+      ) : null}
+    </form>
+  );
+}
+
 function ApifyCard({ connector }: { connector: Connector | null }) {
   const save = useSaveApifyConnector();
 
@@ -176,6 +296,7 @@ function ApifyCard({ connector }: { connector: Connector | null }) {
 
       {connector ? <ApifyRemoveControl /> : null}
       {connector ? <Allowlist connector={connector} /> : null}
+      {connector ? <LeadCaptureActors connector={connector} /> : null}
         </div>
       ) : null}
     </article>

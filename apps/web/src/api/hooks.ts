@@ -9,9 +9,11 @@ import { api } from './client';
 import { useEventConnection } from './events';
 import type {
   AgentMessageInput,
+  ApifyConnectorInput,
   ApifyRunInput,
   CsvImportInput,
   DraftOutreachInput,
+  LeadCaptureInput,
   ModelProviderInput,
   ModelProviderKind,
   Opportunity,
@@ -289,7 +291,7 @@ export function useApifyConnector() {
 export function useSaveApifyConnector() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { token?: string; allowlist?: string[] }) => api.connectors.saveApify(input),
+    mutationFn: (input: ApifyConnectorInput) => api.connectors.saveApify(input),
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ['connectors'] });
       void queryClient.invalidateQueries({ queryKey: ['apify-actors'] });
@@ -405,6 +407,18 @@ export function useStartApifyRun() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: ApifyRunInput) => api.runs.startApify(input),
+    onSuccess: (run) => {
+      queryClient.setQueryData(['run', run.id], run);
+      void queryClient.invalidateQueries({ queryKey: ['runs'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+    },
+  });
+}
+
+export function useStartLeadCapture() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: LeadCaptureInput) => api.runs.startLeadCapture(input),
     onSuccess: (run) => {
       queryClient.setQueryData(['run', run.id], run);
       void queryClient.invalidateQueries({ queryKey: ['runs'] });

@@ -36,6 +36,7 @@ describe('agents have no path to sending', () => {
         'crm_propose_changes',
         'crm_search',
         'crm_start_research',
+        'start_lead_capture',
       ]);
       for (const tool of tools) {
         expect(tool.name).not.toMatch(/send|mail|intent|suppress|approv|decide/i);

@@ -64,17 +64,37 @@ export function mappedCompany(mapped: Record<string, unknown>): string | null {
   );
 }
 
+export function mappedTitle(mapped: Record<string, unknown>): string | null {
+  return text(mapped.title) ?? text(mapped.position) ?? text(mapped.jobTitle);
+}
+
+export function mappedProfile(mapped: Record<string, unknown>): string | null {
+  return text(mapped.linkedinUrl) ?? text(mapped.linkedin);
+}
+
+// The profile link without the scheme, "www.", and any query, so it fits a table cell.
+export function profileLabel(url: string): string {
+  return url.replace(/^https?:\/\//i, '').replace(/^www\./i, '').split(/[?#]/)[0]!.replace(/\/$/, '');
+}
+
 export function parseImportReviewPayload(payload: unknown): ImportReviewPayload | null {
   const record = asRecord(payload);
   if (Object.keys(record).length === 0) return null;
   const sampleSource = Array.isArray(record.sample) ? record.sample : [];
   const sample: ImportSampleRow[] = sampleSource.slice(0, 5).map((entry) => {
     const row = asRecord(entry);
-    return { name: mappedName(row), email: mappedEmail(row), company: mappedCompany(row) };
+    return {
+      name: mappedName(row),
+      email: mappedEmail(row),
+      company: mappedCompany(row),
+      title: mappedTitle(row),
+      linkedinUrl: mappedProfile(row),
+    };
   });
   return {
     batchId: text(record.batchId) ?? text(record.batch_id),
     actorId: text(record.actorId) ?? text(record.actor_id),
+    postUrl: text(record.postUrl) ?? text(asRecord(record.source).postUrl),
     counts: normalizeCounts(record.counts),
     sample,
   };

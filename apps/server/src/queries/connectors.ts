@@ -8,9 +8,26 @@ export type ModelConnectorKind = ModelProviderKind;
 export type KeyedModelKind = 'anthropic' | 'openai' | 'deepseek' | 'zai';
 export type ConnectorKind = 'apify' | 'agentmail' | ModelConnectorKind;
 
+// Actor ids for the LinkedIn lead capture run. Settings hold only the ids a person changed; reads fill in the defaults.
+export interface LeadCaptureActors {
+  reactionsActor: string;
+  commentsActor: string;
+  profileActor: string;
+}
+
+export const defaultLeadCaptureActors: LeadCaptureActors = {
+  reactionsActor: 'harvestapi/linkedin-post-reactions',
+  commentsActor: 'harvestapi/linkedin-post-comments',
+  profileActor: 'harvestapi/linkedin-profile-scraper',
+};
+
+export const leadCaptureActorFields = ['reactionsActor', 'commentsActor', 'profileActor'] as const;
+
 export interface ApifyConnectorSettings {
   allowlist: string[];
   username: string | null;
+  // The effective ids, defaults applied.
+  leadCapture: LeadCaptureActors;
 }
 
 export interface AnthropicConnectorSettings {
@@ -145,12 +162,22 @@ export function toConnector(row: Row): Connector {
       },
     };
   }
+  const storedLeadCapture =
+    typeof stored.leadCapture === 'object' && stored.leadCapture !== null && !Array.isArray(stored.leadCapture)
+      ? (stored.leadCapture as Record<string, unknown>)
+      : {};
+  const leadCapture = { ...defaultLeadCaptureActors };
+  for (const field of leadCaptureActorFields) {
+    const value = storedLeadCapture[field];
+    if (typeof value === 'string' && value.trim() !== '') leadCapture[field] = value.trim();
+  }
   return {
     ...withToken,
     kind: 'apify',
     settings: {
       allowlist: Array.isArray(stored.allowlist) ? stored.allowlist.filter((item): item is string => typeof item === 'string') : [],
       username: typeof stored.username === 'string' ? stored.username : null,
+      leadCapture,
     },
   };
 }
