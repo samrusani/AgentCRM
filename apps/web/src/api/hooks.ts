@@ -7,7 +7,7 @@ import {
 } from '@tanstack/react-query';
 import { api } from './client';
 import { useEventConnection } from './events';
-import type { ApifyRunInput, Opportunity } from './types';
+import type { ApifyRunInput, CsvImportInput, Opportunity, QualificationConfig } from './types';
 import { isRunActive } from '../lib/format';
 import { useUI } from '../lib/ui';
 
@@ -30,10 +30,13 @@ export function useToday() {
   });
 }
 
-export function usePeople(q: string) {
+export type PeopleSort = 'default' | 'fit';
+
+export function usePeople(q: string, sort: PeopleSort = 'default') {
   return useInfiniteQuery({
-    queryKey: ['people', q],
-    queryFn: ({ pageParam }) => api.people.list({ q, cursor: pageParam, limit: PAGE_SIZE }),
+    queryKey: ['people', q, sort],
+    queryFn: ({ pageParam }) =>
+      api.people.list({ q, sort: sort === 'fit' ? 'fit' : undefined, cursor: pageParam, limit: PAGE_SIZE }),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
     placeholderData: keepPreviousData,
@@ -339,5 +342,51 @@ export function useImportBatch(id: string | null, status: string | null) {
     enabled: Boolean(id),
     placeholderData: keepPreviousData,
     refetchInterval: connection === 'open' ? false : 5000,
+  });
+}
+
+export function useCsvPreview() {
+  return useMutation({
+    mutationFn: (input: { fileName: string; content: string }) => api.imports.csvPreview(input),
+  });
+}
+
+export function useStageCsv() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CsvImportInput) => api.imports.csvStage(input),
+    onSuccess: (run) => {
+      queryClient.setQueryData(['run', run.id], run);
+      void queryClient.invalidateQueries({ queryKey: ['runs'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+    },
+  });
+}
+
+export function useQualification() {
+  return useQuery({ queryKey: ['qualification'], queryFn: api.qualification.get });
+}
+
+export function useSaveQualification() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (config: QualificationConfig) => api.qualification.put(config),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(['qualification'], saved);
+      void queryClient.invalidateQueries({ queryKey: ['people'] });
+      void queryClient.invalidateQueries({ queryKey: ['person'] });
+    },
+  });
+}
+
+export function useQualifyRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (scope: { tag?: string } = {}) => api.runs.startQualify(scope),
+    onSuccess: (run) => {
+      queryClient.setQueryData(['run', run.id], run);
+      void queryClient.invalidateQueries({ queryKey: ['runs'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+    },
   });
 }

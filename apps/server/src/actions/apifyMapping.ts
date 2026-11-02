@@ -8,7 +8,25 @@ export interface MappedRow {
   title: string | null;
   location: string | null;
   linkedinUrl: string | null;
+  // Only CSV rows carry tags. Apify items never do.
+  tags?: string[];
 }
+
+// Item keys the heuristic mapping reads, in priority order. The CSV header suggestions use the same lists.
+export const fieldAliases = {
+  firstName: ['firstName', 'first_name'],
+  lastName: ['lastName', 'last_name'],
+  name: ['name', 'fullName', 'full_name'],
+  email: ['email', 'emailAddress', 'email_address'],
+  company: ['company', 'organization', 'organisation', 'companyName', 'company_name'],
+  domain: ['domain', 'companyDomain', 'company_domain'],
+  website: ['website', 'companyWebsite', 'company_website', 'url'],
+  title: ['title', 'position', 'jobTitle', 'job_title'],
+  location: ['location'],
+  city: ['city'],
+  country: ['country'],
+  linkedinUrl: ['linkedinUrl', 'linkedin_url', 'linkedin', 'profileUrl', 'profile_url', 'url'],
+} as const;
 
 type Item = Record<string, unknown>;
 
@@ -36,7 +54,7 @@ function pick(item: Item, keys: readonly string[], max: number): string | null {
 }
 
 function pickEmail(item: Item): string | null {
-  const candidates: unknown[] = [item.email, item.emailAddress, item.email_address];
+  const candidates: unknown[] = fieldAliases.email.map((key) => item[key]);
   const list = item.emails;
   if (Array.isArray(list)) {
     const first = list[0];
@@ -66,9 +84,10 @@ export function hostnameOf(value: string): string | null {
 }
 
 function pickDomain(item: Item): string | null {
-  const direct = pick(item, ['domain', 'companyDomain', 'company_domain'], 200);
-  if (direct) return hostnameOf(direct);
-  for (const key of ['website', 'companyWebsite', 'company_website', 'url']) {
+  // A LinkedIn profile or company page is never the company's own domain, however the column was mapped.
+  const direct = pick(item, fieldAliases.domain, 200);
+  if (direct && !/linkedin\.com/i.test(direct)) return hostnameOf(direct);
+  for (const key of fieldAliases.website) {
     const value = clean(item[key], 500);
     if (!value || /linkedin\.com/i.test(value)) continue;
     const host = hostnameOf(value);
@@ -78,7 +97,7 @@ function pickDomain(item: Item): string | null {
 }
 
 function pickLinkedin(item: Item): string | null {
-  for (const key of ['linkedinUrl', 'linkedin_url', 'linkedin', 'profileUrl', 'profile_url', 'url']) {
+  for (const key of fieldAliases.linkedinUrl) {
     const value = clean(item[key], 500);
     if (value && /linkedin\.com/i.test(value)) return value;
   }
@@ -100,19 +119,19 @@ export function splitName(name: string): { firstName: string; lastName: string }
 // Heuristic mapping for common lead scraper output. Unmapped keys stay in the raw item.
 export function mapItem(raw: unknown): MappedRow {
   const item: Item = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Item) : {};
-  const firstPart = pick(item, ['firstName', 'first_name'], 100);
-  const lastPart = pick(item, ['lastName', 'last_name'], 100);
+  const firstPart = pick(item, fieldAliases.firstName, 100);
+  const lastPart = pick(item, fieldAliases.lastName, 100);
   const joined = [firstPart, lastPart].filter((part): part is string => part !== null).join(' ');
-  const name = pick(item, ['name', 'fullName', 'full_name'], 200) ?? (joined === '' ? null : joined);
+  const name = pick(item, fieldAliases.name, 200) ?? (joined === '' ? null : joined);
   const split = name ? splitName(name) : null;
   return {
     name,
     firstName: split ? split.firstName : null,
     lastName: split ? split.lastName : null,
     email: pickEmail(item),
-    company: pick(item, ['company', 'organization', 'organisation', 'companyName', 'company_name'], 200),
+    company: pick(item, fieldAliases.company, 200),
     domain: pickDomain(item),
-    title: pick(item, ['title', 'position', 'jobTitle', 'job_title'], 200),
+    title: pick(item, fieldAliases.title, 200),
     location: pickLocation(item),
     linkedinUrl: pickLinkedin(item),
   };

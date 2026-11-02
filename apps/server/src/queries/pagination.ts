@@ -40,6 +40,8 @@ export interface PageSpec<T> {
   cursor?: string | undefined;
   limit?: number | undefined;
   map: (row: Row) => T;
+  // FROM and JOIN text used to read the cursor row's sort keys. Needed when a key uses a joined table.
+  cursorSource?: string;
 }
 
 export function paginate<T>(spec: PageSpec<T>): Page<T> {
@@ -55,7 +57,7 @@ export function paginate<T>(spec: PageSpec<T>): Page<T> {
     const keyList = spec.keys.join(', ');
     const comparator = spec.direction === 'ASC' ? '>' : '<';
     where.push(
-      `(${keyList}) ${comparator} (SELECT ${keyList} FROM ${spec.table} AS ${spec.alias} WHERE ${spec.alias}.id = ?)`,
+      `(${keyList}) ${comparator} (SELECT ${keyList} FROM ${spec.cursorSource ?? `${spec.table} AS ${spec.alias}`} WHERE ${spec.alias}.id = ?)`,
     );
     params.push(cursorId);
   }

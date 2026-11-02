@@ -1,9 +1,11 @@
 import { type ImportCounts, emptyImportCounts, getImportBatchForRun } from '../queries/imports.js';
+import { getRun, listRunSteps } from '../queries/runs.js';
 import { AppError } from '../errors.js';
-import { type Row } from '../records.js';
+import { type Row, type RunCounts } from '../records.js';
 import { normalizeName, splitName, type MappedRow } from './apifyMapping.js';
 import { type Tx, emitRecord } from './context.js';
 import { createFieldClaimIn, createOrganizationIn, createPersonIn } from './crud.js';
+import { finishStep, hashPayload, startStep } from './demoResearch.js';
 
 export const apifyConsoleRunUrl = (apifyRunId: string): string =>
   `https://console.apify.com/actors/runs/${encodeURIComponent(apifyRunId)}`;
@@ -55,6 +57,7 @@ function parseMapped(value: unknown): MappedRow {
     title: parsed.title ?? null,
     location: parsed.location ?? null,
     linkedinUrl: parsed.linkedinUrl ?? null,
+    tags: Array.isArray(parsed.tags) ? parsed.tags.filter((tag): tag is string => typeof tag === 'string') : [],
   };
 }
 
@@ -76,9 +79,22 @@ export interface ImportOutcome {
 export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, unknown>): ImportOutcome {
   const batch = getImportBatchForRun(tx.db, tx.workspaceId, runId);
   if (!batch) throw new Error('The import batch for this run is missing.');
-  const actorId = String(scope.actorId ?? 'unknown');
-  const sourceUrl = apifyConsoleRunUrl(String(scope.apifyRunId ?? ''));
   const observedAt = tx.now();
+  // Apify claims point at the Apify run and record the actor id. CSV claims have no URL and record the file name.
+  const source =
+    batch.sourceKind === 'csv'
+      ? {
+          type: 'import',
+          url: null as string | null,
+          method: `csv:${String(scope.fileName ?? batch.sourceRef.fileName ?? 'unknown')}`.slice(0, 200),
+          tag: 'csv-import',
+        }
+      : {
+          type: 'apify',
+          url: apifyConsoleRunUrl(String(scope.apifyRunId ?? '')) as string | null,
+          method: String(scope.actorId ?? 'unknown'),
+          tag: 'apify',
+        };
 
   const rows = (
     tx.db.prepare("SELECT * FROM import_row WHERE batch_id = ? AND status = 'staged' ORDER BY seq").all(batch.id) as Row[]
@@ -117,33 +133,36 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
 
   const organizationIds = new Map<string, string>();
   const createdOrganizations = new Set<string>();
-  const lookupOrganization = (mapped: MappedRow, hinted: string | null): string | null => {
-    if (hinted) {
-      const hit = tx.db
-        .prepare('SELECT id FROM organization WHERE workspace_id = ? AND id = ?')
-        .get(tx.workspaceId, hinted) as { id: string } | undefined;
-      if (hit) return hit.id;
+  // Read once per approval, then kept current as organizations are created, so each row is a map lookup
+  // instead of a scan of every organization. The first organization wins when two share a name.
+  const knownOrganizationIds = new Set<string>();
+  const organizationsByDomain = new Map<string, string>();
+  const organizationsByName = new Map<string, string>();
+  for (const organization of tx.db
+    .prepare('SELECT id, name, domain FROM organization WHERE workspace_id = ?')
+    .all(tx.workspaceId) as { id: string; name: string; domain: string | null }[]) {
+    knownOrganizationIds.add(organization.id);
+    if (organization.domain) {
+      const domain = organization.domain.toLowerCase();
+      if (!organizationsByDomain.has(domain)) organizationsByDomain.set(domain, organization.id);
     }
+    const name = normalizeName(organization.name);
+    if (!organizationsByName.has(name)) organizationsByName.set(name, organization.id);
+  }
+  const lookupOrganization = (mapped: MappedRow, hinted: string | null): string | null => {
+    if (hinted && knownOrganizationIds.has(hinted)) return hinted;
     if (mapped.domain) {
-      const hit = tx.db
-        .prepare('SELECT id FROM organization WHERE workspace_id = ? AND lower(domain) = ?')
-        .get(tx.workspaceId, mapped.domain) as { id: string } | undefined;
-      if (hit) return hit.id;
+      const hit = organizationsByDomain.get(mapped.domain);
+      if (hit) return hit;
     }
     if (mapped.company) {
-      const wanted = normalizeName(mapped.company);
-      const all = tx.db.prepare('SELECT id, name FROM organization WHERE workspace_id = ?').all(tx.workspaceId) as {
-        id: string;
-        name: string;
-      }[];
-      const hit = all.find((candidate) => normalizeName(candidate.name) === wanted);
-      if (hit) return hit.id;
+      const hit = organizationsByName.get(normalizeName(mapped.company));
+      if (hit) return hit;
     }
     return null;
   };
 
-  const organizationTags = ['apify', `via-${runId}`];
-  const personTags = ['apify', `via-${runId}`];
+  const organizationTags = [source.tag, `via-${runId}`];
 
   // Each row gets its own savepoint. A conflict that appeared after staging (an email or domain added
   // since) rolls back only that row, which is marked duplicate. The rest of the approval still commits.
@@ -153,6 +172,7 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
     tx.db.exec('SAVEPOINT import_row');
     const addedKeys: string[] = [];
     const addedOrganizations: string[] = [];
+    const undoLookups: (() => void)[] = [];
     try {
       const mapped = row.mapped;
       let organizationId: string | null = null;
@@ -173,6 +193,18 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
             organizationId = created.id;
             createdOrganizations.add(organizationId);
             addedOrganizations.push(organizationId);
+            knownOrganizationIds.add(organizationId);
+            undoLookups.push(() => knownOrganizationIds.delete(created.id));
+            if (mapped.domain && !organizationsByDomain.has(mapped.domain)) {
+              const domainKey = mapped.domain;
+              organizationsByDomain.set(domainKey, created.id);
+              undoLookups.push(() => organizationsByDomain.delete(domainKey));
+            }
+            const nameKey = normalizeName(name);
+            if (!organizationsByName.has(nameKey)) {
+              organizationsByName.set(nameKey, created.id);
+              undoLookups.push(() => organizationsByName.delete(nameKey));
+            }
             const orgClaims: [string, string | null][] = [
               ['name', name],
               ['domain', mapped.domain],
@@ -184,11 +216,11 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
                 entityId: organizationId,
                 field,
                 value: value.slice(0, longestClaim),
-                sourceUrl,
-                sourceType: 'apify',
+                sourceUrl: source.url,
+                sourceType: source.type,
                 observedAt,
                 status: 'imported',
-                extractionMethod: actorId,
+                extractionMethod: source.method,
               });
             }
           }
@@ -206,7 +238,7 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
         title: mapped.title,
         organizationId,
         location: mapped.location,
-        tags: personTags,
+        tags: [...new Set([source.tag, `via-${runId}`, ...(mapped.tags ?? [])])].slice(0, 30),
         nextActionAt: null,
       });
       const claims: [string, string | null][] = [
@@ -224,11 +256,11 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
           entityId: person.id,
           field,
           value: value.slice(0, longestClaim),
-          sourceUrl,
-          sourceType: 'apify',
+          sourceUrl: source.url,
+          sourceType: source.type,
           observedAt,
           status: 'imported',
-          extractionMethod: actorId,
+          extractionMethod: source.method,
         });
       }
       tx.db.exec('RELEASE import_row');
@@ -240,6 +272,7 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
       tx.db.exec('RELEASE import_row');
       for (const key of addedKeys) organizationIds.delete(key);
       for (const id of addedOrganizations) createdOrganizations.delete(id);
+      for (const undo of undoLookups) undo();
       markRow(row.id, 'duplicate', `${lateConflictReason} ${error.message}`, null, null);
       skipped += 1;
     }
@@ -278,4 +311,220 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
     counts,
     truncated: scope.fetchStoppedEarly !== undefined && scope.fetchStoppedEarly !== null,
   };
+}
+
+// Ends the run as failed, or partial when rows were already staged. Never creates or keeps invented rows.
+export function failImportRunIn(tx: Tx, runId: string, detail: string): void {
+  const run = getRun(tx.db, tx.workspaceId, runId);
+  if (!run || ['succeeded', 'partial', 'failed', 'cancelled'].includes(run.status)) return;
+  const batch = getImportBatchForRun(tx.db, tx.workspaceId, runId);
+  const staged = batch ? batch.counts.staged : 0;
+  const status = staged > 0 ? 'partial' : 'failed';
+  const now = tx.now();
+  tx.db.prepare('UPDATE run SET status = ?, finished_at = ? WHERE id = ?').run(status, now, runId);
+  for (const step of listRunSteps(tx.db, runId)) {
+    if (step.status === 'running') {
+      tx.db
+        .prepare("UPDATE run_step SET status = 'failed', detail = ?, finished_at = ? WHERE id = ?")
+        .run(detail, now, step.id);
+    } else if (step.status === 'pending') {
+      tx.db.prepare("UPDATE run_step SET status = 'skipped', finished_at = ? WHERE id = ?").run(now, step.id);
+    }
+  }
+  closeImportBatchForRun(tx, runId, 'failed', detail);
+  tx.audit(`run.${status}`, 'run', runId, { message: detail });
+  tx.emit({ type: 'run_updated', runId });
+}
+
+// Shared by Apify and CSV runs: the step helpers, the duplicate check, and the review request.
+
+export function importCountsOf(counts: ImportCounts, requested: number): RunCounts {
+  return {
+    processed: counts.fetched,
+    found: counts.staged,
+    flagged: counts.duplicates + counts.invalid,
+    requested,
+    fetched: counts.fetched,
+    staged: counts.staged,
+    duplicates: counts.duplicates,
+    invalid: counts.invalid,
+    accepted: counts.accepted,
+  };
+}
+
+// The running step with this seq, only while the run itself is still running.
+export function liveStep(tx: Tx, runId: string, seq: number) {
+  const run = getRun(tx.db, tx.workspaceId, runId);
+  if (!run || run.status !== 'running') return null;
+  const step = listRunSteps(tx.db, runId).find((candidate) => candidate.seq === seq && candidate.status === 'running');
+  return step ? { run, step } : null;
+}
+
+export function completeStep(tx: Tx, runId: string, step: { id: string; seq: number }, detail: string): void {
+  finishStep(tx, runId, step, detail);
+  const next = listRunSteps(tx.db, runId).find((candidate) => candidate.seq > step.seq && candidate.status === 'pending');
+  if (next) startStep(tx, runId, next);
+  tx.emit({ type: 'run_updated', runId });
+}
+
+// Rows with neither a name nor an email cannot become a record. Returns how many were marked invalid.
+export function markInvalidRows(tx: Tx, batchId: string, reason: string): { total: number; invalid: number } {
+  const rows = tx.db.prepare('SELECT id, mapped FROM import_row WHERE batch_id = ? ORDER BY seq').all(batchId) as {
+    id: string;
+    mapped: string;
+  }[];
+  let invalid = 0;
+  const update = tx.db.prepare("UPDATE import_row SET status = 'invalid', reason = ? WHERE id = ?");
+  for (const row of rows) {
+    const mapped = parseMapped(row.mapped);
+    if (mapped.name === null && mapped.email === null) {
+      update.run(reason, row.id);
+      invalid += 1;
+    }
+  }
+  return { total: rows.length, invalid };
+}
+
+// Marks staged rows that match an existing person or an earlier row in the same batch. Never merges.
+// Existing people match by normalized email, then by name plus organization.
+export function dedupeImportBatch(tx: Tx, batchId: string): number {
+  const peopleByEmail = new Map<string, string>();
+  const peopleByNameAndOrganization = new Map<string, string>();
+  for (const person of tx.db
+    .prepare('SELECT id, first_name, last_name, email, organization_id FROM person WHERE workspace_id = ?')
+    .all(tx.workspaceId) as Row[]) {
+    if (person.email) peopleByEmail.set(String(person.email).toLowerCase(), String(person.id));
+    if (person.organization_id) {
+      const name = normalizeName(`${String(person.first_name)} ${String(person.last_name ?? '')}`);
+      peopleByNameAndOrganization.set(`${name}|${String(person.organization_id)}`, String(person.id));
+    }
+  }
+  const organizationsByDomain = new Map<string, string>();
+  const organizationsByName = new Map<string, string>();
+  for (const organization of tx.db
+    .prepare('SELECT id, name, domain FROM organization WHERE workspace_id = ?')
+    .all(tx.workspaceId) as Row[]) {
+    if (organization.domain) organizationsByDomain.set(String(organization.domain).toLowerCase(), String(organization.id));
+    organizationsByName.set(normalizeName(String(organization.name)), String(organization.id));
+  }
+
+  const rows = tx.db
+    .prepare("SELECT id, seq, mapped FROM import_row WHERE batch_id = ? AND status = 'staged' ORDER BY seq")
+    .all(batchId) as { id: string; seq: number; mapped: string }[];
+  const seenEmail = new Map<string, number>();
+  const seenNameAndCompany = new Map<string, number>();
+  let duplicates = 0;
+  const markDuplicate = tx.db.prepare(
+    "UPDATE import_row SET status = 'duplicate', match_entity_type = ?, match_entity_id = ?, reason = ? WHERE id = ?",
+  );
+  const markLink = tx.db.prepare(
+    "UPDATE import_row SET match_entity_type = 'organization', match_entity_id = ?, reason = ? WHERE id = ?",
+  );
+
+  for (const row of rows) {
+    const mapped = parseMapped(row.mapped);
+    const organizationId =
+      (mapped.domain ? organizationsByDomain.get(mapped.domain) : undefined) ??
+      (mapped.company ? organizationsByName.get(normalizeName(mapped.company)) : undefined) ??
+      null;
+    const normalizedName = mapped.name ? normalizeName(mapped.name) : null;
+    const companyKey = mapped.domain ?? (mapped.company ? normalizeName(mapped.company) : null);
+
+    const emailMatch = mapped.email ? peopleByEmail.get(mapped.email) : undefined;
+    const nameMatch =
+      normalizedName && organizationId ? peopleByNameAndOrganization.get(`${normalizedName}|${organizationId}`) : undefined;
+    const earlierEmail = mapped.email ? seenEmail.get(mapped.email) : undefined;
+    const earlierName = normalizedName && companyKey ? seenNameAndCompany.get(`${normalizedName}|${companyKey}`) : undefined;
+
+    if (emailMatch) {
+      markDuplicate.run('person', emailMatch, 'Email matches an existing person.', row.id);
+      duplicates += 1;
+    } else if (nameMatch) {
+      markDuplicate.run('person', nameMatch, 'Name and organization match an existing person.', row.id);
+      duplicates += 1;
+    } else if (earlierEmail !== undefined) {
+      markDuplicate.run(null, null, `Same email as row ${earlierEmail} in this import.`, row.id);
+      duplicates += 1;
+    } else if (earlierName !== undefined) {
+      markDuplicate.run(null, null, `Same name and organization as row ${earlierName} in this import.`, row.id);
+      duplicates += 1;
+    } else {
+      if (mapped.email) seenEmail.set(mapped.email, row.seq);
+      if (normalizedName && companyKey) seenNameAndCompany.set(`${normalizedName}|${companyKey}`, row.seq);
+      if (organizationId) markLink.run(organizationId, 'The organization already exists, so the person will link to it.', row.id);
+    }
+  }
+  return duplicates;
+}
+
+const reviewSampleSize = 5;
+
+export interface ReviewRequest {
+  // Words for the "nothing to review" detail and the approval title, for example "the actor returned no items".
+  emptyDetail: (counts: ImportCounts) => string;
+  title: (staged: number) => string;
+  // Extra payload keys that identify the source, for example the actor id or the file name.
+  payloadSource: Record<string, unknown>;
+}
+
+// Final step of an import run. With nothing left to import the run ends as partial and no approval is created.
+// Otherwise it creates the import_review approval and moves the run to waiting_approval.
+export function requestImportReview(tx: Tx, runId: string, seq: number, request: ReviewRequest, fail: (detail: string) => void): void {
+  const live = liveStep(tx, runId, seq);
+  if (!live) return;
+  const batch = getImportBatchForRun(tx.db, tx.workspaceId, runId);
+  if (!batch) {
+    fail('The import batch is missing.');
+    return;
+  }
+  const counts = batch.counts;
+  if (counts.staged === 0) {
+    const detail = request.emptyDetail(counts);
+    finishStep(tx, runId, live.step, detail);
+    closeImportBatchForRun(tx, runId, 'failed', detail);
+    tx.db.prepare("UPDATE run SET status = 'partial', finished_at = ? WHERE id = ?").run(tx.now(), runId);
+    tx.audit('run.partial', 'run', runId, { reason: 'nothing_to_import' });
+    tx.emit({ type: 'run_updated', runId });
+    return;
+  }
+
+  const sample = (
+    tx.db
+      .prepare("SELECT mapped FROM import_row WHERE batch_id = ? AND status = 'staged' ORDER BY seq LIMIT ?")
+      .all(batch.id, reviewSampleSize) as { mapped: string }[]
+  ).map((row) => {
+    const mapped = parseMapped(row.mapped);
+    return { name: mapped.name, email: mapped.email, company: mapped.company };
+  });
+  const payload = {
+    batchId: batch.id,
+    ...request.payloadSource,
+    counts: {
+      fetched: counts.fetched,
+      staged: counts.staged,
+      duplicates: counts.duplicates,
+      invalid: counts.invalid,
+    },
+    sample,
+  };
+  const serialized = JSON.stringify(payload);
+  const approvalId = tx.newId('apr');
+  tx.db
+    .prepare(
+      `INSERT INTO approval (id, created_at, workspace_id, run_id, kind, title, payload, payload_hash, status)
+       VALUES (?, ?, ?, ?, 'import_review', ?, ?, ?, 'pending')`,
+    )
+    .run(approvalId, tx.now(), tx.workspaceId, runId, request.title(counts.staged), serialized, hashPayload(serialized));
+  tx.audit('approval.create', 'approval', approvalId, { runId, kind: 'import_review' });
+  tx.emit({ type: 'approval_updated', approvalId, runId });
+  tx.db.prepare("UPDATE import_batch SET status = 'awaiting_review', updated_at = ? WHERE id = ?").run(tx.now(), batch.id);
+  finishStep(
+    tx,
+    runId,
+    live.step,
+    `Waiting for review: ${counts.staged} to import, ${counts.duplicates} duplicates, ${counts.invalid} invalid.`,
+  );
+  tx.db.prepare("UPDATE run SET status = 'waiting_approval' WHERE id = ?").run(runId);
+  tx.audit('run.waiting_approval', 'run', runId);
+  tx.emit({ type: 'run_updated', runId });
 }

@@ -6,6 +6,7 @@ import { listActivities } from './activities.js';
 import { listClaims } from './claims.js';
 import { opportunitySelect } from './opportunities.js';
 import { taskSelect } from './tasks.js';
+import { getQualificationPayload, qualificationColumns, qualificationJoin, toQualificationSummary } from './qualification.js';
 
 const personSelect =
   'SELECT p.*, o.name AS organization_name FROM person p LEFT JOIN organization o ON o.id = p.organization_id';
@@ -28,13 +29,28 @@ export interface ListPeopleInput {
   cursor?: string | undefined;
   limit?: number | undefined;
   organizationId?: string | undefined;
+  sort?: 'name' | 'fit' | undefined;
 }
+
+const listSelect = `SELECT p.*, o.name AS organization_name, ${qualificationColumns} FROM person p LEFT JOIN organization o ON o.id = p.organization_id ${qualificationJoin}`;
+
+// Fit order as one ascending key list so the keyset cursor works: qualified people who are not excluded come
+// first, then excluded people, then people who were never qualified. Within a group, more matched criteria
+// come first (matched is negated to sort ascending), then fewer unknown, then name and id.
+const fitKeys = [
+  'CASE WHEN qr.id IS NULL THEN 2 WHEN COALESCE(json_extract(qr.payload, \'$.excluded\'), 0) THEN 1 ELSE 0 END',
+  'COALESCE(-json_extract(qr.payload, \'$.matched\'), 0)',
+  'COALESCE(json_extract(qr.payload, \'$.unknown\'), 0)',
+  'lower(p.last_name)',
+  'lower(p.first_name)',
+  'p.id',
+];
 
 export function listPeople(
   db: Db,
   workspaceId: string,
   input: ListPeopleInput = {},
-): Page<ReturnType<typeof toPerson>> {
+): Page<ReturnType<typeof toPerson> & { qualification: ReturnType<typeof toQualificationSummary> }> {
   const where = ['p.workspace_id = ?'];
   const params: unknown[] = [workspaceId];
   if (input.q && input.q.trim().length > 0) {
@@ -51,16 +67,19 @@ export function listPeople(
   return paginate({
     db,
     workspaceId,
-    select: personSelect,
+    select: listSelect,
     table: 'person',
     alias: 'p',
     where,
     params,
-    keys: ['lower(p.last_name)', 'lower(p.first_name)', 'p.id'],
+    keys: input.sort === 'fit' ? fitKeys : ['lower(p.last_name)', 'lower(p.first_name)', 'p.id'],
     direction: 'ASC',
     cursor: input.cursor,
     limit: input.limit,
-    map: toPerson,
+    map: (row) => ({ ...toPerson(row), qualification: toQualificationSummary(row) }),
+    ...(input.sort === 'fit'
+      ? { cursorSource: `person AS p LEFT JOIN qualification_result qr ON qr.workspace_id = p.workspace_id AND qr.person_id = p.id` }
+      : {}),
   });
 }
 
@@ -102,6 +121,7 @@ export function getPersonDetail(db: Db, workspaceId: string, id: string) {
     activities: listActivities(db, workspaceId, { entityType: 'person', entityId: id, limit: 50 }).items,
     tasks,
     opportunities,
+    qualification: getQualificationPayload(db, workspaceId, id),
   };
 }
 

@@ -9,13 +9,20 @@ import { apifyPollMilliseconds, apifyTimeoutMilliseconds } from '../config.js';
 import { getConnectorSecret } from '../queries/connectors.js';
 import { type ImportCounts, emptyImportCounts, getImportBatchForRun } from '../queries/imports.js';
 import { getRun, listRunSteps } from '../queries/runs.js';
-import type { Row, RunCounts } from '../records.js';
-import { mapItem, normalizeName, type MappedRow } from './apifyMapping.js';
+import { mapItem } from './apifyMapping.js';
 import { markConnectorError } from './connectors.js';
 import { type ActionContext, mutate, type Tx, withTxActor } from './context.js';
-import { finishStep, hashPayload, setCounts, startStep, type AdvanceResult } from './demoResearch.js';
+import { setCounts, startStep, type AdvanceResult } from './demoResearch.js';
 import { enqueueJobIn } from './jobs.js';
-import { closeImportBatchForRun, writeBatchCounts } from './importReview.js';
+import {
+  completeStep,
+  dedupeImportBatch,
+  failImportRunIn,
+  importCountsOf,
+  liveStep,
+  requestImportReview,
+  writeBatchCounts,
+} from './importReview.js';
 
 export const apifyKind = 'apify_scrape';
 export const apifyJobKind = 'apify_run_step';
@@ -33,7 +40,6 @@ export const apifyStepTitles = [
   'Request import review',
 ] as const;
 
-const reviewSampleSize = 5;
 const terminalFailureStatuses = ['FAILED', 'ABORTED', 'TIMED-OUT'];
 
 export function scheduleApifyRun(tx: Tx, runId: string, runAt: string): void {
@@ -71,58 +77,6 @@ function formatElapsed(milliseconds: number): string {
   return `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
 }
 
-function importCountsOf(counts: ImportCounts, requested: number): RunCounts {
-  return {
-    processed: counts.fetched,
-    found: counts.staged,
-    flagged: counts.duplicates + counts.invalid,
-    requested,
-    fetched: counts.fetched,
-    staged: counts.staged,
-    duplicates: counts.duplicates,
-    invalid: counts.invalid,
-    accepted: counts.accepted,
-  };
-}
-
-// The running step with this seq, only while the run itself is still running.
-function liveStep(tx: Tx, runId: string, seq: number) {
-  const run = getRun(tx.db, tx.workspaceId, runId);
-  if (!run || run.status !== 'running') return null;
-  const step = listRunSteps(tx.db, runId).find((candidate) => candidate.seq === seq && candidate.status === 'running');
-  return step ? { run, step } : null;
-}
-
-function completeStep(tx: Tx, runId: string, step: { id: string; seq: number }, detail: string): void {
-  finishStep(tx, runId, step, detail);
-  const next = listRunSteps(tx.db, runId).find((candidate) => candidate.seq > step.seq && candidate.status === 'pending');
-  if (next) startStep(tx, runId, next);
-  tx.emit({ type: 'run_updated', runId });
-}
-
-// Ends the run as failed, or partial when rows were already staged. Never creates or keeps invented rows.
-export function failApifyRunIn(tx: Tx, runId: string, detail: string): void {
-  const run = getRun(tx.db, tx.workspaceId, runId);
-  if (!run || ['succeeded', 'partial', 'failed', 'cancelled'].includes(run.status)) return;
-  const batch = getImportBatchForRun(tx.db, tx.workspaceId, runId);
-  const staged = batch ? batch.counts.staged : 0;
-  const status = staged > 0 ? 'partial' : 'failed';
-  const now = tx.now();
-  tx.db.prepare('UPDATE run SET status = ?, finished_at = ? WHERE id = ?').run(status, now, runId);
-  for (const step of listRunSteps(tx.db, runId)) {
-    if (step.status === 'running') {
-      tx.db
-        .prepare("UPDATE run_step SET status = 'failed', detail = ?, finished_at = ? WHERE id = ?")
-        .run(detail, now, step.id);
-    } else if (step.status === 'pending') {
-      tx.db.prepare("UPDATE run_step SET status = 'skipped', finished_at = ? WHERE id = ?").run(now, step.id);
-    }
-  }
-  closeImportBatchForRun(tx, runId, 'failed', detail);
-  tx.audit(`run.${status}`, 'run', runId, { message: detail });
-  tx.emit({ type: 'run_updated', runId });
-}
-
 // Fails every Apify run that is still being processed. Returns their ids so the caller can stop the remote runs.
 export function failActiveApifyRuns(ctx: ActionContext, detail: string): string[] {
   return mutate(ctx, (rawTx) => {
@@ -132,13 +86,13 @@ export function failActiveApifyRuns(ctx: ActionContext, detail: string): string[
         .prepare("SELECT id FROM run WHERE workspace_id = ? AND kind = ? AND status IN ('queued', 'running', 'paused')")
         .all(tx.workspaceId, apifyKind) as { id: string }[]
     ).map((row) => row.id);
-    for (const id of ids) failApifyRunIn(tx, id, detail);
+    for (const id of ids) failImportRunIn(tx, id, detail);
     return ids;
   });
 }
 
 function failNow(ctx: ActionContext, runId: string, detail: string): AdvanceResult {
-  mutate(ctx, (rawTx) => failApifyRunIn(withTxActor(rawTx, apifyActor), runId, detail));
+  mutate(ctx, (rawTx) => failImportRunIn(withTxActor(rawTx, apifyActor), runId, detail));
   return { nextRunAt: null };
 }
 
@@ -398,7 +352,7 @@ async function pollStep(ctx: ActionContext, runId: string, scope: ApifyScope): P
       if (!live) return { nextRunAt: null };
       if (!remote.datasetId && !scope.apifyDatasetId) {
         patchScope(tx, runId, { apifyFinished: true });
-        failApifyRunIn(tx, runId, 'Apify finished the run but did not report a dataset.');
+        failImportRunIn(tx, runId, 'Apify finished the run but did not report a dataset.');
         return { nextRunAt: null };
       }
       patchScope(tx, runId, {
@@ -497,7 +451,7 @@ function stageStep(ctx: ActionContext, runId: string, scope: ApifyScope, soon: s
     if (!live) return { nextRunAt: null };
     const batch = getImportBatchForRun(tx.db, tx.workspaceId, runId);
     if (!batch) {
-      failApifyRunIn(tx, runId, 'The import batch is missing.');
+      failImportRunIn(tx, runId, 'The import batch is missing.');
       return { nextRunAt: null };
     }
     const rows = tx.db.prepare('SELECT id, raw FROM import_row WHERE batch_id = ? ORDER BY seq').all(batch.id) as {
@@ -537,81 +491,13 @@ function dedupeStep(ctx: ActionContext, runId: string, soon: string): AdvanceRes
     if (!live) return { nextRunAt: null };
     const batch = getImportBatchForRun(tx.db, tx.workspaceId, runId);
     if (!batch) {
-      failApifyRunIn(tx, runId, 'The import batch is missing.');
+      failImportRunIn(tx, runId, 'The import batch is missing.');
       return { nextRunAt: null };
     }
-
-    const peopleByEmail = new Map<string, string>();
-    const peopleByNameAndOrganization = new Map<string, string>();
-    for (const person of tx.db
-      .prepare('SELECT id, first_name, last_name, email, organization_id FROM person WHERE workspace_id = ?')
-      .all(tx.workspaceId) as Row[]) {
-      if (person.email) peopleByEmail.set(String(person.email).toLowerCase(), String(person.id));
-      if (person.organization_id) {
-        const name = normalizeName(`${String(person.first_name)} ${String(person.last_name ?? '')}`);
-        peopleByNameAndOrganization.set(`${name}|${String(person.organization_id)}`, String(person.id));
-      }
-    }
-    const organizationsByDomain = new Map<string, string>();
-    const organizationsByName = new Map<string, string>();
-    for (const organization of tx.db
-      .prepare('SELECT id, name, domain FROM organization WHERE workspace_id = ?')
-      .all(tx.workspaceId) as Row[]) {
-      if (organization.domain) organizationsByDomain.set(String(organization.domain).toLowerCase(), String(organization.id));
-      organizationsByName.set(normalizeName(String(organization.name)), String(organization.id));
-    }
-
-    const rows = tx.db
-      .prepare("SELECT id, seq, mapped FROM import_row WHERE batch_id = ? AND status = 'staged' ORDER BY seq")
-      .all(batch.id) as { id: string; seq: number; mapped: string }[];
-    const seenEmail = new Map<string, number>();
-    const seenNameAndCompany = new Map<string, number>();
-    let duplicates = 0;
-    const markDuplicate = tx.db.prepare(
-      "UPDATE import_row SET status = 'duplicate', match_entity_type = ?, match_entity_id = ?, reason = ? WHERE id = ?",
-    );
-    const markLink = tx.db.prepare(
-      "UPDATE import_row SET match_entity_type = 'organization', match_entity_id = ?, reason = ? WHERE id = ?",
-    );
-
-    for (const row of rows) {
-      const mapped = JSON.parse(row.mapped) as MappedRow;
-      const organizationId =
-        (mapped.domain ? organizationsByDomain.get(mapped.domain) : undefined) ??
-        (mapped.company ? organizationsByName.get(normalizeName(mapped.company)) : undefined) ??
-        null;
-      const normalizedName = mapped.name ? normalizeName(mapped.name) : null;
-      const companyKey = mapped.domain ?? (mapped.company ? normalizeName(mapped.company) : null);
-
-      const emailMatch = mapped.email ? peopleByEmail.get(mapped.email) : undefined;
-      const nameMatch =
-        normalizedName && organizationId ? peopleByNameAndOrganization.get(`${normalizedName}|${organizationId}`) : undefined;
-      const earlierEmail = mapped.email ? seenEmail.get(mapped.email) : undefined;
-      const earlierName = normalizedName && companyKey ? seenNameAndCompany.get(`${normalizedName}|${companyKey}`) : undefined;
-
-      if (emailMatch) {
-        markDuplicate.run('person', emailMatch, 'Email matches an existing person.', row.id);
-        duplicates += 1;
-      } else if (nameMatch) {
-        markDuplicate.run('person', nameMatch, 'Name and organization match an existing person.', row.id);
-        duplicates += 1;
-      } else if (earlierEmail !== undefined) {
-        markDuplicate.run(null, null, `Same email as row ${earlierEmail} in this import.`, row.id);
-        duplicates += 1;
-      } else if (earlierName !== undefined) {
-        markDuplicate.run(null, null, `Same name and organization as row ${earlierName} in this import.`, row.id);
-        duplicates += 1;
-      } else {
-        if (mapped.email) seenEmail.set(mapped.email, row.seq);
-        if (normalizedName && companyKey) seenNameAndCompany.set(`${normalizedName}|${companyKey}`, row.seq);
-        if (organizationId) markLink.run(organizationId, 'The organization already exists, so the person will link to it.', row.id);
-      }
-    }
-
+    const duplicates = dedupeImportBatch(tx, batch.id);
     const counts: ImportCounts = { ...batch.counts, duplicates, staged: batch.counts.fetched - batch.counts.invalid - duplicates };
     writeBatchCounts(tx, batch.id, counts);
-    const run = live.run;
-    setCounts(tx, runId, importCountsOf(counts, Number((run.scope as unknown as ApifyScope).maxItems)));
+    setCounts(tx, runId, importCountsOf(counts, Number((live.run.scope as unknown as ApifyScope).maxItems)));
     completeStep(tx, runId, live.step, `Found ${duplicates} duplicates of existing records or earlier rows. ${counts.staged} rows are ready for review.`);
     return { nextRunAt: soon };
   });
@@ -620,74 +506,20 @@ function dedupeStep(ctx: ActionContext, runId: string, soon: string): AdvanceRes
 function reviewStep(ctx: ActionContext, runId: string, scope: ApifyScope): AdvanceResult {
   return mutate(ctx, (rawTx) => {
     const tx = withTxActor(rawTx, apifyActor);
-    const live = liveStep(tx, runId, 7);
-    if (!live) return { nextRunAt: null };
-    const batch = getImportBatchForRun(tx.db, tx.workspaceId, runId);
-    if (!batch) {
-      failApifyRunIn(tx, runId, 'The import batch is missing.');
-      return { nextRunAt: null };
-    }
-    const counts = batch.counts;
-    if (counts.staged === 0) {
-      const detail =
-        counts.fetched === 0
-          ? 'The actor returned no items, so there is nothing to review.'
-          : `All ${counts.fetched} fetched rows were duplicates or invalid, so there is nothing to review.`;
-      finishStep(tx, runId, live.step, detail);
-      closeImportBatchForRun(tx, runId, 'failed', detail);
-      tx.db.prepare("UPDATE run SET status = 'partial', finished_at = ? WHERE id = ?").run(tx.now(), runId);
-      tx.audit('run.partial', 'run', runId, { reason: 'nothing_to_import' });
-      tx.emit({ type: 'run_updated', runId });
-      return { nextRunAt: null };
-    }
-
-    const sample = (
-      tx.db
-        .prepare("SELECT mapped FROM import_row WHERE batch_id = ? AND status = 'staged' ORDER BY seq LIMIT ?")
-        .all(batch.id, reviewSampleSize) as { mapped: string }[]
-    ).map((row) => {
-      const mapped = JSON.parse(row.mapped) as MappedRow;
-      return { name: mapped.name, email: mapped.email, company: mapped.company };
-    });
-    const payload = {
-      batchId: batch.id,
-      actorId: scope.actorId,
-      counts: {
-        fetched: counts.fetched,
-        staged: counts.staged,
-        duplicates: counts.duplicates,
-        invalid: counts.invalid,
-      },
-      sample,
-    };
-    const serialized = JSON.stringify(payload);
-    const approvalId = tx.newId('apr');
-    tx.db
-      .prepare(
-        `INSERT INTO approval (id, created_at, workspace_id, run_id, kind, title, payload, payload_hash, status)
-         VALUES (?, ?, ?, ?, 'import_review', ?, ?, ?, 'pending')`,
-      )
-      .run(
-        approvalId,
-        tx.now(),
-        tx.workspaceId,
-        runId,
-        `Review ${counts.staged} imported ${counts.staged === 1 ? 'row' : 'rows'} from ${scope.actorId}`,
-        serialized,
-        hashPayload(serialized),
-      );
-    tx.audit('approval.create', 'approval', approvalId, { runId, kind: 'import_review' });
-    tx.emit({ type: 'approval_updated', approvalId, runId });
-    tx.db.prepare("UPDATE import_batch SET status = 'awaiting_review', updated_at = ? WHERE id = ?").run(tx.now(), batch.id);
-    finishStep(
+    requestImportReview(
       tx,
       runId,
-      live.step,
-      `Waiting for review: ${counts.staged} to import, ${counts.duplicates} duplicates, ${counts.invalid} invalid.`,
+      7,
+      {
+        emptyDetail: (counts) =>
+          counts.fetched === 0
+            ? 'The actor returned no items, so there is nothing to review.'
+            : `All ${counts.fetched} fetched rows were duplicates or invalid, so there is nothing to review.`,
+        title: (staged) => `Review ${staged} imported ${staged === 1 ? 'row' : 'rows'} from ${scope.actorId}`,
+        payloadSource: { actorId: scope.actorId },
+      },
+      (detail) => failImportRunIn(tx, runId, detail),
     );
-    tx.db.prepare("UPDATE run SET status = 'waiting_approval' WHERE id = ?").run(runId);
-    tx.audit('run.waiting_approval', 'run', runId);
-    tx.emit({ type: 'run_updated', runId });
     return { nextRunAt: null };
   });
 }

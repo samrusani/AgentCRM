@@ -150,6 +150,10 @@ textarea.input {
 .chip--button {
   cursor: pointer;
 }
+/* The comma in "import, 3d" sits in a flex item, so its trailing space collapses. A margin restores it. */
+.chip__age {
+  margin-left: 0.3em;
+}
 .chip--button[aria-pressed='true'] {
   outline: 1px solid currentColor;
   outline-offset: -1px;
@@ -1197,4 +1201,233 @@ textarea.input {
   display: flex;
   gap: 8px;
   padding-top: 16px;
+}
+
+/* Fit column and sort control */
+.vtable__sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  margin: 0 -6px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+.vtable__sort:hover {
+  background: var(--accent-tint);
+  color: var(--ink);
+}
+.vtable__sort.is-active {
+  color: var(--accent);
+}
+.vtable__sort svg {
+  width: 12px;
+  height: 12px;
+}
+.fit-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Qualification markers: shape carries the outcome */
+.fit-marker {
+  position: relative;
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin-top: 4px;
+  border-radius: 50%;
+  flex: none;
+}
+.fit-marker--matched {
+  background: var(--accent);
+}
+.fit-marker--not_matched {
+  border: 2px solid var(--ink-muted);
+}
+.fit-marker--unknown {
+  border: 2px dashed var(--ink-muted);
+}
+.fit-stale {
+  white-space: nowrap;
+  font-style: italic;
+}
+
+/* Qualification section in the person sheet */
+.fit-summary {
+  margin-bottom: 8px;
+}
+.fit-excluded {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.fit-excluded__reasons {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.fit-list {
+  display: flex;
+  flex-direction: column;
+}
+.fit-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.fit-row:last-child {
+  border-bottom: 0;
+}
+.fit-row__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.fit-row__label {
+  font-weight: 550;
+}
+.qualify-action {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.qualify-action__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.qualify-action__note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* CSV import sheet */
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px;
+  border: 1px dashed var(--ink-muted);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+}
+.dropzone.is-over {
+  border-color: var(--accent);
+  border-style: solid;
+  background: var(--accent-tint);
+}
+.file-summary {
+  margin-top: 10px;
+}
+.map-table th,
+.map-table td {
+  padding-right: 10px;
+  vertical-align: middle;
+}
+.map-table__header {
+  max-width: 150px;
+}
+.map-table__header label {
+  cursor: pointer;
+}
+.map-table__samples {
+  max-width: 150px;
+}
+.map-table__sample {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.map-table .input--select {
+  min-width: 124px;
+}
+.map-problems {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.map-problems:empty {
+  display: none;
+}
+
+/* Qualification settings */
+.qual-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.qual-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.qual-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.qual-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.qual-row__top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.qual-row__top .input {
+  flex: 1;
+  min-width: 0;
+}
+.qual-row__selects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.qual-values {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.qual-actions {
+  display: flex;
+  gap: 8px;
+}
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  color: var(--ink-muted);
+}
+.toggle input {
+  accent-color: var(--accent);
 }

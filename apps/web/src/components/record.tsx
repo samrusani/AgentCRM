@@ -83,7 +83,7 @@ export function EvidenceChips({
           onClick={() => onToggle(claim.id)}
           aria-label={`Evidence for ${humanize(claim.field)}: ${humanize(claim.sourceType)}, observed ${formatAgo(claim.observedAt)}, ${humanize(claim.status)}`}
         >
-          {humanize(claim.sourceType)}, <span className="num">{formatAge(claim.observedAt)}</span>
+          {humanize(claim.sourceType)}, <span className="num chip__age">{formatAge(claim.observedAt)}</span>
         </ChipButton>
       ))}
     </>

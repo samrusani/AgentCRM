@@ -2,6 +2,7 @@ import { useHealth, useWorkspace } from '../api/hooks';
 import { ErrorState, Loading, PageHeader } from '../components/common';
 import { useUI, type ThemeSetting } from '../lib/ui';
 import { ConnectorSettings } from './ConnectorSettings';
+import { QualificationSettings } from './QualificationSettings';
 
 const THEMES: Array<{ value: ThemeSetting; label: string; hint: string }> = [
   { value: 'system', label: 'System', hint: 'Follow the operating system setting' },
@@ -42,6 +43,8 @@ export function Settings() {
         </section>
 
         <ConnectorSettings />
+
+        <QualificationSettings />
 
         <section className="section" aria-labelledby="settings-workspace">
           <h2 className="section__title" id="settings-workspace">

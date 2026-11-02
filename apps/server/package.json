@@ -24,6 +24,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
     "better-sqlite3": "^13.0.3",
+    "csv-parse": "^7.0.3",
     "fastify": "^5.12.7",
     "zod": "^3.25.76"
   },

@@ -101,6 +101,11 @@ describe('apify field mapping', () => {
     });
     expect(mapItem(leadItems[1])).toMatchObject({ name: 'Ben Marsh', email: 'ben.marsh@harbor.example.org', company: 'Harbor Row' });
     expect(mapItem({ email: 'not an email' }).email).toBeNull();
+    // A LinkedIn URL in a domain field is not a company domain. Nothing else in the item supplies one here.
+    expect(mapItem({ name: 'Ada', domain: 'https://www.linkedin.com/in/ada-quill' }).domain).toBeNull();
+    expect(mapItem({ name: 'Ada', companyDomain: 'linkedin.com/company/northwind' }).domain).toBeNull();
+    expect(mapItem({ name: 'Ada', domain: 'https://www.linkedin.com/in/ada-quill', website: 'https://northwind.example.com' }).domain).toBe('northwind.example.com');
+    expect(mapItem({ name: 'Ada', domain: 'https://www.Northwind.example.com/team' }).domain).toBe('northwind.example.com');
     expect(mapItem('text')).toMatchObject({ name: null, email: null });
   });
 });

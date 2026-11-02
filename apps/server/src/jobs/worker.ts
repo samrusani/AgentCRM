@@ -2,14 +2,18 @@ import {
   abortRemoteRunIfNeeded,
   type ActionContext,
   advanceApifyRun,
+  advanceCsvImportRun,
   advanceDemoRun,
+  advanceQualifyRun,
   apifyJobKind,
   claimDueJobs,
+  csvImportJobKind,
   completeJob,
   failJob,
   failRun,
   type JobRecord,
   maxJobAttempts,
+  qualifyJobKind,
   recoverStaleJobs,
   rescheduleJob,
 } from '../actions/index.js';
@@ -20,14 +24,22 @@ function addMilliseconds(timestamp: string, milliseconds: number): string {
 }
 
 function runJob(ctx: ActionContext, job: JobRecord): void {
-  if (job.kind !== 'demo_run_step') {
+  const advance =
+    job.kind === 'demo_run_step'
+      ? advanceDemoRun
+      : job.kind === csvImportJobKind
+        ? advanceCsvImportRun
+        : job.kind === qualifyJobKind
+          ? advanceQualifyRun
+          : null;
+  if (!advance) {
     failJob(ctx, job.id);
     return;
   }
   const runId = String(job.payload.runId);
   const jobContext: ActionContext = { ...ctx, workspaceId: String(job.payload.workspaceId), actor: 'system' };
   try {
-    const result = advanceDemoRun(jobContext, runId);
+    const result = advance(jobContext, runId);
     if (result.nextRunAt) rescheduleJob(ctx, job.id, result.nextRunAt, true);
     else completeJob(ctx, job.id);
   } catch (error) {

@@ -401,7 +401,7 @@ export function ImportBatchSheet({ id, onClose }: { id: string; onClose: () => v
   return (
     <Sheet
       title="Import batch"
-      subtitle={batch?.actorId ? `Actor ${batch.actorId}` : undefined}
+      subtitle={batch?.actorId ? `Actor ${batch.actorId}` : batch?.sourceKind === 'csv' ? 'CSV import' : undefined}
       onClose={onClose}
       wide
     >
@@ -469,8 +469,10 @@ export function ImportBatchSheet({ id, onClose }: { id: string; onClose: () => v
                 {filter
                   ? 'No rows have this status in this batch.'
                   : batch.status === 'staging'
-                    ? 'Rows appear here as Apify results are staged. The run is still working.'
-                    : 'This batch has no rows. The Apify run returned no usable items.'}
+                    ? 'Rows appear here as they are staged. The run is still working.'
+                    : batch.sourceKind === 'csv'
+                      ? 'This batch has no rows. The file had no usable rows.'
+                      : 'This batch has no rows. The Apify run returned no usable items.'}
               </p>
             ) : (
               <div className="data-table__wrap" aria-busy={refreshing}>

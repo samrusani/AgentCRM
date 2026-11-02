@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { useOrganizations, usePeople } from '../api/hooks';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useOrganizations, usePeople, type PeopleSort } from '../api/hooks';
 import type { Organization, Person } from '../api/types';
 import { EmptyState, ErrorState, Loading, PageHeader } from '../components/common';
+import { Icon } from '../components/Icons';
+import { FitCell } from '../components/qualification';
 import { VirtualTable, type Column } from '../components/VirtualTable';
 import { describeDue, humanize, personName } from '../lib/format';
+import { CsvImportSheet } from './CsvImportSheet';
 import { OrganizationSheet, PersonSheet } from './RecordSheets';
 
 type Tab = 'people' | 'organizations';
@@ -26,7 +29,11 @@ export function Relationships() {
   const [search, setSearch] = useState('');
   const q = useDebouncedValue(search.trim(), 200);
 
-  const people = usePeople(q);
+  const sort: PeopleSort = params.get('sort') === 'fit' ? 'fit' : 'default';
+  const csvOpen = tab === 'people' && params.get('import') === 'csv';
+  const navigate = useNavigate();
+
+  const people = usePeople(q, sort);
   const organizations = useOrganizations(q, tab === 'organizations');
 
   const setTab = (next: Tab) => {
@@ -34,6 +41,29 @@ export function Relationships() {
     copy.set('tab', next);
     copy.delete('person');
     copy.delete('org');
+    copy.delete('import');
+    setParams(copy, { replace: true });
+  };
+
+  const toggleSort = useCallback(() => {
+    const copy = new URLSearchParams(params);
+    if (copy.get('sort') === 'fit') copy.delete('sort');
+    else copy.set('sort', 'fit');
+    setParams(copy, { replace: true });
+  }, [params, setParams]);
+
+  const openCsvImport = () => {
+    const copy = new URLSearchParams(params);
+    copy.set('tab', 'people');
+    copy.set('import', 'csv');
+    copy.delete('person');
+    copy.delete('org');
+    setParams(copy);
+  };
+
+  const closeCsvImport = () => {
+    const copy = new URLSearchParams(params);
+    copy.delete('import');
     setParams(copy, { replace: true });
   };
 
@@ -43,6 +73,7 @@ export function Relationships() {
       copy.set('tab', 'people');
       copy.set('person', id);
       copy.delete('org');
+      copy.delete('import');
       setParams(copy);
     },
     [params, setParams],
@@ -54,6 +85,7 @@ export function Relationships() {
       copy.set('tab', 'organizations');
       copy.set('org', id);
       copy.delete('person');
+      copy.delete('import');
       setParams(copy);
     },
     [params, setParams],
@@ -93,6 +125,11 @@ export function Relationships() {
             onChange={(event) => setSearch(event.target.value)}
           />
         </div>
+        {tab === 'people' ? (
+          <button type="button" className="btn" onClick={openCsvImport} aria-haspopup="dialog">
+            Import CSV
+          </button>
+        ) : null}
       </PageHeader>
 
       <div className="tabs" role="tablist" aria-label="Relationship type" onKeyDown={onTabKeyDown}>
@@ -115,14 +152,27 @@ export function Relationships() {
 
       <div className="table-region" id="relationships-panel" role="tabpanel" aria-labelledby={`tab-${tab}`}>
         {tab === 'people' ? (
-          <PeopleTable query={people} q={q} selectedId={personId} onOpen={openPerson} />
+          <PeopleTable
+            query={people}
+            q={q}
+            sort={sort}
+            onToggleSort={toggleSort}
+            selectedId={personId}
+            onOpen={openPerson}
+          />
         ) : (
           <OrganizationsTable query={organizations} q={q} selectedId={orgId} onOpen={openOrganization} />
         )}
-        {sheetOpen && tab === 'people' && personId ? (
+        {csvOpen ? (
+          <CsvImportSheet
+            onClose={closeCsvImport}
+            onStaged={(run) => navigate(`/research?run=${encodeURIComponent(run.id)}`)}
+          />
+        ) : null}
+        {!csvOpen && sheetOpen && tab === 'people' && personId ? (
           <PersonSheet id={personId} onClose={closeSheet} onOpenOrganization={openOrganization} />
         ) : null}
-        {sheetOpen && tab === 'organizations' && orgId ? (
+        {!csvOpen && sheetOpen && tab === 'organizations' && orgId ? (
           <OrganizationSheet id={orgId} onClose={closeSheet} onOpenPerson={openPerson} />
         ) : null}
       </div>
@@ -133,11 +183,15 @@ export function Relationships() {
 function PeopleTable({
   query,
   q,
+  sort,
+  onToggleSort,
   selectedId,
   onOpen,
 }: {
   query: ReturnType<typeof usePeople>;
   q: string;
+  sort: PeopleSort;
+  onToggleSort: () => void;
   selectedId: string | null;
   onOpen: (id: string) => void;
 }) {
@@ -167,6 +221,26 @@ function PeopleTable({
       { key: 'email', header: 'Email', width: 'minmax(140px, 1.3fr)', render: (row) => <span className="cell-text">{row.email}</span> },
       { key: 'location', header: 'Location', width: 'minmax(100px, 1fr)', render: (row) => <span className="cell-text">{row.location}</span> },
       {
+        key: 'fit',
+        header: 'Fit',
+        width: 'minmax(150px, 1fr)',
+        ariaSort: sort === 'fit' ? 'descending' : 'none',
+        headerContent: (
+          <button
+            type="button"
+            className={`vtable__sort${sort === 'fit' ? ' is-active' : ''}`}
+            onClick={onToggleSort}
+            aria-pressed={sort === 'fit'}
+            title={sort === 'fit' ? 'Sorted by fit. Select to return to the default order.' : 'Sort by fit'}
+          >
+            Fit
+            {sort === 'fit' ? <Icon name="chevronDown" /> : null}
+            <span className="sr-only">{sort === 'fit' ? ', sorted best first. Select to use the default order.' : ', select to sort best first.'}</span>
+          </button>
+        ),
+        render: (row) => <FitCell qualification={row.qualification} personUpdatedAt={row.updatedAt} />,
+      },
+      {
         key: 'next',
         header: 'Next action',
         width: '112px',
@@ -178,7 +252,7 @@ function PeopleTable({
         },
       },
     ],
-    [organizationNames],
+    [organizationNames, sort, onToggleSort],
   );
 
   const loadMore = useCallback(() => {

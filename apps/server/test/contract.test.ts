@@ -171,4 +171,71 @@ describe('web client contract', () => {
 
     expect((await call('DELETE', '/api/connectors/apify')).status).toBe(204);
   });
+  it('serves the csv import and qualification routes', async () => {
+    const content = 'Name,Email,Company\nCora Vale,cora.vale@contract-csv.example.com,Contract CSV Fund\n';
+    const preview = await call('POST', '/api/imports/csv/preview', { fileName: 'contract.csv', content });
+    expect(preview.status).toBe(200);
+    expect(preview.body).toMatchObject({
+      headers: ['Name', 'Email', 'Company'],
+      delimiter: ',',
+      rowCount: 1,
+      suggestedMapping: { Name: 'name', Email: 'email', Company: 'company' },
+    });
+    expect(preview.body.sample).toEqual([{ Name: 'Cora Vale', Email: 'cora.vale@contract-csv.example.com', Company: 'Contract CSV Fund' }]);
+    expect((await call('POST', '/api/imports/csv/preview', { fileName: 'contract.csv' })).status).toBe(400);
+
+    expect((await call('POST', '/api/imports/csv', { fileName: 'contract.csv', content, mapping: { Company: 'company' } })).status).toBe(400);
+    const staged = await call('POST', '/api/imports/csv', { fileName: 'contract.csv', content, mapping: preview.body.suggestedMapping });
+    expect(staged.status).toBe(201);
+    expect(staged.body).toMatchObject({ kind: 'csv_import', status: 'queued', scope: { fileName: 'contract.csv' } });
+    for (let tick = 0; tick < 30; tick += 1) {
+      env.advance(1000);
+      processJobs(env.ctx);
+      if ((await call('GET', `/api/runs/${staged.body.id}`)).body.status === 'waiting_approval') break;
+    }
+    const waiting = await call('GET', `/api/runs/${staged.body.id}`);
+    expect(waiting.body.approvals[0]).toMatchObject({ kind: 'import_review', status: 'pending' });
+    const batch = await call('GET', `/api/imports/${staged.body.scope.batchId}`);
+    expect(batch.body).toMatchObject({ sourceKind: 'csv', status: 'awaiting_review', counts: { fetched: 1, staged: 1 } });
+    const decided = await call('POST', `/api/approvals/${waiting.body.approvals[0].id}/decision`, { decision: 'approve' });
+    expect(decided.body.run.status).toBe('succeeded');
+
+    const config = await call('GET', '/api/qualification');
+    expect(config.status).toBe(200);
+    expect(config.body.criteria).toHaveLength(3);
+    expect(config.body.exclusions).toHaveLength(1);
+    expect(config.body.defaulted).toBeUndefined();
+    const replaced = await call('PUT', '/api/qualification', { exclusions: config.body.exclusions, criteria: config.body.criteria });
+    expect(replaced.status).toBe(200);
+    expect(replaced.body).toEqual({ exclusions: config.body.exclusions, criteria: config.body.criteria });
+    expect((await call('PUT', '/api/qualification', { exclusions: [], criteria: [{ id: 'x' }] })).status).toBe(400);
+
+    const before = await call('GET', '/api/people?sort=fit&limit=5');
+    expect(before.status).toBe(200);
+    expect(before.body.items[0]).toHaveProperty('qualification', null);
+
+    const qualify = await call('POST', '/api/runs', { kind: 'qualify', scope: {} });
+    expect(qualify.status).toBe(201);
+    for (let tick = 0; tick < 60; tick += 1) {
+      env.advance(1000);
+      processJobs(env.ctx);
+      if ((await call('GET', `/api/runs/${qualify.body.id}`)).body.status === 'succeeded') break;
+    }
+    const finished = await call('GET', `/api/runs/${qualify.body.id}`);
+    expect(finished.body.status).toBe('succeeded');
+    expect(finished.body.counts.processed).toBeGreaterThan(50);
+    expect(finished.body.counts).toHaveProperty('excluded');
+
+    const fit = await call('GET', '/api/people?sort=fit&limit=5');
+    const top = fit.body.items[0];
+    expect(top.qualification).toMatchObject({ total: 3, excluded: false });
+    expect(top.qualification.matched).toBeGreaterThanOrEqual(fit.body.items[4].qualification.matched);
+    expect(fit.body.nextCursor).not.toBeNull();
+    const second = await call('GET', `/api/people?sort=fit&limit=5&cursor=${fit.body.nextCursor}`);
+    expect(second.status).toBe(200);
+    const detail = await call('GET', `/api/people/${top.id}`);
+    expect(detail.body.qualification).toMatchObject({ total: 3, excluded: false, excludedReasons: [] });
+    expect(detail.body.qualification.criteria[0]).toHaveProperty('evidence');
+    expect(['matched', 'not_matched', 'unknown']).toContain(detail.body.qualification.criteria[0].outcome);
+  });
 });

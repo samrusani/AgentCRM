@@ -8,7 +8,9 @@ import { apifyKind, apifyStepTitles, defaultMaxItems, hardMaxItems, scheduleApif
 import { allowlistIncludes, connectApifyMessage } from './connectors.js';
 import { type ActionContext, mutate, parseInput, type Tx } from './context.js';
 import { defaultTargetCount, demoStepTitles, maxTargetCount, scheduleDemoRun } from './demoResearch.js';
+import { csvImportKind, scheduleCsvImportRun } from './csvImport.js';
 import { closeImportBatchForRun } from './importReview.js';
+import { qualifyKind, qualifyScopeSchema, qualifyStepTitles, scheduleQualifyRun } from './qualify.js';
 
 const demoRunSchema = z
   .object({
@@ -44,7 +46,15 @@ const apifyRunSchema = z
   })
   .strict();
 
-const startRunSchema = z.discriminatedUnion('kind', [demoRunSchema, apifyRunSchema]);
+const qualifyRunSchema = z
+  .object({
+    kind: z.literal('qualify'),
+    title: z.string().trim().min(1).max(200).optional(),
+    scope: qualifyScopeSchema,
+  })
+  .strict();
+
+const startRunSchema = z.discriminatedUnion('kind', [demoRunSchema, apifyRunSchema, qualifyRunSchema]);
 
 export interface StartRunOptions {
   // Runs started by an agent (MCP or the agent endpoint) may only use allowlisted Apify actors.
@@ -64,6 +74,8 @@ function assertApifyRunAllowed(ctx: ActionContext, actorId: string, origin: 'use
 
 export function scheduleRunJob(tx: Tx, kind: string, runId: string, runAt: string): void {
   if (kind === apifyKind) scheduleApifyRun(tx, runId, runAt);
+  else if (kind === csvImportKind) scheduleCsvImportRun(tx, runId, runAt);
+  else if (kind === qualifyKind) scheduleQualifyRun(tx, runId, runAt);
   else scheduleDemoRun(tx, runId, runAt);
 }
 
@@ -108,6 +120,11 @@ export function startRun(ctx: ActionContext, input: unknown, options: StartRunOp
         accepted: 0,
       };
       auditScope = { actorId: data.scope.actorId, maxItems: data.scope.maxItems, origin };
+    } else if (data.kind === 'qualify') {
+      title = data.title ?? (data.scope.tag ? `Qualify people tagged ${data.scope.tag}` : 'Qualify people');
+      stepTitles = qualifyStepTitles;
+      counts = { processed: 0, found: 0, flagged: 0, excluded: 0 };
+      auditScope = { scope: data.scope, origin };
     } else {
       title =
         data.title ??

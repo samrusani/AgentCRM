@@ -23,7 +23,7 @@ export function useEventConnection(): Connection {
 }
 
 const KEYS_BY_EVENT: Record<ServerEventName, string[]> = {
-  run_updated: ['today', 'runs', 'run', 'approvals', 'import', 'connectors'],
+  run_updated: ['today', 'runs', 'run', 'approvals', 'import', 'connectors', 'people', 'person', 'qualification'],
   approval_updated: ['today', 'approvals', 'runs', 'run', 'import'],
   record_updated: [
     'today',
@@ -38,6 +38,7 @@ const KEYS_BY_EVENT: Record<ServerEventName, string[]> = {
     'tasks',
     'activities',
     'search',
+    'qualification',
   ],
 };
 

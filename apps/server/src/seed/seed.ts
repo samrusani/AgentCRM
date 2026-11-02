@@ -11,6 +11,7 @@ import {
   ensureWorkspace,
   moveOpportunityStage,
   resetAllData,
+  saveDefaultQualificationConfig,
   startRun,
   updateOpportunity,
   updateTask,
@@ -313,6 +314,9 @@ export function seedDatabase(db: Db, options: SeedOptions = {}) {
     clock += 60_000;
     decideApproval({ ...ctx, actor: 'user' }, approval.id, { decision: 'approve', note: 'Looks right for a demo.' });
   }
+
+  // Written last so the ids above do not change. People can edit the criteria in Settings.
+  saveDefaultQualificationConfig(ctx);
 
   return getCounts(db, workspace.id);
 }

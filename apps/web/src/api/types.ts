@@ -33,6 +33,8 @@ export interface Person {
   location: string | null;
   tags: string[];
   nextActionAt: string | null;
+  // Present on list items and details. Null means the person was never qualified.
+  qualification?: QualificationSummary | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -126,7 +128,8 @@ export interface Opportunity {
   updatedAt: string;
 }
 
-export interface PersonDetail extends Person {
+export interface PersonDetail extends Omit<Person, 'qualification'> {
+  qualification: QualificationResult | null;
   organization: Organization | null;
   affiliationsSummary: unknown;
   claims: Claim[];
@@ -156,6 +159,8 @@ export interface RunCounts {
   processed: number;
   found: number;
   flagged: number;
+  // Reported by qualify runs only.
+  excluded?: number;
 }
 
 export interface RunStep {
@@ -315,6 +320,82 @@ export interface ApifyRunInput {
   input: Record<string, unknown>;
   maxItems: number;
   title?: string;
+}
+
+export type CsvField =
+  | 'firstName'
+  | 'lastName'
+  | 'name'
+  | 'email'
+  | 'company'
+  | 'domain'
+  | 'title'
+  | 'location'
+  | 'linkedinUrl'
+  | 'tags';
+
+export type CsvMappingTarget = CsvField | 'ignore';
+
+export type CsvMapping = Record<string, CsvMappingTarget>;
+
+export interface CsvPreview {
+  headers: string[];
+  delimiter: string;
+  rowCount: number;
+  suggestedMapping: Record<string, string>;
+  // Parsed sample rows, each as one string per column in header order.
+  sample: string[][];
+}
+
+export interface CsvImportInput {
+  fileName: string;
+  content: string;
+  mapping: CsvMapping;
+}
+
+export type CriterionTarget = 'person' | 'organization';
+export type CriterionField = 'title' | 'location' | 'tags' | 'email' | 'name' | 'kind' | 'domain';
+export type CriterionOperator = 'contains' | 'equals' | 'in' | 'exists';
+
+export interface Criterion {
+  id: string;
+  label: string;
+  target: CriterionTarget;
+  field: CriterionField;
+  operator: CriterionOperator;
+  values: string[];
+  enabled: boolean;
+}
+
+export interface QualificationConfig {
+  exclusions: Criterion[];
+  criteria: Criterion[];
+  // True until a configuration is saved: the server is showing the template defaults.
+  defaulted?: boolean;
+}
+
+export interface QualificationSummary {
+  matched: number;
+  total: number;
+  unknown: number;
+  excluded: boolean;
+  // When qualification last ran for this person. Compare with the person's updatedAt to spot stale results.
+  computedAt: string | null;
+}
+
+export type CriterionOutcome = 'matched' | 'not_matched' | 'unknown';
+
+export interface CriterionResult {
+  id: string;
+  label: string;
+  outcome: CriterionOutcome;
+  reason: string | null;
+  evidence: unknown;
+}
+
+export interface QualificationResult extends QualificationSummary {
+  excludedReasons: string[];
+  criteria: CriterionResult[];
 }
 
 export type ServerEventName = 'run_updated' | 'approval_updated' | 'record_updated';

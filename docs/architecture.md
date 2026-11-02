@@ -25,7 +25,7 @@ IDs are prefixed strings, for example `per_a1b2c3`, generated from random bytes.
 
 | Table | Columns (beyond id, created_at) |
 | --- | --- |
-| workspace | name, template |
+| workspace | name, template, settings (JSON: qualification config) |
 | person | workspace_id, version, first_name, last_name, email, title, organization_id, location, tags (JSON array), next_action_at, updated_at |
 | organization | workspace_id, version, name, domain, kind (fund, company), location, tags (JSON array), updated_at |
 | pipeline | workspace_id, name |
@@ -41,12 +41,13 @@ IDs are prefixed strings, for example `per_a1b2c3`, generated from random bytes.
 | job | kind, payload (JSON), run_at, attempts, status (queued, running, done, failed), updated_at |
 | audit_event | workspace_id, actor, action, entity_type, entity_id, detail (JSON) |
 | connector | workspace_id, kind (apify), settings (JSON, no secrets), secret (API token, never returned by any endpoint), status (connected, error), updated_at |
-| import_batch | workspace_id, run_id, source_kind (apify), source_ref (JSON: actor id, apify run id, dataset id), status (staging, awaiting_review, accepted, rejected, failed), counts (JSON), updated_at |
+| import_batch | workspace_id, run_id, source_kind (apify, csv), source_ref (JSON: for apify the actor id, apify run id, dataset id; for csv the file name, row count, delimiter), status (staging, awaiting_review, accepted, rejected, failed), counts (JSON), updated_at |
+| qualification_result | workspace_id, person_id (one row per person), run_id, payload (JSON), updated_at |
 | import_row | batch_id, seq, raw (JSON), mapped (JSON), status (staged, duplicate, invalid, accepted, rejected), match_entity_type, match_entity_id, reason |
 
 Connector secrets live only in the local database's secret column: they are excluded from every API response (masked to the last four characters), from audit detail, from logs, and from SSE payloads. Id prefixes for the new tables: `con`, `imp`, `row`.
 
-Indexes at minimum: person(workspace_id, last_name), person(workspace_id, email), organization(workspace_id, domain), opportunity(workspace_id, pipeline_id, stage_id), task(workspace_id, status, due_at), activity(workspace_id, entity_type, entity_id, created_at), field_claim(workspace_id, entity_type, entity_id), job(status, run_at).
+Indexes at minimum: person(workspace_id, last_name), person(workspace_id, email), organization(workspace_id, domain), opportunity(workspace_id, pipeline_id, stage_id), task(workspace_id, status, due_at), activity(workspace_id, entity_type, entity_id, created_at), field_claim(workspace_id, entity_type, entity_id), job(status, run_at), plus expression indexes on lower(email) for person and lower(domain) for organization, which the duplicate checks and import dedupe rely on.
 
 ## Run state machine
 
@@ -81,6 +82,26 @@ Policy: configuring connectors and deciding approvals are human actions through 
 
 The Apify base URL is `https://api.apify.com`, overridable with `AGENTCRM_APIFY_BASE` for tests. Key Apify endpoints used: `GET /v2/users/me` (token check), `GET /v2/store?search=` (actor search), `GET /v2/acts/:actorId` (actor detail, example input when present), `POST /v2/acts/:actorId/runs` (start), `GET /v2/actor-runs/:runId` (poll), `GET /v2/datasets/:datasetId/items` (results). Actor ids in the `username~actor-name` form are URL encoded.
 
+## CSV import
+
+CSV import reuses the staging, dedupe, review, and accept machinery that Apify uses, so a spreadsheet and a scrape get identical honesty guarantees.
+
+- `POST /api/imports/csv/preview` takes `{ fileName, content }` (UTF-8 text, 10 MB cap) and returns `{ headers, delimiter, rowCount, suggestedMapping, sample }` without persisting anything. Parsing uses csv-parse with delimiter sniffing (comma, semicolon, tab), BOM stripping, and quoted fields. Hard caps: 10 MB and 20,000 rows; beyond them the request fails with `validation`.
+- `POST /api/imports/csv` takes `{ fileName, content, mapping }` where mapping assigns each header to one of firstName, lastName, name, email, company, domain, title, location, linkedinUrl, tags, or ignore. At least email or a name field must be mapped. Location may span several columns (joined with a comma) and tags columns are merged; every other field takes the first non empty value when assigned more than once. Content must be valid UTF-8 text; files that decode with replacement characters are rejected rather than staged as mojibake. The route parses and stages the batch and rows synchronously (source_kind `csv`, raw row preserved), creates a run of kind `csv_import` with scope `{ batchId, fileName }`, and returns the run with 201. The run's ledger has four steps, and the first, parse and stage, is already done at creation because staging is synchronous; the worker then validates rows (no name and no email is invalid, with a reason), dedupes with the same rules as Apify, and requests the same `import_review` approval, whose payload carries `fileName` where the Apify payload carries `actorId`. Approve and reject behave exactly as for Apify batches, including per field claims (source_type `import`, source_url null, extraction method `csv:<fileName>`) and tags `csv-import` and `via-<runId>`.
+- A `tags` column is split on commas or semicolons and merged into the created record's tags.
+
+## Qualification
+
+Qualification turns the template's criteria into visible, per criterion verdicts. It never writes to records: results live in `qualification_result`, one row per person, so it is a Maintain level action with no approval, and it is audited like every write.
+
+- Config lives in `workspace.settings.qualification` as `{ exclusions, criteria }`, both arrays of Criterion: `{ id, label, target: "person" | "organization", field: title | location | tags | email | name | kind | domain, operator: contains | equals | in | exists, values: string[], enabled }`. Person rules accept title, location, tags, email, name; organization rules accept kind, domain, location, tags, name. `GET /api/qualification` returns it, with `defaulted: true` until a config is saved; `PUT /api/qualification` replaces it after validation and returns the saved config, keeping client supplied ids.
+- Evaluation per person: exclusions first; any matching exclusion marks the person excluded with the reason, and the criteria are still computed for transparency. Each criterion returns `matched`, `not_matched`, or `unknown`. A missing field or record is always `unknown`, never a match. Matching is case insensitive, and `contains` matches substrings, including inside tags; the settings UI says so.
+- Evidence: when the newest field claim for that field exists, the reason cites its status and age; otherwise the record value is cited as record data with no claim. Fit (matched of total) and completeness (unknown count) are reported separately and never combined into one hidden score.
+- `POST /api/runs` kind `qualify` with scope `{}` or `{ tag }` evaluates people in chunks of 200 per transaction with ledger steps (load criteria, evaluate, write results), snapshotting the criteria in the run scope so a config edit mid run cannot mix rule versions. Counts: `processed` people evaluated, `found` people matching every enabled criterion (this can overlap with `excluded`), `flagged` people with at least one unknown, plus `excluded`. Agent origin may start qualify runs without an allowlist, because the run writes only qualification results.
+- Results are a snapshot: `computedAt` says when, and editing a person afterwards does not recompute or mark the result stale yet. This is a known limitation; the UI shows the age rather than implying freshness.
+- `GET /api/people` gains `sort=fit` (matched desc, then fewer unknowns, excluded and never qualified last) and each list item carries `qualification: { matched, total, unknown, excluded, computedAt } | null`; the UI marks a result "out of date" when the person changed after `computedAt`. `GET /api/people/:id` carries the full result payload: `{ computedAt, excluded, excludedReasons, matched, total, unknown, criteria: [{ id, label, outcome, reason, evidence }] }`.
+- The startup fundraising template seeds editable defaults: an exclusion on tags containing do-not-contact, and criteria for organization kind equals fund, title containing partner, principal, scout, or head of, and tags containing seed.
+
 ## API contract
 
 Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expectedVersion`); database columns stay snake_case. List endpoints accept `limit` (default 50, max 200) and an opaque `cursor` (base64url of the last row id, keyset ordered), and return `{ items, nextCursor }` where `nextCursor` is null on the last page. Successful creates return 201. Errors use HTTP status plus `{ "error": { "code", "message" } }`. Codes: `validation`, `not_found`, `version_conflict` (409, with the current record at `error.current`), `conflict`, `internal`. Duplicate person emails and organization domains return 409 `conflict`.
@@ -110,7 +131,7 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 | GET `/api/activities?entityType=&entityId=` | Timeline for a record, newest first |
 | POST `/api/activities` | Create a note. `kind` is optional and only accepts `note` |
 | GET `/api/runs?status=` | Runs, newest first. `status` accepts one value, a comma list, or `active`. Simulated runs carry `simulated: true` |
-| POST `/api/runs` | `{ kind, title?, scope? }`, returns the queued run immediately. Kinds: `demo_research` (scope optional JSON) and `apify_scrape` (scope requires `actorId` and `input`, optional `maxItems` 1 to 1000 defaulting to 100) |
+| POST `/api/runs` | `{ kind, title?, scope? }`, returns the queued run immediately. Kinds: `demo_research` (scope optional JSON), `apify_scrape` (scope requires `actorId` and `input`, optional `maxItems` 1 to 1000 defaulting to 100), and `qualify` (scope `{}` or `{ tag }`). `csv_import` runs are created only through the CSV import route |
 | GET `/api/runs/:id` | Run with ordered steps and any linked approvals |
 | POST `/api/runs/:id/control` | `{ action: "pause" | "resume" | "cancel" }` |
 | GET `/api/approvals?status=` | Approvals with run titles |
@@ -123,6 +144,10 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 | GET `/api/connectors/apify/actors?q=` | Proxied Apify store search: id, name, title, description, stats, pricing hint |
 | GET `/api/connectors/apify/actors/:id` | Actor detail including `exampleRunInput` when Apify provides one, returned verbatim with no key case conversion because input keys belong to the actor |
 | GET `/api/imports/:id?cursor=&limit=&status=` | Import batch with counts and paged rows; `withRaw=true` includes each row's raw item |
+| POST `/api/imports/csv/preview` | Stateless parse: headers, delimiter, row count, suggested mapping, sample rows |
+| POST `/api/imports/csv` | Stage a CSV with a confirmed mapping; returns the `csv_import` run, 201 |
+| GET `/api/qualification` | The workspace's qualification config |
+| PUT `/api/qualification` | Replace the qualification config after validation |
 | POST `/api/agent/message` | `{ text }` returns `{ reply, actions, modelConnected }`. Deterministic and rule based. Actions are `{ id, label, kind, entityType?, entityId? }` with kinds `start_demo_run`, `open_record`, and `start_apify_import` (the UI opens the import setup; the server never starts the scrape itself) |
 | GET `/api/events` | Server sent events. Frames: `run_updated` `{type,runId}`, `approval_updated` `{type,approvalId,runId}`, `record_updated` `{type,entityType,entityId}`, plus an initial `ready` event and a 15 second keep alive comment. The web app refetches on these signals |
 
@@ -135,7 +160,7 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 - `crm_get_record`: person, organization, or opportunity by id, with evidence
 - `crm_propose_changes`: validate a batch of field changes, return a preview, write nothing
 - `crm_apply_changes`: apply a previously validated proposal with expected versions
-- `crm_start_research`: start a run and return its id: `demo_research`, or `apify_scrape` for an allowlisted actor
+- `crm_start_research`: start a run and return its id: `demo_research`, `qualify`, or `apify_scrape` for an allowlisted actor
 - `crm_get_run`: run status, steps, counts
 
 MCP tools call the same actions as the HTTP routes. No tool can decide an approval.
@@ -151,8 +176,13 @@ crm serve
 crm search <query> [--json]
 crm runs list [--json]
 crm runs get <id> [--json]
+crm import <file.csv> [--preview] [--json]
+crm approvals list [--json]
+crm approvals decide <id> approve|reject [--note <text>] [--json]
 crm mcp
 ```
+
+`crm import` with `--preview` prints the parse result and suggested mapping without staging; without it, the suggested mapping is used to stage the file and the command prints the run and batch ids. The CLI runs as the local user, so `crm approvals decide` is a human decision, unlike MCP tools, which can never decide approvals.
 
 Exit codes: 0 success, 1 expected failure with a printed reason, 2 usage error.
 

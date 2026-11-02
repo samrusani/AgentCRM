@@ -8,6 +8,14 @@ import type {
   Approval,
   Claim,
   Connector,
+  Criterion,
+  CriterionOperator,
+  CriterionOutcome,
+  CriterionResult,
+  CriterionTarget,
+  CriterionField,
+  CsvImportInput,
+  CsvPreview,
   Health,
   ImportBatch,
   ImportBatchPage,
@@ -19,6 +27,9 @@ import type {
   Person,
   PersonDetail,
   Pipeline,
+  QualificationConfig,
+  QualificationResult,
+  QualificationSummary,
   Run,
   RunCounts,
   SearchResults,
@@ -163,7 +174,7 @@ function asPage<T>(data: unknown): Page<T> {
 }
 
 function normalizePerson(raw: Person): Person {
-  return { ...raw, tags: toArray<string>(raw.tags) };
+  return { ...raw, tags: toArray<string>(raw.tags), qualification: normalizeSummary(raw.qualification) };
 }
 
 function normalizeOrganization(raw: Organization): Organization {
@@ -173,12 +184,14 @@ function normalizeOrganization(raw: Organization): Organization {
 function normalizeRun(raw: Run): Run {
   const counts = (parseMaybeJson(raw.counts) ?? {}) as Partial<RunCounts>;
   const scope = parseMaybeJson(raw.scope);
+  const excluded = counts.excluded === undefined || counts.excluded === null ? undefined : Number(counts.excluded);
   return {
     ...raw,
     counts: {
       processed: Number(counts.processed ?? 0),
       found: Number(counts.found ?? 0),
       flagged: Number(counts.flagged ?? 0),
+      ...(excluded !== undefined && Number.isFinite(excluded) ? { excluded } : {}),
     },
     scope: scope && typeof scope === 'object' ? (scope as Record<string, unknown>) : {},
     steps: raw.steps ? [...raw.steps].sort((a, b) => a.seq - b.seq) : raw.steps,
@@ -196,7 +209,8 @@ function normalizePersonDetail(data: unknown): PersonDetail {
     ? { ...(record.person as object), ...record, person: undefined }
     : record) as unknown as PersonDetail;
   return {
-    ...normalizePerson(flat),
+    ...normalizePerson(flat as unknown as Person),
+    qualification: normalizeQualificationResult((record.qualification ?? flat.qualification) as unknown),
     organization: flat.organization ? normalizeOrganization(flat.organization) : null,
     affiliationsSummary: flat.affiliationsSummary ?? null,
     claims: toArray<Claim>(flat.claims),
@@ -371,8 +385,114 @@ function normalizeImportPage(data: unknown): ImportBatchPage {
   };
 }
 
+function wholeNumber(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
+}
+
+function normalizeSummary(raw: unknown): QualificationSummary | null {
+  const parsed = parseMaybeJson(raw);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const record = parsed as Record<string, unknown>;
+  return {
+    matched: wholeNumber(record.matched),
+    total: wholeNumber(record.total),
+    unknown: wholeNumber(record.unknown),
+    excluded: record.excluded === true || record.excluded === 1,
+    computedAt: textOrNull(record.computedAt),
+  };
+}
+
+const OUTCOMES: CriterionOutcome[] = ['matched', 'not_matched', 'unknown'];
+
+function reasonText(value: unknown): string | null {
+  if (typeof value === 'string') return textOrNull(value);
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return textOrNull(record.reason) ?? textOrNull(record.label) ?? textOrNull(record.message);
+  }
+  return null;
+}
+
+function normalizeCriterionResult(raw: unknown): CriterionResult {
+  const record = objectOrEmpty(raw);
+  const outcome = textOrNull(record.outcome) as CriterionOutcome | null;
+  return {
+    id: textOrNull(record.id) ?? '',
+    label: textOrNull(record.label) ?? 'Criterion',
+    // Anything the UI does not recognize is shown as unknown, never as a match.
+    outcome: outcome && OUTCOMES.includes(outcome) ? outcome : 'unknown',
+    reason: textOrNull(record.reason),
+    evidence: record.evidence ?? null,
+  };
+}
+
+function normalizeQualificationResult(raw: unknown): QualificationResult | null {
+  const summary = normalizeSummary(raw);
+  if (!summary) return null;
+  const record = objectOrEmpty(raw);
+  const reasons = toArray<unknown>(record.excludedReasons)
+    .map(reasonText)
+    .filter((entry): entry is string => entry !== null);
+  return {
+    ...summary,
+    excludedReasons: reasons,
+    criteria: toArray<unknown>(record.criteria).map(normalizeCriterionResult),
+  };
+}
+
+function normalizeCriterion(raw: unknown): Criterion {
+  const record = objectOrEmpty(raw);
+  return {
+    id: textOrNull(record.id) ?? '',
+    label: textOrNull(record.label) ?? '',
+    target: (textOrNull(record.target) ?? 'person') as CriterionTarget,
+    field: (textOrNull(record.field) ?? 'title') as CriterionField,
+    operator: (textOrNull(record.operator) ?? 'contains') as CriterionOperator,
+    values: toArray<unknown>(record.values).filter((entry): entry is string => typeof entry === 'string'),
+    enabled: record.enabled !== false,
+  };
+}
+
+function normalizeQualificationConfig(raw: unknown): QualificationConfig {
+  const record = objectOrEmpty(raw);
+  return {
+    exclusions: toArray<unknown>(record.exclusions).map(normalizeCriterion),
+    criteria: toArray<unknown>(record.criteria).map(normalizeCriterion),
+    defaulted: record.defaulted === true,
+  };
+}
+
+function normalizeCsvPreview(raw: unknown): CsvPreview {
+  const record = objectOrEmpty(raw);
+  const headers = toArray<unknown>(record.headers).map((entry) => String(entry ?? ''));
+  const mappingSource = objectOrEmpty(record.suggestedMapping);
+  const suggestedMapping: Record<string, string> = {};
+  for (const [header, target] of Object.entries(mappingSource)) {
+    if (typeof target === 'string') suggestedMapping[header] = target;
+  }
+  // Sample rows may be arrays in header order or objects keyed by header.
+  const sample = toArray<unknown>(record.sample).map((entry): string[] => {
+    if (Array.isArray(entry)) return entry.map((cell) => (cell === null || cell === undefined ? '' : String(cell)));
+    const row = objectOrEmpty(entry);
+    return headers.map((header) => {
+      const cell = row[header];
+      return cell === null || cell === undefined ? '' : String(cell);
+    });
+  });
+  const rowCount = Number(record.rowCount);
+  return {
+    headers,
+    delimiter: typeof record.delimiter === 'string' ? record.delimiter : ',',
+    rowCount: Number.isFinite(rowCount) && rowCount >= 0 ? Math.floor(rowCount) : 0,
+    suggestedMapping,
+    sample,
+  };
+}
+
 export interface ListParams {
   q?: string;
+  sort?: string;
   cursor?: string | null;
   limit?: number;
 }
@@ -459,6 +579,8 @@ export const api = {
           },
         }),
       ),
+    startQualify: async (scope: { tag?: string } = {}) =>
+      normalizeRun(await request<Run>('POST', '/runs', { body: { kind: 'qualify', scope } })),
     get: async (id: string) => normalizeRun(await request<Run>('GET', `/runs/${id}`)),
     control: (id: string, action: 'pause' | 'resume' | 'cancel') =>
       request<unknown>('POST', `/runs/${id}/control`, { body: { action } }),
@@ -508,10 +630,31 @@ export const api = {
   },
 
   imports: {
+    // Header names are data, so they keep their spelling in both response and request.
+    csvPreview: async (input: { fileName: string; content: string }): Promise<CsvPreview> =>
+      normalizeCsvPreview(
+        await request<unknown>('POST', '/imports/csv/preview', {
+          body: input,
+          preserve: ['suggestedMapping', 'suggested_mapping', 'sample'],
+        }),
+      ),
+    csvStage: async (input: CsvImportInput) =>
+      normalizeRun(await request<Run>('POST', '/imports/csv', { body: input })),
     get: async (id: string, params: { cursor?: string | null; limit?: number; status?: string }) =>
       normalizeImportPage(
         await request<unknown>('GET', `/imports/${encodeURIComponent(id)}`, { query: { ...params } }),
       ),
+  },
+
+  qualification: {
+    get: async (): Promise<QualificationConfig> =>
+      normalizeQualificationConfig(await request<unknown>('GET', '/qualification')),
+    // The server replaces the whole config. If it echoes nothing usable, keep what was sent.
+    put: async (config: QualificationConfig): Promise<QualificationConfig> => {
+      const data = await request<unknown>('PUT', '/qualification', { body: config });
+      const record = objectOrEmpty(data);
+      return 'exclusions' in record || 'criteria' in record ? normalizeQualificationConfig(data) : { ...config, defaulted: false };
+    },
   },
 
   search: async (q: string, signal?: AbortSignal): Promise<SearchResults> => {

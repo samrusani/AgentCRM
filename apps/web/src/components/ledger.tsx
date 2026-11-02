@@ -41,7 +41,8 @@ const STATE_LABELS: Record<StepState, string> = {
   skipped: 'Skipped',
 };
 
-export function CountsList({ counts }: { counts: RunCounts }) {
+// Qualify runs count people who matched every enabled criterion, so "Found" would mislead there.
+export function CountsList({ counts, kind }: { counts: RunCounts; kind?: string }) {
   return (
     <dl className="counts">
       <div>
@@ -49,13 +50,19 @@ export function CountsList({ counts }: { counts: RunCounts }) {
         <dd>{counts.processed}</dd>
       </div>
       <div>
-        <dt>Found</dt>
+        <dt>{kind === 'qualify' ? 'Full matches' : 'Found'}</dt>
         <dd>{counts.found}</dd>
       </div>
       <div>
         <dt>Flagged</dt>
         <dd>{counts.flagged}</dd>
       </div>
+      {typeof counts.excluded === 'number' ? (
+        <div>
+          <dt>Excluded</dt>
+          <dd>{counts.excluded}</dd>
+        </div>
+      ) : null}
     </dl>
   );
 }
@@ -109,7 +116,7 @@ export function LiveRun({ run, showLink = true }: { run: Run; showLink?: boolean
           <RunStatusChip status={current.status} />
         </div>
       </header>
-      <CountsList counts={current.counts} />
+      <CountsList counts={current.counts} kind={current.kind} />
       <RunLedger steps={current.steps ?? []} runStatus={current.status} compact />
       {showLink ? (
         <Link className="link" to={`/research?run=${current.id}`}>

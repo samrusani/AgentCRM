@@ -15,7 +15,10 @@ import {
   getApifyActor,
   moveOpportunityStage,
   parseInput,
+  previewCsvFile,
+  saveQualificationConfig,
   searchApifyActors,
+  stageCsvImport,
   startRun,
   updateOpportunity,
   updateOrganization,
@@ -32,6 +35,7 @@ import { getOpportunityDetail, listOpportunities } from '../queries/opportunitie
 import { getOrganizationDetail, listOrganizations } from '../queries/organizations.js';
 import { getPersonDetail, listPeople } from '../queries/people.js';
 import { listPipelines } from '../queries/pipelines.js';
+import { readQualificationConfig } from '../qualification/config.js';
 import { getRunDetail, listApprovals, listRuns, requireApproval } from '../queries/runs.js';
 import { searchAll } from '../queries/search.js';
 import { listTasks } from '../queries/tasks.js';
@@ -45,7 +49,12 @@ const pagingQuery = {
   limit: z.coerce.number().int().min(1).optional(),
 };
 
-const peopleQuery = z.object({ q: z.string().optional(), organizationId: z.string().optional(), ...pagingQuery });
+const peopleQuery = z.object({
+  q: z.string().optional(),
+  organizationId: z.string().optional(),
+  sort: z.enum(['name', 'fit']).optional(),
+  ...pagingQuery,
+});
 const organizationsQuery = z.object({ q: z.string().optional(), ...pagingQuery });
 const opportunitiesQuery = z.object({
   pipelineId: z.string().optional(),
@@ -203,6 +212,18 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
       withRaw: query.withRaw === 'true',
     });
   });
+
+  // The body holds up to 10 MB of file text, and JSON escaping can make it larger than the file.
+  const csvBodyLimit = 32 * 1024 * 1024;
+  app.post('/api/imports/csv/preview', { bodyLimit: csvBodyLimit }, async (request) => previewCsvFile(request.body));
+  app.post('/api/imports/csv', { bodyLimit: csvBodyLimit }, async (request, reply) => {
+    const run = stageCsvImport(context(), request.body);
+    reply.status(201);
+    return run;
+  });
+
+  app.get('/api/qualification', async () => readQualificationConfig(db, workspaceId()));
+  app.put('/api/qualification', async (request) => saveQualificationConfig(context(), request.body));
 
   app.get('/api/search', async (request) => {
     const { q } = parseInput(searchQuery, request.query);

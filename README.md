@@ -42,6 +42,8 @@ Open http://127.0.0.1:5173 in your browser. The API listens on http://127.0.0.1:
 | Approvals: review, approve, reject, audit trail | Working |
 | Evidence: field claims with source and verification status | Working, synthetic sources |
 | Apify imports: run any store Actor, staged rows, dedupe, review before anything is saved | Working, verified against a stubbed Apify API; bring your own Apify account |
+| CSV import: column mapping, staged rows, same dedupe and review as Apify | Working, UI and CLI |
+| Qualification: editable criteria, per criterion verdicts with evidence, fit sort | Working; unknown never counts as a match |
 | MCP server over stdio | Working, read and propose tools, can start allowlisted Apify runs |
 | CLI: doctor, seed, serve, search, runs | Working |
 | Email connectors (AgentMail, Gmail) | Not built |

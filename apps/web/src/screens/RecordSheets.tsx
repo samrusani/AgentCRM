@@ -15,6 +15,7 @@ import {
   EvidenceChips,
 } from '../components/record';
 import { Chip } from '../components/common';
+import { QualificationSection } from '../components/qualification';
 import { describeDue, formatAgo, humanize, personName } from '../lib/format';
 import { useUI, type SelectedRecord } from '../lib/ui';
 
@@ -141,6 +142,8 @@ export function PersonSheet({
               <p className="muted">{person.affiliationsSummary}</p>
             ) : null}
           </SheetSection>
+
+          <QualificationSection result={person.qualification} personUpdatedAt={person.updatedAt} />
 
           <OtherEvidence
             claims={person.claims}

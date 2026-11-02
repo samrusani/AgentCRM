@@ -13,10 +13,16 @@ Commands:
   search <query>         Search people, organizations, and opportunities
   runs list              List runs, newest first
   runs get <id>          Show one run with its steps
+  import <file.csv>      Stage a CSV file for review, or show how it would map with --preview
+  approvals list         List approvals, newest first
+  approvals decide <id> approve|reject
+                         Decide an approval as the local user
   mcp                    Start the MCP server over stdio
 
 Options:
-  --json                 Print JSON instead of text (search, runs, doctor)
+  --json                 Print JSON instead of text (search, runs, import, approvals, doctor)
+  --preview              With import: print the parse result and suggested mapping, stage nothing
+  --note <text>          With approvals decide: attach a note
   --help                 Show this message
 
 Exit codes: 0 success, 1 expected failure with a printed reason, 2 usage error.`;
@@ -27,15 +33,23 @@ interface Parsed {
   positionals: string[];
   json: boolean;
   reset: boolean;
+  preview: boolean;
+  note: string | null;
   help: boolean;
 }
 
 function parseArguments(argv: string[]): Parsed {
-  const parsed: Parsed = { positionals: [], json: false, reset: false, help: false };
-  for (const argument of argv) {
+  const parsed: Parsed = { positionals: [], json: false, reset: false, preview: false, note: null, help: false };
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index]!;
     if (argument === '--json') parsed.json = true;
     else if (argument === '--reset') parsed.reset = true;
-    else if (argument === '--help' || argument === '-h') parsed.help = true;
+    else if (argument === '--preview') parsed.preview = true;
+    else if (argument === '--note' || argument.startsWith('--note=')) {
+      const inline = argument.startsWith('--note=') ? argument.slice('--note='.length) : argv[(index += 1)];
+      if (inline === undefined || inline === '') throw new UsageError('--note needs text, for example: --note "Looks right".');
+      parsed.note = inline;
+    } else if (argument === '--help' || argument === '-h') parsed.help = true;
     else if (argument.startsWith('-')) throw new UsageError(`Unknown option ${argument}.`);
     else parsed.positionals.push(argument);
   }
@@ -210,6 +224,118 @@ async function runsCommand(parsed: Parsed): Promise<number> {
   throw new UsageError('Use "crm runs list" or "crm runs get <id>".');
 }
 
+async function readCsvFile(file: string): Promise<{ fileName: string; content: string }> {
+  const { readFile, stat } = await import('node:fs/promises');
+  const { maxCsvBytes } = await import('./csv/parse.js');
+  let size: number;
+  try {
+    const info = await stat(file);
+    if (!info.isFile()) throw new AppError('validation', `${file} is not a file.`);
+    size = info.size;
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError('not_found', `Cannot read ${file}. Check the path.`);
+  }
+  if (size > maxCsvBytes) {
+    throw new AppError('validation', `The file is larger than ${maxCsvBytes / (1024 * 1024)} MB. Split it into smaller files.`);
+  }
+  return { fileName: path.basename(file), content: await readFile(file, 'utf8') };
+}
+
+const delimiterNames: Record<string, string> = { ',': 'comma', ';': 'semicolon', '\t': 'tab' };
+
+async function importCommand(parsed: Parsed): Promise<number> {
+  const file = parsed.positionals[1];
+  if (!file) throw new UsageError('Give a CSV file, for example: crm import leads.csv --preview');
+  const { fileName, content } = await readCsvFile(file);
+  const { previewCsvFile, stageCsvImport } = await import('./actions/index.js');
+  if (parsed.preview) {
+    const preview = previewCsvFile({ fileName, content });
+    print(parsed, preview, () =>
+      [
+        `${preview.fileName}: ${preview.rowCount} ${preview.rowCount === 1 ? 'row' : 'rows'}, ${delimiterNames[preview.delimiter] ?? preview.delimiter} separated`,
+        'Columns and suggested mapping:',
+        ...preview.headers.map((header) => `  ${header} -> ${preview.suggestedMapping[header] ?? 'ignore'}`),
+        `Sample (first ${preview.sample.length}):`,
+        ...preview.sample.map((row) => `  ${preview.headers.map((header) => row[header] ?? '').join(' | ')}`),
+      ].join('\n'),
+    );
+    return 0;
+  }
+  const preview = previewCsvFile({ fileName, content });
+  const { createContext } = await import('./actions/index.js');
+  const { db, workspace } = await openWorkspace();
+  try {
+    const run = stageCsvImport(createContext(db, workspace.id, { actor: 'user' }), {
+      fileName,
+      content,
+      mapping: preview.suggestedMapping,
+    });
+    const batchId = String(run.scope.batchId);
+    print(parsed, { run, batchId }, () =>
+      [
+        `Staged ${preview.rowCount} ${preview.rowCount === 1 ? 'row' : 'rows'} from ${fileName}.`,
+        `Run:   ${run.id}`,
+        `Batch: ${batchId}`,
+        'The server validates the rows, checks for duplicates, and then asks for review. Start it with "crm serve" if it is not running.',
+        'Review with "crm approvals list" and decide with "crm approvals decide <id> approve".',
+      ].join('\n'),
+    );
+  } finally {
+    db.close();
+  }
+  return 0;
+}
+
+async function approvalsCommand(parsed: Parsed): Promise<number> {
+  const action = parsed.positionals[1];
+  if (action === 'list') {
+    const { listApprovals } = await import('./queries/runs.js');
+    const { db, workspace } = await openWorkspace();
+    const limit = 200;
+    const page = listApprovals(db, workspace.id, { limit });
+    print(parsed, page, () =>
+      page.items.length === 0
+        ? 'No approvals yet.'
+        : [
+            ...page.items.map(
+              (approval) => `${approval.id}  ${approval.status.padEnd(8)}  ${approval.kind.padEnd(13)}  ${approval.title}  (run ${approval.runId})`,
+            ),
+            ...(page.items.length === limit ? [`Only the first ${limit} approvals are shown (newest first).`] : []),
+          ].join('\n'),
+    );
+    db.close();
+    return 0;
+  }
+  if (action === 'decide') {
+    const id = parsed.positionals[2];
+    const decision = parsed.positionals[3];
+    if (!id || (decision !== 'approve' && decision !== 'reject')) {
+      throw new UsageError('Use "crm approvals decide <id> approve|reject", for example: crm approvals decide apr_0123456789ab approve');
+    }
+    const { createContext, decideApproval } = await import('./actions/index.js');
+    const { db, workspace } = await openWorkspace();
+    try {
+      const result = decideApproval(createContext(db, workspace.id, { actor: 'user' }), id, {
+        decision,
+        ...(parsed.note ? { note: parsed.note } : {}),
+      });
+      print(parsed, result, () =>
+        [
+          result.alreadyDecided
+            ? `${result.approval.id} was already ${result.approval.status}. Nothing changed.`
+            : `${decision === 'approve' ? 'Approved' : 'Rejected'} ${result.approval.id}.`,
+          `Run ${result.run.id} is ${result.run.status.replace('_', ' ')}: processed ${result.run.counts.processed}, found ${result.run.counts.found}, flagged ${result.run.counts.flagged}.`,
+        ].join('\n'),
+      );
+    } finally {
+      db.close();
+    }
+    return 0;
+  }
+  throw new UsageError('Use "crm approvals list" or "crm approvals decide <id> approve|reject".');
+}
+
 export async function main(argv: string[]): Promise<number> {
   let parsed: Parsed;
   try {
@@ -237,6 +363,10 @@ export async function main(argv: string[]): Promise<number> {
         return await searchCommand(parsed);
       case 'runs':
         return await runsCommand(parsed);
+      case 'import':
+        return await importCommand(parsed);
+      case 'approvals':
+        return await approvalsCommand(parsed);
       case 'serve': {
         const { startServer, runUntilSignal } = await import('./server.js');
         runUntilSignal(await startServer());

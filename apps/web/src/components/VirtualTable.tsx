@@ -6,6 +6,9 @@ export interface Column<T> {
   header: string;
   width: string;
   numeric?: boolean;
+  // Replaces the plain header text, for example with a sort control.
+  headerContent?: ReactNode;
+  ariaSort?: 'ascending' | 'descending' | 'none';
   render: (row: T) => ReactNode;
 }
 
@@ -112,9 +115,10 @@ export function VirtualTable<T>({
             <div
               key={column.key}
               role="columnheader"
+              aria-sort={column.ariaSort}
               className={`vtable__head-cell${column.numeric ? ' is-numeric' : ''}`}
             >
-              {column.header}
+              {column.headerContent ?? column.header}
             </div>
           ))}
         </div>

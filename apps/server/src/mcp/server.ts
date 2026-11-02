@@ -77,10 +77,11 @@ export async function startMcpServer(): Promise<void> {
           'Apply a proposal with expected versions. A stale version fails the whole batch.',
           'Start a simulated research run and read its progress.',
           'Start an Apify import run for an actor on the connector allowlist. Results wait for a person to approve them in the app.',
+          'Start a qualify run, optionally limited to one tag. It writes per criterion verdicts to qualification results, needs no approval, and changes no records.',
         ],
         notAllowed: ['Approving or rejecting an approval. Only a person can decide, in the app.'],
         notes:
-          'demo_research runs are simulated and make no network requests. apify_scrape runs call the real Apify API with the connected account, only for allowlisted actor ids, and stage rows for human review.',
+          'demo_research runs are simulated and make no network requests. apify_scrape runs call the real Apify API with the connected account, only for allowlisted actor ids, and stage rows for human review. qualify runs evaluate people against the qualification criteria in Settings, make no network requests, and need no approval. CSV imports are started by a person in the app or with the crm import command.',
       })),
   );
 
@@ -153,9 +154,10 @@ export async function startMcpServer(): Promise<void> {
     {
       title: 'Start a research run',
       description:
-        'Starts a run and returns its id. kind demo_research (default) is simulated: scripted steps, synthetic candidates. kind apify_scrape runs a real Apify actor with the scope { actorId, input, maxItems } and works only for actor ids on the Apify allowlist set in Settings. Both kinds wait for a person to approve in the app.',
+        'Starts a run and returns its id. kind demo_research (default) is simulated: scripted steps, synthetic candidates. kind apify_scrape runs a real Apify actor with the scope { actorId, input, maxItems } and works only for actor ids on the Apify allowlist set in Settings. Both of those kinds wait for a person to approve in the app. kind qualify evaluates people against the qualification criteria (optional tag limits it to people with that tag), writes results, and needs no approval.',
       inputSchema: {
-        kind: z.enum(['demo_research', 'apify_scrape']).default('demo_research'),
+        kind: z.enum(['demo_research', 'apify_scrape', 'qualify']).default('demo_research'),
+        tag: z.string().min(1).max(60).optional(),
         title: z.string().min(1).max(200).optional(),
         query: z.string().max(200).optional(),
         targetCount: z.number().int().min(1).max(10).optional(),
@@ -168,8 +170,17 @@ export async function startMcpServer(): Promise<void> {
           .optional(),
       },
     },
-    async ({ kind, title, query, targetCount, scope }) =>
+    async ({ kind, title, query, targetCount, scope, tag }) =>
       guarded(() => {
+        if (kind === 'qualify') {
+          const run = startRun(ctx, { kind, ...(title ? { title } : {}), scope: tag ? { tag } : {} }, { origin: 'agent' });
+          return {
+            runId: run.id,
+            status: run.status,
+            simulated: false,
+            note: 'A worker in this process or in the API server advances this run. Read progress with crm_get_run. No approval is needed because it writes only qualification results.',
+          };
+        }
         if (kind === 'apify_scrape') {
           if (!scope) throw validationError('scope: apify_scrape needs a scope with actorId and input.');
           const run = startRun(ctx, { kind, ...(title ? { title } : {}), scope }, { origin: 'agent' });

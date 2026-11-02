@@ -104,7 +104,7 @@ export function Research() {
       <PageHeader title="Research">{startButton}</PageHeader>
       {items.length === 0 && !selectedId ? (
         <EmptyState
-          message="No research runs yet. A demo run is simulated: it shows the ledger, counts, and approval flow with synthetic data. An Apify import is real: it runs an actor on your own Apify account."
+          message="No research runs yet. A demo run is simulated: it shows the ledger, counts, and approval flow with synthetic data. An Apify import is real: it runs an actor on your own Apify account. A CSV import starts from the People tab in Relationships."
         />
       ) : (
         <div className="research">
@@ -192,7 +192,7 @@ function RunDetail({ id }: { id: string }) {
         </p>
       ) : null}
 
-      <CountsList counts={run.counts} />
+      <CountsList counts={run.counts} kind={run.kind} />
 
       {batchId ? (
         <p>

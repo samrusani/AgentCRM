@@ -25,6 +25,8 @@ export interface RunCounts {
   duplicates?: number;
   invalid?: number;
   accepted?: number;
+  // Qualify runs also report this.
+  excluded?: number;
 }
 
 function text(value: unknown): string | null {
