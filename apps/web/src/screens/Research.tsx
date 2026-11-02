@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useControlRun, useRun, useRuns, useStartRun } from '../api/hooks';
 import type { Run } from '../api/types';
 import { ApprovalCard } from '../components/approvals';
@@ -13,8 +13,10 @@ import {
   errorMessage,
 } from '../components/common';
 import { Icon } from '../components/Icons';
+import { batchHref } from '../components/importReview';
 import { CountsList, RunLedger } from '../components/ledger';
 import { formatAgo, formatDateTime, isSimulatedRun } from '../lib/format';
+import { ImportBatchSheet, ImportSetupSheet } from './ImportSheets';
 import { useUI } from '../lib/ui';
 
 export function Research() {
@@ -30,6 +32,36 @@ export function Research() {
     setParams(copy, { replace: true });
   };
 
+  const importOpen = params.get('import') === 'new';
+  const batchId = params.get('batch');
+
+  const openImport = () => {
+    const copy = new URLSearchParams(params);
+    copy.set('import', 'new');
+    copy.delete('batch');
+    setParams(copy);
+  };
+
+  const closeImport = () => {
+    const copy = new URLSearchParams(params);
+    copy.delete('import');
+    setParams(copy, { replace: true });
+  };
+
+  const closeBatch = () => {
+    const copy = new URLSearchParams(params);
+    copy.delete('batch');
+    setParams(copy, { replace: true });
+  };
+
+  const importStarted = (run: Run) => {
+    const copy = new URLSearchParams(params);
+    copy.delete('import');
+    copy.delete('batch');
+    copy.set('run', run.id);
+    setParams(copy, { replace: true });
+  };
+
   const start = () =>
     startRun.mutate(undefined, {
       onSuccess: (run) => select(run.id),
@@ -37,9 +69,14 @@ export function Research() {
     });
 
   const startButton = (
-    <button type="button" className="btn btn--primary" onClick={start} disabled={startRun.isPending}>
-      {startRun.isPending ? 'Starting...' : 'Start demo research'}
-    </button>
+    <>
+      <button type="button" className="btn" onClick={openImport} aria-haspopup="dialog">
+        Import from Apify
+      </button>
+      <button type="button" className="btn btn--primary" onClick={start} disabled={startRun.isPending}>
+        {startRun.isPending ? 'Starting...' : 'Start demo research'}
+      </button>
+    </>
   );
 
   if (runs.isPending) {
@@ -67,7 +104,7 @@ export function Research() {
       <PageHeader title="Research">{startButton}</PageHeader>
       {items.length === 0 && !selectedId ? (
         <EmptyState
-          message="No research runs yet. A demo run is simulated: it shows the ledger, counts, and approval flow with synthetic data."
+          message="No research runs yet. A demo run is simulated: it shows the ledger, counts, and approval flow with synthetic data. An Apify import is real: it runs an actor on your own Apify account."
         />
       ) : (
         <div className="research">
@@ -83,6 +120,11 @@ export function Research() {
           <div className="run-detail">{selectedId ? <RunDetail id={selectedId} /> : null}</div>
         </div>
       )}
+      {batchId ? (
+        <ImportBatchSheet key={batchId} id={batchId} onClose={closeBatch} />
+      ) : importOpen ? (
+        <ImportSetupSheet onClose={closeImport} onStarted={importStarted} />
+      ) : null}
     </div>
   );
 }
@@ -123,6 +165,8 @@ function RunDetail({ id }: { id: string }) {
   const canResume = run.status === 'paused';
   const canCancel = canPause || canResume;
   const approvals = run.approvals ?? [];
+  const isApify = run.kind === 'apify_scrape';
+  const batchId = typeof run.scope.batchId === 'string' && run.scope.batchId !== '' ? run.scope.batchId : null;
 
   const act = (action: 'pause' | 'resume' | 'cancel') => {
     setConfirmCancel(false);
@@ -150,6 +194,14 @@ function RunDetail({ id }: { id: string }) {
 
       <CountsList counts={run.counts} />
 
+      {batchId ? (
+        <p>
+          <Link className="link" to={batchHref(batchId, run.id)}>
+            View import batch
+          </Link>
+        </p>
+      ) : null}
+
       {canPause || canResume || canCancel ? (
         <div className="run-controls" role="group" aria-label="Run controls">
           {canPause ? (
@@ -169,7 +221,9 @@ function RunDetail({ id }: { id: string }) {
           ) : null}
           {confirmCancel ? (
             <span className="run-controls__confirm" role="alert">
-              Cancel this run? Cancelling is final.
+              {isApify
+                ? 'Cancel this run? Cancelling is final. It also asks Apify to stop the actor run. Apify still bills for the time the actor already ran.'
+                : 'Cancel this run? Cancelling is final.'}
               <button type="button" className="btn btn--danger" onClick={() => act('cancel')}>
                 Cancel run
               </button>
@@ -179,6 +233,12 @@ function RunDetail({ id }: { id: string }) {
             </span>
           ) : null}
         </div>
+      ) : null}
+      {isApify && (canPause || canResume) ? (
+        <p className="muted">
+          Pausing stops processing in this app only. The Apify run keeps going and keeps billing until it finishes or
+          you cancel.
+        </p>
       ) : null}
       {control.isError ? (
         <p className="inline-error" role="alert">

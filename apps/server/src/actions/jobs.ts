@@ -37,13 +37,29 @@ export function enqueueJobIn(tx: Tx, kind: string, payload: Record<string, unkno
   return id;
 }
 
-export function claimDueJobs(ctx: ActionContext, limit = 10): JobRecord[] {
+export interface ClaimFilter {
+  // Claim only these kinds, or everything except these kinds.
+  kinds?: readonly string[];
+  excludeKinds?: readonly string[];
+}
+
+export function claimDueJobs(ctx: ActionContext, limit = 10, filter: ClaimFilter = {}): JobRecord[] {
   return ctx.db
     .transaction(() => {
       const now = ctx.now();
+      const clauses = ["status = 'queued'", 'run_at <= ?'];
+      const params: unknown[] = [now];
+      if (filter.kinds) {
+        clauses.push(`kind IN (${filter.kinds.map(() => '?').join(', ')})`);
+        params.push(...filter.kinds);
+      }
+      if (filter.excludeKinds && filter.excludeKinds.length > 0) {
+        clauses.push(`kind NOT IN (${filter.excludeKinds.map(() => '?').join(', ')})`);
+        params.push(...filter.excludeKinds);
+      }
       const rows = ctx.db
-        .prepare("SELECT * FROM job WHERE status = 'queued' AND run_at <= ? ORDER BY run_at, id LIMIT ?")
-        .all(now, limit) as JobRow[];
+        .prepare(`SELECT * FROM job WHERE ${clauses.join(' AND ')} ORDER BY run_at, id LIMIT ?`)
+        .all(...params, limit) as JobRow[];
       for (const row of rows) {
         ctx.db
           .prepare("UPDATE job SET status = 'running', attempts = attempts + 1, updated_at = ? WHERE id = ?")

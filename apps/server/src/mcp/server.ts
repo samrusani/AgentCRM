@@ -76,9 +76,11 @@ export async function startMcpServer(): Promise<void> {
           'Propose field changes and read a preview. Nothing is written.',
           'Apply a proposal with expected versions. A stale version fails the whole batch.',
           'Start a simulated research run and read its progress.',
+          'Start an Apify import run for an actor on the connector allowlist. Results wait for a person to approve them in the app.',
         ],
         notAllowed: ['Approving or rejecting an approval. Only a person can decide, in the app.'],
-        notes: 'Research runs are simulated. They use scripted steps and make no network requests.',
+        notes:
+          'demo_research runs are simulated and make no network requests. apify_scrape runs call the real Apify API with the connected account, only for allowlisted actor ids, and stage rows for human review.',
       })),
   );
 
@@ -149,27 +151,49 @@ export async function startMcpServer(): Promise<void> {
   server.registerTool(
     'crm_start_research',
     {
-      title: 'Start a simulated research run',
+      title: 'Start a research run',
       description:
-        'Starts a simulated demo_research run and returns its id. The run uses scripted steps, creates synthetic candidates, and waits for a person to approve the shortlist in the app.',
+        'Starts a run and returns its id. kind demo_research (default) is simulated: scripted steps, synthetic candidates. kind apify_scrape runs a real Apify actor with the scope { actorId, input, maxItems } and works only for actor ids on the Apify allowlist set in Settings. Both kinds wait for a person to approve in the app.',
       inputSchema: {
+        kind: z.enum(['demo_research', 'apify_scrape']).default('demo_research'),
         title: z.string().min(1).max(200).optional(),
         query: z.string().max(200).optional(),
         targetCount: z.number().int().min(1).max(10).optional(),
+        scope: z
+          .object({
+            actorId: z.string().min(1).max(200),
+            input: z.record(z.unknown()),
+            maxItems: z.number().int().min(1).max(1000).optional(),
+          })
+          .optional(),
       },
     },
-    async ({ title, query, targetCount }) =>
+    async ({ kind, title, query, targetCount, scope }) =>
       guarded(() => {
-        const run = startRun(ctx, {
-          kind: 'demo_research',
-          ...(title ? { title } : {}),
-          scope: { ...(query ? { query } : {}), ...(targetCount ? { targetCount } : {}) },
-        });
+        if (kind === 'apify_scrape') {
+          if (!scope) throw validationError('scope: apify_scrape needs a scope with actorId and input.');
+          const run = startRun(ctx, { kind, ...(title ? { title } : {}), scope }, { origin: 'agent' });
+          return {
+            runId: run.id,
+            status: run.status,
+            simulated: false,
+            note: 'A worker in this process or in the API server advances this run and calls Apify. Read progress with crm_get_run. Only a person can approve the import.',
+          };
+        }
+        const run = startRun(
+          ctx,
+          {
+            kind: 'demo_research',
+            ...(title ? { title } : {}),
+            scope: { ...(query ? { query } : {}), ...(targetCount ? { targetCount } : {}) },
+          },
+          { origin: 'agent' },
+        );
         return {
           runId: run.id,
           status: run.status,
           simulated: true,
-          note: 'The server worker advances this run. Read progress with crm_get_run. Only a person can approve the shortlist.',
+          note: 'A worker in this process or in the API server advances this run. Read progress with crm_get_run. Only a person can approve the shortlist.',
         };
       }),
   );

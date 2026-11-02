@@ -46,7 +46,7 @@ function PanelRun({ id, tracked, onDismiss }: { id: string; tracked: boolean; on
 function PanelBody({ onCollapse }: { onCollapse: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { selectedRecord, pushToast } = useUI();
+  const { selectedRecord, pushToast, setPanelSheetOpen } = useUI();
   const today = useToday();
   const startRun = useStartRun();
   const message = useAgentMessage();
@@ -106,6 +106,11 @@ function PanelBody({ onCollapse }: { onCollapse: () => void }) {
   const runAction = (itemId: number, action: AgentAction) => {
     if (action.kind === 'open_record') {
       openRecord(action);
+      return;
+    }
+    if (action.kind === 'start_apify_import') {
+      setPanelSheetOpen(false);
+      navigate('/research?import=new');
       return;
     }
     if (action.kind !== 'start_demo_run') return;
@@ -207,7 +212,7 @@ function PanelBody({ onCollapse }: { onCollapse: () => void }) {
                   <div className="chat__actions">
                     {item.actions.map((action) => {
                       const canOpen = action.kind === 'open_record' && Boolean(action.entityId) && Boolean(action.entityType);
-                      const supported = action.kind === 'start_demo_run' || canOpen;
+                      const supported = action.kind === 'start_demo_run' || action.kind === 'start_apify_import' || canOpen;
                       const used = usedActions[`${item.id}:${action.id}`];
                       return (
                         <button

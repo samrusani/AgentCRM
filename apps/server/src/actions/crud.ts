@@ -91,20 +91,22 @@ const createOrganizationSchema = z
 
 export function createOrganization(ctx: ActionContext, input: unknown) {
   const data = parseInput(createOrganizationSchema, input);
-  return mutate(ctx, (tx) => {
-    if (data.domain) assertDomainAvailable(tx, data.domain);
-    const id = tx.newId('org');
-    const now = tx.now();
-    tx.db
-      .prepare(
-        `INSERT INTO organization (id, created_at, workspace_id, version, name, domain, kind, location, tags, updated_at)
-         VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(id, now, tx.workspaceId, data.name, data.domain, data.kind, data.location, JSON.stringify(data.tags), now);
-    tx.audit('organization.create', 'organization', id, { name: data.name });
-    emitRecord(tx, 'organization', id);
-    return requireOrganization(tx.db, tx.workspaceId, id);
-  });
+  return mutate(ctx, (tx) => createOrganizationIn(tx, data));
+}
+
+export function createOrganizationIn(tx: Tx, data: z.output<typeof createOrganizationSchema>) {
+  if (data.domain) assertDomainAvailable(tx, data.domain);
+  const id = tx.newId('org');
+  const now = tx.now();
+  tx.db
+    .prepare(
+      `INSERT INTO organization (id, created_at, workspace_id, version, name, domain, kind, location, tags, updated_at)
+       VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(id, now, tx.workspaceId, data.name, data.domain, data.kind, data.location, JSON.stringify(data.tags), now);
+  tx.audit('organization.create', 'organization', id, { name: data.name });
+  emitRecord(tx, 'organization', id);
+  return requireOrganization(tx.db, tx.workspaceId, id);
 }
 
 export function updateOrganization(ctx: ActionContext, id: string, input: unknown) {
@@ -316,17 +318,21 @@ const createClaimSchema = z
     sourceType: z.string().trim().min(1).max(60),
     observedAt: isoTimestamp.optional(),
     status: z.enum(['imported', 'extracted', 'corroborated', 'human_confirmed']),
+    extractionMethod: z.string().trim().min(1).max(200).nullable().optional().default(null),
   })
   .strict();
 
-export function createFieldClaimIn(tx: Tx, data: z.output<typeof createClaimSchema>) {
+export function createFieldClaimIn(
+  tx: Tx,
+  data: Omit<z.output<typeof createClaimSchema>, 'extractionMethod'> & { extractionMethod?: string | null },
+) {
   assertEntityExists(tx, data.entityType, data.entityId);
   const id = tx.newId('clm');
   const now = tx.now();
   tx.db
     .prepare(
-      `INSERT INTO field_claim (id, created_at, workspace_id, entity_type, entity_id, field, value, source_url, source_type, observed_at, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO field_claim (id, created_at, workspace_id, entity_type, entity_id, field, value, source_url, source_type, observed_at, status, extraction_method)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -340,6 +346,7 @@ export function createFieldClaimIn(tx: Tx, data: z.output<typeof createClaimSche
       data.sourceType,
       data.observedAt ?? now,
       data.status,
+      data.extractionMethod ?? null,
     );
   tx.audit('claim.create', data.entityType, data.entityId, { claimId: id, field: data.field, status: data.status });
   emitRecord(tx, data.entityType, data.entityId);

@@ -18,6 +18,13 @@ export interface RunCounts {
   processed: number;
   found: number;
   flagged: number;
+  // Import runs also report these. Demo runs leave them out.
+  requested?: number;
+  fetched?: number;
+  staged?: number;
+  duplicates?: number;
+  invalid?: number;
+  accepted?: number;
 }
 
 function text(value: unknown): string | null {
@@ -158,6 +165,7 @@ export function toClaim(row: Row) {
     sourceType: String(row.source_type),
     observedAt: String(row.observed_at),
     status: String(row.status),
+    extractionMethod: text(row.extraction_method),
     createdAt: String(row.created_at),
   };
 }

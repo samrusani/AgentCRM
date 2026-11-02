@@ -132,11 +132,13 @@ export function Sheet({
   title,
   subtitle,
   onClose,
+  wide,
   children,
 }: {
   title: string;
   subtitle?: string;
   onClose: () => void;
+  wide?: boolean;
   children: ReactNode;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -163,7 +165,7 @@ export function Sheet({
   }, []);
 
   return (
-    <aside className="sheet" role="dialog" aria-label={title}>
+    <aside className={`sheet${wide ? ' sheet--wide' : ''}`} role="dialog" aria-label={title}>
       <header className="sheet__header">
         <div className="sheet__heading">
           <h2 className="sheet__title" tabIndex={-1} ref={headingRef}>

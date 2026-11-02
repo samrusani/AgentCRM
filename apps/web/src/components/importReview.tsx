@@ -1,0 +1,91 @@
+import { Link } from 'react-router-dom';
+import type { Approval, ImportCounts, ImportReviewPayload } from '../api/types';
+import { formatCount } from '../lib/imports';
+
+export function ImportCountsRow({ counts, accepted }: { counts: ImportCounts; accepted?: boolean }) {
+  const items: Array<{ label: string; value: number }> = [
+    { label: 'Fetched', value: counts.fetched },
+    { label: 'Staged', value: counts.staged },
+    { label: 'Duplicates', value: counts.duplicates },
+    { label: 'Invalid', value: counts.invalid },
+  ];
+  if (accepted && counts.accepted !== null) items.push({ label: 'Accepted', value: counts.accepted });
+  if (accepted && counts.rejected !== null) items.push({ label: 'Rejected', value: counts.rejected });
+  return (
+    <dl className="counts counts--wrap" aria-label="Import counts">
+      {items.map((item) => (
+        <div key={item.label}>
+          <dt>{item.label}</dt>
+          <dd>{formatCount(item.value)}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+export function batchHref(batchId: string, runId: string | null): string {
+  const params = new URLSearchParams();
+  if (runId) params.set('run', runId);
+  params.set('batch', batchId);
+  return `/research?${params.toString()}`;
+}
+
+export function ImportReviewBody({ approval, review }: { approval: Approval; review: ImportReviewPayload }) {
+  const { counts, sample } = review;
+  const hidden = Math.max(0, counts.staged - sample.length);
+  return (
+    <div className="import-review">
+      <ImportCountsRow counts={counts} />
+      {review.actorId ? (
+        <p className="muted import-review__source">
+          Actor <span className="import-review__actor">{review.actorId}</span>
+        </p>
+      ) : null}
+      {sample.length > 0 ? (
+        <div className="mini-table__wrap">
+          <table className="mini-table">
+            <caption className="sr-only">Sample of staged rows</caption>
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Email</th>
+                <th scope="col">Company</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sample.map((row, index) => (
+                <tr key={index}>
+                  <td className={row.name ? 'cell-name' : 'muted'}>{row.name ?? 'No name'}</td>
+                  <td className={row.email ? '' : 'muted'}>{row.email ?? 'No email'}</td>
+                  <td className={row.company ? '' : 'muted'}>{row.company ?? 'No company'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="muted">No sample rows. Nothing was staged.</p>
+      )}
+      {sample.length > 0 && hidden > 0 ? (
+        <p className="muted">
+          Showing <span className="num">{sample.length}</span> of <span className="num">{formatCount(counts.staged)}</span>{' '}
+          staged rows.
+        </p>
+      ) : null}
+      <p className="muted">
+        Duplicates and invalid rows are not imported. Each one lists its reason in the batch.
+        {review.batchId ? (
+          <>
+            {' '}
+            <Link className="link" to={batchHref(review.batchId, approval.runId)}>
+              View batch
+            </Link>
+          </>
+        ) : null}
+      </p>
+      {counts.staged === 0 ? (
+        <p className="muted">Nothing is staged, so there is nothing to approve. Reject to close this import.</p>
+      ) : null}
+    </div>
+  );
+}

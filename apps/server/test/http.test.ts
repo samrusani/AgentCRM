@@ -223,6 +223,22 @@ describe('agent messages', () => {
     }
   });
 
+  it('offers the demo run for investor leads and never the Apify setup without explicit wording', async () => {
+    for (const text of ['find investor leads', 'find leads for my seed round', 'build a list of leads']) {
+      const { body } = await send('POST', '/api/agent/message', { text });
+      const kinds = body.actions.map((action: { kind: string }) => action.kind);
+      expect(kinds).toContain('start_demo_run');
+      expect(kinds).not.toContain('start_apify_import');
+    }
+  });
+
+  it('searches records for a name that contains the word lead', async () => {
+    const created = await send('POST', '/api/organizations', { name: 'Lead Capital' });
+    expect(created.status).toBe(201);
+    const { body } = await send('POST', '/api/agent/message', { text: 'open Lead Capital' });
+    expect(body.actions[0]).toMatchObject({ kind: 'open_record', entityType: 'organization', entityId: created.body.id });
+  });
+
   it('suggests opening a record and answers counts from real data', async () => {
     const person = (await get('/api/people?limit=1')).body.items[0];
     const lookup = await send('POST', '/api/agent/message', { text: `tell me about ${person.name}` });

@@ -16,6 +16,7 @@
   --on-accent: #ffffff;
 
   --font: 'Geist Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   --radius-sm: 4px;
   --radius: 6px;
   --radius-lg: 8px;

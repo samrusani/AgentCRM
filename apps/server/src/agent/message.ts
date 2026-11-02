@@ -1,11 +1,12 @@
 import type { Db } from '../db.js';
+import { getConnector } from '../queries/connectors.js';
 import { searchAll } from '../queries/search.js';
 import { getCounts } from '../queries/workspace.js';
 
 export interface AgentAction {
   id: string;
   label: string;
-  kind: 'start_demo_run' | 'open_record';
+  kind: 'start_demo_run' | 'start_apify_import' | 'open_record';
   entityType?: 'person' | 'organization' | 'opportunity';
   entityId?: string;
 }
@@ -23,6 +24,15 @@ const startRunAction: AgentAction = {
   label: 'Start simulated research run',
   kind: 'start_demo_run',
 };
+
+const startApifyImportAction: AgentAction = {
+  id: 'start_apify_import',
+  label: 'Set up an Apify import',
+  kind: 'start_apify_import',
+};
+
+// Only explicit wording. "leads" alone is a research or record request, not a reason to open the import setup.
+const scrapeIntent = /\b(scrape|scrapes|scraping|scraper|scrapers|apify|import|imports|importing)\b/;
 
 const stopWords = new Set([
   'open', 'show', 'tell', 'about', 'who', 'what', 'whats', 'is', 'are', 'the', 'a', 'an', 'me', 'my', 'record', 'for',
@@ -51,6 +61,22 @@ export function respondToMessage(db: Db, workspaceId: string, text: string): Age
     return {
       reply: `${noModel} This is a rule based helper, not a model. It can start a simulated research run, answer record counts such as "how many people", and open a record by name.`,
       actions: [startRunAction],
+      modelConnected: false,
+    };
+  }
+
+  if (scrapeIntent.test(normalized)) {
+    const connector = getConnector(db, workspaceId, 'apify');
+    if (connector && connector.status === 'connected') {
+      return {
+        reply: `${noModel} Apify is connected. I can open the import setup, where you pick an actor, check its input, and set an item limit. Nothing runs until you start it, and results wait for your review before anything enters the CRM.`,
+        actions: [startApifyImportAction],
+        modelConnected: false,
+      };
+    }
+    return {
+      reply: `${noModel} Scraping needs Apify. Connect Apify in Settings with your API token, then ask again.`,
+      actions: [],
       modelConnected: false,
     };
   }

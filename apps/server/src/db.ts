@@ -1,13 +1,14 @@
 import Database from 'better-sqlite3';
-import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { migrationsDirectory, resolveDatabasePath } from './paths.js';
+import { migrationsDirectory, repoRoot, resolveDatabasePath } from './paths.js';
 
 export type Db = Database.Database;
 
 export function openDatabase(databasePath: string = resolveDatabasePath()): Db {
+  let directoryCreated = false;
   if (databasePath !== ':memory:') {
-    mkdirSync(path.dirname(databasePath), { recursive: true });
+    directoryCreated = mkdirSync(path.dirname(databasePath), { recursive: true }) !== undefined;
   }
   const db = new Database(databasePath);
   db.pragma('journal_mode = WAL');
@@ -15,7 +16,26 @@ export function openDatabase(databasePath: string = resolveDatabasePath()): Db {
   db.pragma('foreign_keys = ON');
   db.pragma('busy_timeout = 5000');
   applyMigrations(db);
+  if (databasePath !== ':memory:') restrictPermissions(databasePath, directoryCreated);
   return db;
+}
+
+// The database holds the Apify token in plain text, so only the owner may read it. Best effort:
+// some file systems do not support modes, and Windows ignores them. The directory is tightened only
+// when this call created it or it is the default data directory, never a shared folder the user chose.
+function restrictPermissions(databasePath: string, directoryCreated: boolean): void {
+  if (process.platform === 'win32') return;
+  const directory = path.dirname(path.resolve(databasePath));
+  const targets: [string, number][] = [];
+  if (directoryCreated || directory === path.join(repoRoot, 'data')) targets.push([directory, 0o700]);
+  for (const suffix of ['', '-wal', '-shm']) targets.push([`${databasePath}${suffix}`, 0o600]);
+  for (const [target, mode] of targets) {
+    try {
+      if (existsSync(target)) chmodSync(target, mode);
+    } catch {
+      // Keep going. The app works without tighter modes.
+    }
+  }
 }
 
 export function listMigrationFiles(): string[] {

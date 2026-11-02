@@ -15,7 +15,10 @@ export type IdPrefix =
   | 'apr'
   | 'job'
   | 'aud'
-  | 'evt';
+  | 'evt'
+  | 'con'
+  | 'imp'
+  | 'row';
 
 export function randomId(prefix: IdPrefix): string {
   return `${prefix}_${randomBytes(6).toString('hex')}`;

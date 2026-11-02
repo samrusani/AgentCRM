@@ -9,7 +9,7 @@ Report vulnerabilities privately through GitHub security advisories on this repo
 ## Design posture
 
 - The API server and web app bind to loopback (127.0.0.1) only. Exposing them to a network is an explicit, unsupported configuration for now.
-- The database is a local SQLite file under `data/`, which is never committed.
+- The database is a local SQLite file under `data/`, which is never committed. Connector secrets, such as the Apify API token, are stored in it unencrypted; the file and its directory are created with owner only permissions on macOS and Linux. Anyone who can read your user account's files can read the token.
 - There is no authentication layer yet because the server only accepts loopback connections. A session layer is planned before any network accessible deployment mode.
 - Content from the web, imported files, and email is treated as untrusted data, never as instructions. Agent tool calls cannot approve their own actions.
 

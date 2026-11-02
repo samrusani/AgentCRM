@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom';
 import { useDecideApproval } from '../api/hooks';
 import type { Approval } from '../api/types';
 import { formatDateTime, isSimulatedApproval, summarizePayload } from '../lib/format';
+import { parseImportReviewPayload } from '../lib/imports';
 import { SimulatedChip, errorMessage } from './common';
+import { ImportReviewBody } from './importReview';
 
 export interface Settled {
   approval: Approval;
@@ -61,7 +63,9 @@ export function ApprovalCard({
     );
   }
 
-  const lines = summarizePayload(approval.payload);
+  const review = approval.kind === 'import_review' ? parseImportReviewPayload(approval.payload) : null;
+  const lines = review ? [] : summarizePayload(approval.payload);
+  const approveLabel = review ? 'Approve staged rows' : 'Approve';
 
   const submit = (next: 'approve' | 'reject') => {
     setPendingDecision(next);
@@ -96,6 +100,7 @@ export function ApprovalCard({
           </>
         ) : null}
       </p>
+      {review ? <ImportReviewBody approval={approval} review={review} /> : null}
       {lines.length > 0 ? (
         <ul className="approval__payload">
           {lines.map((line) => (
@@ -113,10 +118,10 @@ export function ApprovalCard({
           type="button"
           className="btn btn--primary"
           onClick={() => submit('approve')}
-          disabled={decide.isPending}
-          aria-label={`Approve ${approval.title}`}
+          disabled={decide.isPending || (review !== null && review.counts.staged === 0)}
+          aria-label={review ? `${approveLabel}: ${approval.title}` : `Approve ${approval.title}`}
         >
-          {pendingDecision === 'approve' ? 'Approving...' : 'Approve'}
+          {pendingDecision === 'approve' ? 'Approving...' : approveLabel}
         </button>
         <button
           type="button"

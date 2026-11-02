@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
+  abortRemoteRunIfNeeded,
+  configureApifyConnector,
   controlRun,
   createActivity,
   createContext,
@@ -9,8 +11,11 @@ import {
   createPerson,
   createTask,
   decideApproval,
+  disconnectApifyConnector,
+  getApifyActor,
   moveOpportunityStage,
   parseInput,
+  searchApifyActors,
   startRun,
   updateOpportunity,
   updateOrganization,
@@ -21,6 +26,8 @@ import { respondToMessage } from '../agent/message.js';
 import { serverVersion } from '../config.js';
 import { displayDatabasePath } from '../paths.js';
 import { listActivities } from '../queries/activities.js';
+import { listConnectors } from '../queries/connectors.js';
+import { getImportDetail } from '../queries/imports.js';
 import { getOpportunityDetail, listOpportunities } from '../queries/opportunities.js';
 import { getOrganizationDetail, listOrganizations } from '../queries/organizations.js';
 import { getPersonDetail, listPeople } from '../queries/people.js';
@@ -56,6 +63,11 @@ const statusQuery = z.object({ status: z.string().optional(), ...pagingQuery });
 const searchQuery = z.object({ q: z.string().default('') });
 const messageBody = z.object({ text: z.string().trim().min(1).max(2000) }).strict();
 const idParams = z.object({ id: z.string().min(1) });
+const importQuery = z.object({
+  status: z.string().optional(),
+  withRaw: z.enum(['true', 'false']).optional(),
+  ...pagingQuery,
+});
 
 export function registerRoutes(app: FastifyInstance, options: AppOptions): void {
   const { db, bus } = options;
@@ -148,10 +160,18 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   app.get('/api/runs', async (request) => listRuns(db, workspaceId(), parseInput(statusQuery, request.query)));
   app.post('/api/runs', async (request, reply) => {
     reply.status(201);
-    return startRun(context(), request.body);
+    return startRun(context(), request.body, { origin: 'user' });
   });
   app.get('/api/runs/:id', async (request) => getRunDetail(db, workspaceId(), idParam(request.params)));
-  app.post('/api/runs/:id/control', async (request) => controlRun(context(), idParam(request.params), request.body));
+  app.post('/api/runs/:id/control', async (request) => {
+    const ctx = context();
+    const id = idParam(request.params);
+    const detail = controlRun(ctx, id, request.body);
+    if (detail.status !== 'cancelled') return detail;
+    // Cancel is already saved. Asking Apify to stop the actor run is best effort and cannot undo it.
+    await abortRemoteRunIfNeeded(ctx, id);
+    return getRunDetail(db, workspaceId(), id);
+  });
 
   app.get('/api/approvals', async (request) =>
     listApprovals(db, workspaceId(), parseInput(statusQuery, request.query)),
@@ -160,6 +180,29 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   app.post('/api/approvals/:id/decision', async (request) =>
     decideApproval(context(), idParam(request.params), request.body),
   );
+
+  app.get('/api/connectors', async () => ({ items: listConnectors(db, workspaceId()), nextCursor: null }));
+  app.put('/api/connectors/apify', async (request, reply) => {
+    const { connector, created } = await configureApifyConnector(context(), request.body);
+    reply.status(created ? 201 : 200);
+    return connector;
+  });
+  app.delete('/api/connectors/apify', async (_request, reply) => {
+    await disconnectApifyConnector(context());
+    return reply.status(204).send();
+  });
+  app.get('/api/connectors/apify/actors', async (request) => searchApifyActors(context(), request.query));
+  app.get('/api/connectors/apify/actors/:id', async (request) => getApifyActor(context(), idParam(request.params)));
+
+  app.get('/api/imports/:id', async (request) => {
+    const query = parseInput(importQuery, request.query);
+    return getImportDetail(db, workspaceId(), idParam(request.params), {
+      status: query.status,
+      cursor: query.cursor,
+      limit: query.limit,
+      withRaw: query.withRaw === 'true',
+    });
+  });
 
   app.get('/api/search', async (request) => {
     const { q } = parseInput(searchQuery, request.query);

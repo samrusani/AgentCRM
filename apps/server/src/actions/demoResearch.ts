@@ -138,19 +138,19 @@ function candidatesForRun(tx: Tx, runId: string): Candidate[] {
   });
 }
 
-function setCounts(tx: Tx, runId: string, counts: RunCounts): void {
+export function setCounts(tx: Tx, runId: string, counts: RunCounts): void {
   tx.db.prepare('UPDATE run SET counts = ? WHERE id = ?').run(JSON.stringify(counts), runId);
 }
 
 // Each step transition writes an audit row so other processes can relay step progress to the browser.
-function finishStep(tx: Tx, runId: string, step: { id: string; seq: number }, detail: string): void {
+export function finishStep(tx: Tx, runId: string, step: { id: string; seq: number }, detail: string): void {
   tx.db
     .prepare("UPDATE run_step SET status = 'done', detail = ?, finished_at = ? WHERE id = ?")
     .run(detail, tx.now(), step.id);
   tx.audit('run.step_done', 'run', runId, { seq: step.seq });
 }
 
-function startStep(tx: Tx, runId: string, step: { id: string; seq: number }): void {
+export function startStep(tx: Tx, runId: string, step: { id: string; seq: number }): void {
   tx.db.prepare("UPDATE run_step SET status = 'running', started_at = ? WHERE id = ?").run(tx.now(), step.id);
   tx.audit('run.step_start', 'run', runId, { seq: step.seq });
 }

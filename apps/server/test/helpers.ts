@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createContext, ensureWorkspace, type ActionContext } from '../src/actions/index.js';
 import { openDatabase, type Db } from '../src/db.js';
 import { EventBus } from '../src/events.js';
-import { processJobs } from '../src/jobs/worker.js';
+import { processAllJobs, processJobs } from '../src/jobs/worker.js';
 import { getRun } from '../src/queries/runs.js';
 
 export interface TestEnvironment {
@@ -61,6 +61,17 @@ export function driveRun(env: TestEnvironment, runId: string, until: string[], m
   for (let tick = 0; tick < maxTicks; tick += 1) {
     env.advance(1000);
     processJobs(env.ctx);
+    const status = getRun(env.db, env.workspaceId, runId)?.status ?? 'missing';
+    if (until.includes(status)) return status;
+  }
+  throw new Error(`Run ${runId} did not reach ${until.join(' or ')}.`);
+}
+
+// Same as driveRun, for runs whose steps call the network.
+export async function driveRunAsync(env: TestEnvironment, runId: string, until: string[], maxTicks = 60): Promise<string> {
+  for (let tick = 0; tick < maxTicks; tick += 1) {
+    env.advance(1000);
+    await processAllJobs(env.ctx);
     const status = getRun(env.db, env.workspaceId, runId)?.status ?? 'missing';
     if (until.includes(status)) return status;
   }

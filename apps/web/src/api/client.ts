@@ -1,9 +1,17 @@
+import { normalizeCounts } from '../lib/imports';
 import type {
   Activity,
   AgentReply,
+  ApifyActorDetail,
+  ApifyActorSummary,
+  ApifyRunInput,
   Approval,
   Claim,
+  Connector,
   Health,
+  ImportBatch,
+  ImportBatchPage,
+  ImportRow,
   Opportunity,
   Organization,
   OrganizationDetail,
@@ -45,8 +53,15 @@ function snakeToCamel(key: string): string {
 
 // The contract names request fields in camelCase and columns in snake_case.
 // Accept either on the way in so the UI does not depend on that choice.
-function camelizeKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(camelizeKeys);
+function camelizeKeys(value: unknown, preserve: string[] = []): unknown {
+  if (preserve.length > 0 && value && typeof value === 'object' && !Array.isArray(value)) {
+    const result: Record<string, unknown> = {};
+    for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+      result[snakeToCamel(key)] = preserve.includes(key) ? inner : camelizeKeys(inner);
+    }
+    return result;
+  }
+  if (Array.isArray(value)) return value.map((entry) => camelizeKeys(entry));
   if (value && typeof value === 'object') {
     const result: Record<string, unknown> = {};
     for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
@@ -72,9 +87,15 @@ function toArray<T>(value: unknown): T[] {
 }
 
 async function request<T>(
-  method: 'GET' | 'POST' | 'PATCH',
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
   path: string,
-  options: { query?: Query; body?: unknown; signal?: AbortSignal } = {},
+  options: {
+    query?: Query;
+    body?: unknown;
+    signal?: AbortSignal;
+    // Top level response keys whose values keep their original key spelling.
+    preserve?: string[];
+  } = {},
 ): Promise<T> {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(options.query ?? {})) {
@@ -105,7 +126,7 @@ async function request<T>(
   let unreadable = false;
   if (text) {
     try {
-      parsed = camelizeKeys(JSON.parse(text));
+      parsed = camelizeKeys(JSON.parse(text), options.preserve);
     } catch {
       unreadable = true;
     }
@@ -199,6 +220,157 @@ function normalizeOrganizationDetail(data: unknown): OrganizationDetail {
   };
 }
 
+function textOrNull(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+  return null;
+}
+
+function objectOrEmpty(value: unknown): Record<string, unknown> {
+  const parsed = parseMaybeJson(value);
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+}
+
+// The server may report why a connector is in error as a string or as an error envelope.
+function messageFrom(...candidates: unknown[]): string | null {
+  for (const candidate of candidates) {
+    const direct = textOrNull(candidate);
+    if (direct) return direct;
+    if (candidate && typeof candidate === 'object') {
+      const nested = textOrNull((candidate as { message?: unknown }).message);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+function normalizeConnector(raw: unknown): Connector {
+  const record = objectOrEmpty(raw);
+  const settings = objectOrEmpty(record.settings);
+  const allowlistSource = settings.allowlist ?? record.allowlist;
+  return {
+    id: textOrNull(record.id),
+    kind: textOrNull(record.kind) ?? 'apify',
+    status: textOrNull(record.status) ?? 'connected',
+    statusMessage: messageFrom(
+      record.statusMessage,
+      record.error,
+      record.message,
+      record.lastError,
+      settings.statusMessage,
+      settings.lastError,
+      settings.error,
+    ),
+    allowlist: toArray<unknown>(allowlistSource).filter((entry): entry is string => typeof entry === 'string'),
+    tokenMasked: textOrNull(record.tokenMasked ?? settings.tokenMasked),
+    updatedAt: textOrNull(record.updatedAt),
+  };
+}
+
+function numberOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function describePricing(raw: Record<string, unknown>): string | null {
+  const hint = textOrNull(raw.pricingHint);
+  if (hint) return hint;
+  const pricing = raw.pricing ?? raw.pricingInfo;
+  const direct = textOrNull(pricing);
+  if (direct) return direct;
+  const info = objectOrEmpty(pricing);
+  const model = textOrNull(info.pricingModel ?? info.model);
+  if (!model) return null;
+  const label = model.toLowerCase().replace(/_/g, ' ');
+  const sentence = label.charAt(0).toUpperCase() + label.slice(1);
+  const price = numberOrNull(info.pricePerUnitUsd ?? info.price);
+  return price !== null && price > 0 ? `${sentence}, $${price} per unit` : sentence;
+}
+
+function normalizeActorSummary(raw: unknown): ApifyActorSummary | null {
+  const record = objectOrEmpty(raw);
+  const name = textOrNull(record.name);
+  const username = textOrNull(record.username);
+  const id = textOrNull(record.id) ?? (username && name ? `${username}~${name}` : null);
+  if (!id) return null;
+  const stats = objectOrEmpty(record.stats);
+  return {
+    id,
+    name,
+    title: textOrNull(record.title),
+    username,
+    description: textOrNull(record.description),
+    totalRuns: numberOrNull(stats.totalRuns ?? stats.runs ?? record.totalRuns),
+    pricingHint: describePricing(record),
+  };
+}
+
+// Apify returns example input either as an object or as { body, contentType } with a JSON string body.
+function normalizeExampleInput(value: unknown): Record<string, unknown> | null {
+  let candidate: unknown = value;
+  if (typeof candidate === 'string') {
+    try {
+      candidate = JSON.parse(candidate);
+    } catch {
+      return null;
+    }
+  }
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+  const record = candidate as Record<string, unknown>;
+  if (typeof record.body === 'string' && 'contentType' in record) return normalizeExampleInput(record.body);
+  return Object.keys(record).length > 0 ? record : null;
+}
+
+function normalizeActorDetail(raw: unknown): ApifyActorDetail | null {
+  const record = objectOrEmpty(raw);
+  const summary = normalizeActorSummary(record);
+  if (!summary) return null;
+  return { ...summary, exampleInput: normalizeExampleInput(record.exampleRunInput) };
+}
+
+function normalizeImportBatch(raw: Record<string, unknown>): ImportBatch {
+  const sourceRef = objectOrEmpty(raw.sourceRef);
+  return {
+    id: textOrNull(raw.id) ?? '',
+    runId: textOrNull(raw.runId),
+    sourceKind: textOrNull(raw.sourceKind) ?? 'apify',
+    actorId: textOrNull(sourceRef.actorId),
+    apifyRunId: textOrNull(sourceRef.apifyRunId ?? sourceRef.runId),
+    datasetId: textOrNull(sourceRef.datasetId),
+    status: textOrNull(raw.status) ?? 'staging',
+    counts: normalizeCounts(raw.counts),
+    updatedAt: textOrNull(raw.updatedAt),
+  };
+}
+
+function normalizeImportRow(raw: unknown): ImportRow {
+  const record = objectOrEmpty(raw);
+  return {
+    seq: Number(record.seq ?? 0),
+    status: textOrNull(record.status) ?? 'staged',
+    reason: textOrNull(record.reason),
+    mapped: objectOrEmpty(record.mapped),
+    matchEntityType: textOrNull(record.matchEntityType),
+    matchEntityId: textOrNull(record.matchEntityId),
+  };
+}
+
+// The batch and its rows may arrive as { batch, rows } or as the batch with items beside it.
+function normalizeImportPage(data: unknown): ImportBatchPage {
+  const record = objectOrEmpty(data);
+  const nested = record.batch && typeof record.batch === 'object' ? objectOrEmpty(record.batch) : null;
+  const batchRecord = nested ?? record;
+  const rowsPage = asPage<unknown>(record.rows ?? record.items ?? batchRecord.rows);
+  return {
+    batch: normalizeImportBatch(batchRecord),
+    items: rowsPage.items.map(normalizeImportRow),
+    nextCursor: rowsPage.nextCursor ?? (typeof record.nextCursor === 'string' ? record.nextCursor : null),
+  };
+}
+
 export interface ListParams {
   q?: string;
   cursor?: string | null;
@@ -277,6 +449,16 @@ export const api = {
       asPage<Run>(await request<unknown>('GET', '/runs', { query: { status } })).items.map(normalizeRun),
     start: async (title?: string) =>
       normalizeRun(await request<Run>('POST', '/runs', { body: { kind: 'demo_research', title } })),
+    startApify: async (input: ApifyRunInput) =>
+      normalizeRun(
+        await request<Run>('POST', '/runs', {
+          body: {
+            kind: 'apify_scrape',
+            title: input.title,
+            scope: { actorId: input.actorId, input: input.input, maxItems: input.maxItems },
+          },
+        }),
+      ),
     get: async (id: string) => normalizeRun(await request<Run>('GET', `/runs/${id}`)),
     control: (id: string, action: 'pause' | 'resume' | 'cancel') =>
       request<unknown>('POST', `/runs/${id}/control`, { body: { action } }),
@@ -289,6 +471,47 @@ export const api = {
       ),
     decide: (id: string, decision: 'approve' | 'reject', note?: string) =>
       request<unknown>('POST', `/approvals/${id}/decision`, { body: { decision, note } }),
+  },
+
+  connectors: {
+    list: async (): Promise<Connector[]> => {
+      const data = await request<unknown>('GET', '/connectors');
+      const source = data && typeof data === 'object' && !Array.isArray(data) && 'connectors' in data
+        ? (data as { connectors: unknown }).connectors
+        : data;
+      return asPage<unknown>(source).items.map(normalizeConnector);
+    },
+    // The token is optional so the allowlist can be edited while connected.
+    saveApify: async (input: { token?: string; allowlist?: string[] }) =>
+      normalizeConnector(await request<unknown>('PUT', '/connectors/apify', { body: input })),
+    removeApify: () => request<unknown>('DELETE', '/connectors/apify'),
+  },
+
+  apify: {
+    searchActors: async (q: string, signal?: AbortSignal): Promise<ApifyActorSummary[]> => {
+      const data = await request<unknown>('GET', '/connectors/apify/actors', { query: { q }, signal });
+      return asPage<unknown>(data)
+        .items.map(normalizeActorSummary)
+        .filter((actor): actor is ApifyActorSummary => actor !== null);
+    },
+    actor: async (id: string, signal?: AbortSignal): Promise<ApifyActorDetail> => {
+      const data = await request<unknown>('GET', `/connectors/apify/actors/${encodeURIComponent(id)}`, {
+        signal,
+        preserve: ['exampleRunInput', 'example_run_input'],
+      });
+      const detail = normalizeActorDetail(data);
+      if (!detail) {
+        throw new ApiError(0, 'internal', 'Apify returned details for this actor that could not be read. Choose another actor.');
+      }
+      return detail;
+    },
+  },
+
+  imports: {
+    get: async (id: string, params: { cursor?: string | null; limit?: number; status?: string }) =>
+      normalizeImportPage(
+        await request<unknown>('GET', `/imports/${encodeURIComponent(id)}`, { query: { ...params } }),
+      ),
   },
 
   search: async (q: string, signal?: AbortSignal): Promise<SearchResults> => {

@@ -232,4 +232,89 @@ export interface ApiErrorEnvelope {
   error: { code: string; message: string; current?: unknown };
 }
 
+export type ConnectorStatus = 'connected' | 'error' | string;
+
+export interface Connector {
+  id: string | null;
+  kind: 'apify' | string;
+  status: ConnectorStatus;
+  statusMessage: string | null;
+  allowlist: string[];
+  tokenMasked: string | null;
+  updatedAt: string | null;
+}
+
+export interface ApifyActorSummary {
+  id: string;
+  name: string | null;
+  title: string | null;
+  username: string | null;
+  description: string | null;
+  totalRuns: number | null;
+  pricingHint: string | null;
+}
+
+export interface ApifyActorDetail extends ApifyActorSummary {
+  exampleInput: Record<string, unknown> | null;
+}
+
+export interface ImportCounts {
+  fetched: number;
+  staged: number;
+  duplicates: number;
+  invalid: number;
+  accepted: number | null;
+  rejected: number | null;
+}
+
+export type ImportBatchStatus = 'staging' | 'awaiting_review' | 'accepted' | 'rejected' | 'failed' | string;
+export type ImportRowStatus = 'staged' | 'duplicate' | 'invalid' | 'accepted' | 'rejected' | string;
+
+export interface ImportBatch {
+  id: string;
+  runId: string | null;
+  sourceKind: string;
+  actorId: string | null;
+  apifyRunId: string | null;
+  datasetId: string | null;
+  status: ImportBatchStatus;
+  counts: ImportCounts;
+  updatedAt: string | null;
+}
+
+export interface ImportRow {
+  seq: number;
+  status: ImportRowStatus;
+  reason: string | null;
+  mapped: Record<string, unknown>;
+  matchEntityType: string | null;
+  matchEntityId: string | null;
+}
+
+export interface ImportBatchPage {
+  batch: ImportBatch;
+  items: ImportRow[];
+  nextCursor: string | null;
+}
+
+export interface ImportSampleRow {
+  name: string | null;
+  email: string | null;
+  company: string | null;
+}
+
+export interface ImportReviewPayload {
+  batchId: string | null;
+  actorId: string | null;
+  counts: ImportCounts;
+  sample: ImportSampleRow[];
+}
+
+export interface ApifyRunInput {
+  actorId: string;
+  input: Record<string, unknown>;
+  maxItems: number;
+  title?: string;
+}
+
 export type ServerEventName = 'run_updated' | 'approval_updated' | 'record_updated';

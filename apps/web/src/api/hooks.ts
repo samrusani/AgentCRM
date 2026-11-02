@@ -7,7 +7,7 @@ import {
 } from '@tanstack/react-query';
 import { api } from './client';
 import { useEventConnection } from './events';
-import type { Opportunity } from './types';
+import type { ApifyRunInput, Opportunity } from './types';
 import { isRunActive } from '../lib/format';
 import { useUI } from '../lib/ui';
 
@@ -251,10 +251,93 @@ export function useDecideApproval() {
       void queryClient.invalidateQueries({ queryKey: ['run'] });
       void queryClient.invalidateQueries({ queryKey: ['runs'] });
       void queryClient.invalidateQueries({ queryKey: ['activities'] });
+      void queryClient.invalidateQueries({ queryKey: ['import'] });
+      void queryClient.invalidateQueries({ queryKey: ['people'] });
+      void queryClient.invalidateQueries({ queryKey: ['organizations'] });
     },
   });
 }
 
 export function useAgentMessage() {
   return useMutation({ mutationFn: (text: string) => api.agentMessage(text) });
+}
+
+export function useConnectors() {
+  return useQuery({ queryKey: ['connectors'], queryFn: api.connectors.list });
+}
+
+export function useApifyConnector() {
+  const query = useConnectors();
+  const connector = query.data?.find((entry) => entry.kind === 'apify') ?? null;
+  return { query, connector };
+}
+
+export function useSaveApifyConnector() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { token?: string; allowlist?: string[] }) => api.connectors.saveApify(input),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['connectors'] });
+      void queryClient.invalidateQueries({ queryKey: ['apify-actors'] });
+      void queryClient.invalidateQueries({ queryKey: ['apify-actor'] });
+    },
+  });
+}
+
+export function useRemoveApifyConnector() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.connectors.removeApify(),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['connectors'] });
+      void queryClient.removeQueries({ queryKey: ['apify-actors'] });
+      void queryClient.removeQueries({ queryKey: ['apify-actor'] });
+    },
+  });
+}
+
+export function useApifyActorSearch(q: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['apify-actors', q],
+    queryFn: ({ signal }) => api.apify.searchActors(q, signal),
+    enabled: enabled && q.length > 0,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+export function useApifyActor(id: string | null) {
+  return useQuery({
+    queryKey: ['apify-actor', id],
+    queryFn: ({ signal }) => api.apify.actor(id as string, signal),
+    enabled: Boolean(id),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+}
+
+export function useStartApifyRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ApifyRunInput) => api.runs.startApify(input),
+    onSuccess: (run) => {
+      queryClient.setQueryData(['run', run.id], run);
+      void queryClient.invalidateQueries({ queryKey: ['runs'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+    },
+  });
+}
+
+export function useImportBatch(id: string | null, status: string | null) {
+  const connection = useEventConnection();
+  return useInfiniteQuery({
+    queryKey: ['import', id, status ?? 'all'],
+    queryFn: ({ pageParam }) =>
+      api.imports.get(id as string, { cursor: pageParam, limit: 50, status: status ?? undefined }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+    enabled: Boolean(id),
+    placeholderData: keepPreviousData,
+    refetchInterval: connection === 'open' ? false : 5000,
+  });
 }
