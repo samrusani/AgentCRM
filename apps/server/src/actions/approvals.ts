@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { conflict } from '../errors.js';
 import { getRun, requireApproval, requireRun } from '../queries/runs.js';
 import { type ActionContext, mutate, parseInput } from './context.js';
+import { applyDrafts } from './draftOutreach.js';
 import { acceptImportBatch } from './importReview.js';
 import { applyShortlist, hashPayload } from './demoResearch.js';
 import { cancelRunIn } from './runs.js';
@@ -69,6 +70,16 @@ export function decideApproval(ctx: ActionContext, approvalId: string, input: un
         });
       } else {
         cancelRunIn(tx, run.id, 'The import was rejected.');
+        tx.audit('run.cancelled', 'run', run.id, { reason: 'approval_rejected' });
+      }
+    } else if (approval.kind === 'draft_review') {
+      if (data.decision === 'approve') {
+        const outcome = applyDrafts(tx, run.id, run.scope, approval.payload);
+        const finalStatus = outcome.incomplete ? 'partial' : 'succeeded';
+        tx.db.prepare('UPDATE run SET status = ?, finished_at = ? WHERE id = ?').run(finalStatus, now, run.id);
+        tx.audit(`run.${finalStatus}`, 'run', run.id, { drafts: outcome.written, skipped: outcome.skipped });
+      } else {
+        cancelRunIn(tx, run.id, 'The drafts were rejected.');
         tx.audit('run.cancelled', 'run', run.id, { reason: 'approval_rejected' });
       }
     } else if (data.decision === 'approve') {

@@ -583,3 +583,19 @@
     display: none;
   }
 }
+
+.chat__usage {
+  font-size: 12px;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+.panel__context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.panel__model {
+  font-size: 12px;
+  color: var(--ink-muted);
+}

@@ -20,8 +20,8 @@ export function openDatabase(databasePath: string = resolveDatabasePath()): Db {
   return db;
 }
 
-// The database holds the Apify token in plain text, so only the owner may read it. Best effort:
-// some file systems do not support modes, and Windows ignores them. The directory is tightened only
+// The database holds connector secrets (the Apify token and the Anthropic key) in plain text, so only the owner
+// may read it. Best effort: some file systems do not support modes, and Windows ignores them. The directory is tightened only
 // when this call created it or it is the default data directory, never a shared folder the user chose.
 function restrictPermissions(databasePath: string, directoryCreated: boolean): void {
   if (process.platform === 'win32') return;

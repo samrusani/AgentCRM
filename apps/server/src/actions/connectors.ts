@@ -9,12 +9,28 @@ import {
   searchActors,
   validateToken,
 } from '../providers/apify.js';
-import { type Connector, getConnector, getConnectorSecret } from '../queries/connectors.js';
+import {
+  createAnthropicProvider,
+  defaultModel,
+  type ModelId,
+  ModelProviderError,
+  supportedModels,
+} from '../providers/anthropic.js';
+import {
+  type AnthropicConnector,
+  type ApifyConnector,
+  type ConnectorKind,
+  getConnector,
+  getConnectorSecret,
+} from '../queries/connectors.js';
 import { abortRemoteRunIfNeeded, failActiveApifyRuns } from './apifyScrape.js';
 import { type ActionContext, mutate, parseInput } from './context.js';
+import { failActiveDraftRuns } from './draftOutreach.js';
 
 export const tokenRejectedMessage = 'Apify rejected the saved API token. Enter a new one to reconnect.';
 export const connectApifyMessage = 'Apify is not connected. Connect Apify in Settings first.';
+export const anthropicKeyRejectedMessage = 'Anthropic rejected the saved API key. Enter a new one to reconnect.';
+export const connectAnthropicMessage = 'Anthropic is not connected. Connect Anthropic in Settings first.';
 
 const actorIdPattern = /^[A-Za-z0-9_.~/-]+$/;
 
@@ -52,7 +68,7 @@ function dedupeActorIds(ids: string[]): string[] {
   });
 }
 
-export function allowlistIncludes(connector: Connector, actorId: string): boolean {
+export function allowlistIncludes(connector: ApifyConnector, actorId: string): boolean {
   const wanted = normalizeActorId(actorId);
   return connector.settings.allowlist.some((entry) => normalizeActorId(entry) === wanted);
 }
@@ -81,7 +97,7 @@ export function mapApifyError(error: unknown, subject: string): AppError {
 export async function configureApifyConnector(
   ctx: ActionContext,
   input: unknown,
-): Promise<{ connector: Connector; created: boolean }> {
+): Promise<{ connector: ApifyConnector; created: boolean }> {
   const data = parseInput(configureSchema, input);
   const existing = getConnector(ctx.db, ctx.workspaceId, 'apify');
   if (!data.token && !existing) throw validationError('token: A token is required to connect Apify.');
@@ -165,17 +181,18 @@ export async function disconnectApifyConnector(ctx: ActionContext): Promise<void
 
 // A rejected token flips the connector to "error" so Settings can ask for a new one. It only does so
 // when the token that failed is still the saved one, so a token replaced meanwhile is not marked bad.
-export function markConnectorError(ctx: ActionContext, failedToken: string): void {
+export function markConnectorError(ctx: ActionContext, failedToken: string, kind: ConnectorKind = 'apify'): void {
   mutate(ctx, (tx) => {
     const row = tx.db
-      .prepare("SELECT id, settings, secret FROM connector WHERE workspace_id = ? AND kind = 'apify' AND status != 'error'")
-      .get(tx.workspaceId) as { id: string; settings: string; secret: string } | undefined;
+      .prepare("SELECT id, settings, secret FROM connector WHERE workspace_id = ? AND kind = ? AND status != 'error'")
+      .get(tx.workspaceId, kind) as { id: string; settings: string; secret: string } | undefined;
     if (!row || row.secret !== failedToken) return;
-    const settings = { ...(JSON.parse(row.settings) as Record<string, unknown>), statusMessage: tokenRejectedMessage };
+    const message = kind === 'anthropic' ? anthropicKeyRejectedMessage : tokenRejectedMessage;
+    const settings = { ...(JSON.parse(row.settings) as Record<string, unknown>), statusMessage: message };
     tx.db
       .prepare("UPDATE connector SET status = 'error', settings = ?, updated_at = ? WHERE id = ?")
       .run(JSON.stringify(settings), tx.now(), row.id);
-    tx.audit('connector.error', 'connector', row.id, { kind: 'apify', reason: 'token_rejected' });
+    tx.audit('connector.error', 'connector', row.id, { kind, reason: 'token_rejected' });
   });
 }
 
@@ -211,4 +228,124 @@ export async function getApifyActor(ctx: ActionContext, actorId: string) {
   const id = actorId.trim();
   if (id === '' || id.length > 200 || !actorIdPattern.test(id) || hasDotSegment(id)) throw validationError('The actor id is not valid.');
   return proxy(ctx, `Actor "${id}"`, (token) => getActor(token, id));
+}
+
+const anthropicConfigureSchema = z
+  .object({
+    token: z
+      .string()
+      .trim()
+      .min(1)
+      .max(500)
+      .refine((value) => !/\s/.test(value), 'Token must not contain spaces')
+      .optional(),
+    model: z
+      .string()
+      .refine((value): value is ModelId => (supportedModels as readonly string[]).includes(value), {
+        message: `Choose one of ${supportedModels.join(', ')}`,
+      })
+      .optional(),
+  })
+  .strict();
+
+// Turns a provider failure into the standard error envelope. The message never carries the key.
+export function mapModelError(error: unknown): AppError {
+  if (!(error instanceof ModelProviderError)) return new AppError('internal', 'Something went wrong while talking to Anthropic.');
+  switch (error.kind) {
+    case 'unauthorized':
+      return new AppError('conflict', 'Anthropic did not accept the saved API key. Update it in Settings.');
+    case 'rate_limited':
+      return new AppError('conflict', 'Anthropic is rate limiting requests. Wait a moment and try again.', { status: 429 });
+    case 'rejected':
+      return new AppError('conflict', error.message);
+    case 'timeout':
+      return new AppError('internal', 'Anthropic did not answer in time. Try again.', { status: 504 });
+    case 'unavailable':
+      return new AppError('internal', 'Could not reach Anthropic. Check your connection and try again.', { status: 502 });
+    case 'bad_response':
+      return new AppError('internal', 'Anthropic sent a response this app could not read.', { status: 502 });
+  }
+}
+
+export async function configureAnthropicConnector(
+  ctx: ActionContext,
+  input: unknown,
+): Promise<{ connector: AnthropicConnector; created: boolean }> {
+  const data = parseInput(anthropicConfigureSchema, input);
+  const existing = getConnector(ctx.db, ctx.workspaceId, 'anthropic');
+  if (!data.token && !existing) throw validationError('token: A key is required to connect Anthropic.');
+  if (!data.token && data.model === undefined) throw validationError('Send a key, a model, or both.');
+
+  if (data.token) {
+    try {
+      await createAnthropicProvider(data.token).validateKey();
+    } catch (error) {
+      if (error instanceof ModelProviderError && error.kind === 'unauthorized') {
+        throw validationError('Anthropic did not accept this key. Check it and try again.');
+      }
+      throw mapModelError(error);
+    }
+  }
+
+  // The saved row is read again inside the write transaction, so a model change made while the key
+  // was being checked is not overwritten with stale values.
+  const save = (): boolean => mutate(ctx, (tx) => {
+    const current = getConnector(tx.db, tx.workspaceId, 'anthropic');
+    if (!data.token && !current) throw validationError('token: A key is required to connect Anthropic.');
+    const model: ModelId = data.model ?? current?.settings.model ?? defaultModel;
+    const keptMessage = !data.token && current?.status === 'error' ? current.statusMessage : null;
+    const settings = JSON.stringify({ model, statusMessage: keptMessage });
+    const now = tx.now();
+    if (current) {
+      if (data.token) {
+        tx.db
+          .prepare("UPDATE connector SET settings = ?, secret = ?, status = 'connected', updated_at = ? WHERE id = ?")
+          .run(settings, data.token, now, current.id);
+      } else {
+        tx.db.prepare('UPDATE connector SET settings = ?, updated_at = ? WHERE id = ?').run(settings, now, current.id);
+      }
+      tx.audit('connector.configure', 'connector', current.id, { kind: 'anthropic', tokenReplaced: Boolean(data.token), model });
+      return false;
+    }
+    const created = tx.newId('con');
+    tx.db
+      .prepare(
+        "INSERT INTO connector (id, created_at, workspace_id, kind, settings, secret, status, updated_at) VALUES (?, ?, ?, 'anthropic', ?, ?, 'connected', ?)",
+      )
+      .run(created, now, tx.workspaceId, settings, data.token ?? '', now);
+    tx.audit('connector.configure', 'connector', created, { kind: 'anthropic', tokenReplaced: true, model });
+    return true;
+  });
+  let created: boolean;
+  try {
+    created = save();
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError('internal', 'The key is valid, but it could not be saved to the local database.');
+  }
+  return { connector: getConnector(ctx.db, ctx.workspaceId, 'anthropic')!, created };
+}
+
+// Draft runs that are still working cannot continue without the key, so they are failed first.
+// Runs waiting for review keep their drafts, because approving them needs no key.
+export function disconnectAnthropicConnector(ctx: ActionContext): void {
+  if (!getConnector(ctx.db, ctx.workspaceId, 'anthropic')) throw notFound('Anthropic connector');
+  const stopped = failActiveDraftRuns(ctx, 'Anthropic was disconnected in Settings, so this run was stopped.');
+  mutate(ctx, (tx) => {
+    const row = tx.db.prepare('SELECT id FROM connector WHERE workspace_id = ? AND kind = ?').get(tx.workspaceId, 'anthropic') as
+      | { id: string }
+      | undefined;
+    if (!row) throw notFound('Anthropic connector');
+    tx.db.prepare('DELETE FROM connector WHERE id = ?').run(row.id);
+    tx.audit('connector.disconnect', 'connector', row.id, { kind: 'anthropic', runsStopped: stopped.length });
+  });
+}
+
+// The saved key and model for a provider call, or a conflict a person can fix in Settings.
+export function requireAnthropic(ctx: ActionContext): { apiKey: string; model: ModelId } {
+  const connector = getConnector(ctx.db, ctx.workspaceId, 'anthropic');
+  const apiKey = getConnectorSecret(ctx.db, ctx.workspaceId, 'anthropic');
+  if (!connector || !apiKey) throw conflict(connectAnthropicMessage);
+  if (connector.status === 'error') throw conflict('Anthropic rejected the saved key. Update it in Settings.');
+  return { apiKey, model: connector.settings.model };
 }

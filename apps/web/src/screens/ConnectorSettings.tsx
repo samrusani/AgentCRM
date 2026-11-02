@@ -6,98 +6,19 @@ import {
 } from '../api/hooks';
 import type { Connector } from '../api/types';
 import { Chip, ErrorState, Loading, errorMessage } from '../components/common';
+import { RemoveControl, TokenForm, TokenLine } from '../components/connector';
 import { Icon } from '../components/Icons';
-import { formatAgo } from '../lib/format';
 import { normalizeActorId } from '../lib/imports';
+import { AnthropicConnectorCard } from './AnthropicConnectorCard';
 
-function lastFour(masked: string | null): string | null {
-  if (!masked) return null;
-  const tail = masked.replace(/\s/g, '').slice(-4);
-  return tail || null;
-}
-
-function TokenForm({
-  connected,
-  busy,
-  error,
-  onSubmit,
-}: {
-  connected: boolean;
-  busy: boolean;
-  error: unknown;
-  onSubmit: (token: string) => Promise<boolean>;
-}) {
-  const [token, setToken] = useState('');
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    const value = token.trim();
-    if (!value || busy) return;
-    if (await onSubmit(value)) setToken('');
-  };
-  const label = connected ? 'New API token' : 'Apify API token';
-  return (
-    <form className="connector__form" onSubmit={(event) => void submit(event)}>
-      <label className="connector__label" htmlFor="apify-token">
-        {label}
-      </label>
-      <div className="connector__row">
-        <input
-          id="apify-token"
-          className="input"
-          type="password"
-          autoComplete="off"
-          spellCheck={false}
-          value={token}
-          onChange={(event) => setToken(event.target.value)}
-          aria-describedby="apify-token-note"
-        />
-        <button type="submit" className="btn btn--primary" disabled={busy || token.trim() === ''}>
-          {busy ? 'Checking token...' : connected ? 'Reconnect' : 'Connect'}
-        </button>
-      </div>
-      <p className="muted" id="apify-token-note">
-        The token is stored unencrypted in the local database file on this computer and is sent only to Apify. Anyone who can read that file can read the token.
-      </p>
-      {error ? (
-        <p className="inline-error" role="alert">
-          {errorMessage(error)}
-        </p>
-      ) : null}
-    </form>
-  );
-}
-
-function RemoveControl() {
+function ApifyRemoveControl() {
   const remove = useRemoveApifyConnector();
-  const [confirming, setConfirming] = useState(false);
   return (
-    <div className="connector__remove">
-      {confirming ? (
-        <span className="run-controls__confirm" role="alert">
-          Remove Apify and delete the stored token? Any Apify run that is still queued, running, or paused will fail, and this app will ask Apify to stop its actor run. Imports waiting for review and finished runs stay.
-          <button
-            type="button"
-            className="btn btn--danger"
-            disabled={remove.isPending}
-            onClick={() => remove.mutate()}
-          >
-            {remove.isPending ? 'Removing...' : 'Remove Apify'}
-          </button>
-          <button type="button" className="btn" onClick={() => setConfirming(false)} disabled={remove.isPending}>
-            Keep connected
-          </button>
-        </span>
-      ) : (
-        <button type="button" className="btn btn--quiet" onClick={() => setConfirming(true)}>
-          Remove
-        </button>
-      )}
-      {remove.isError ? (
-        <p className="inline-error" role="alert">
-          {errorMessage(remove.error)} The connector is still in place.
-        </p>
-      ) : null}
-    </div>
+    <RemoveControl
+      provider="Apify"
+      mutation={{ isPending: remove.isPending, isError: remove.isError, error: remove.error, mutate: () => remove.mutate() }}
+      warning="Remove Apify and delete the stored token? Any Apify run that is still queued, running, or paused will fail, and this app will ask Apify to stop its actor run. Imports waiting for review and finished runs stay."
+    />
   );
 }
 
@@ -193,8 +114,7 @@ function Allowlist({ connector }: { connector: Connector }) {
   );
 }
 
-export function ConnectorSettings() {
-  const { query, connector } = useApifyConnector();
+function ApifyCard({ connector }: { connector: Connector | null }) {
   const save = useSaveApifyConnector();
 
   const connect = async (token: string): Promise<boolean> => {
@@ -206,8 +126,56 @@ export function ConnectorSettings() {
     }
   };
 
-  const tokenTail = lastFour(connector?.tokenMasked ?? null);
   const hasError = connector?.status === 'error';
+
+  return (
+    <article className="connector" aria-label="Apify connector">
+      <header className="connector__header">
+        <h3 className="connector__name">Apify</h3>
+        {connector ? (
+          hasError ? (
+            <Chip tone="danger">Error</Chip>
+          ) : (
+            <Chip tone="neutral">Connected</Chip>
+          )
+        ) : (
+          <Chip tone="neutral">Not connected</Chip>
+        )}
+      </header>
+
+      {connector ? (
+        <TokenLine connector={connector} />
+      ) : (
+        <p className="muted">
+          Connect your own Apify account to run actors from the Apify store. Results are staged for your review before
+          anything enters the CRM.
+        </p>
+      )}
+
+      {hasError ? (
+        <p className="inline-error" role="alert">
+          {connector?.statusMessage ?? 'The last check of this token failed. Reconnect with a valid token.'}
+        </p>
+      ) : null}
+
+      <TokenForm
+        idPrefix="apify"
+        provider="Apify"
+        connected={Boolean(connector)}
+        busy={save.isPending}
+        error={save.isError ? save.error : null}
+        onSubmit={connect}
+      />
+
+      {connector ? <ApifyRemoveControl /> : null}
+      {connector ? <Allowlist connector={connector} /> : null}
+    </article>
+  );
+}
+
+export function ConnectorSettings() {
+  const { query, connector } = useApifyConnector();
+  const anthropic = query.data?.find((entry) => entry.kind === 'anthropic') ?? null;
 
   return (
     <section className="section" aria-labelledby="settings-connectors">
@@ -217,56 +185,10 @@ export function ConnectorSettings() {
       {query.isPending ? <Loading what="connectors" /> : null}
       {query.isError ? <ErrorState what="connectors" error={query.error} onRetry={() => void query.refetch()} /> : null}
       {query.isSuccess ? (
-        <article className="connector" aria-label="Apify connector">
-          <header className="connector__header">
-            <h3 className="connector__name">Apify</h3>
-            {connector ? (
-              hasError ? (
-                <Chip tone="danger">Error</Chip>
-              ) : (
-                <Chip tone="neutral">Connected</Chip>
-              )
-            ) : (
-              <Chip tone="neutral">Not connected</Chip>
-            )}
-          </header>
-
-          {connector ? (
-            <p className="connector__token">
-              {tokenTail ? (
-                <>
-                  Token{' '}
-                  <span className="num" aria-hidden="true">{`••••••••${tokenTail}`}</span>
-                  <span className="sr-only">ending in {tokenTail}</span>
-                </>
-              ) : (
-                'Token stored locally'
-              )}
-              {connector.updatedAt ? <span className="muted">, updated {formatAgo(connector.updatedAt)}</span> : null}
-            </p>
-          ) : (
-            <p className="muted">
-              Connect your own Apify account to run actors from the Apify store. Results are staged for your review
-              before anything enters the CRM.
-            </p>
-          )}
-
-          {hasError ? (
-            <p className="inline-error" role="alert">
-              {connector?.statusMessage ?? 'The last check of this token failed. Reconnect with a valid token.'}
-            </p>
-          ) : null}
-
-          <TokenForm
-            connected={Boolean(connector)}
-            busy={save.isPending}
-            error={save.isError ? save.error : null}
-            onSubmit={connect}
-          />
-
-          {connector ? <RemoveControl /> : null}
-          {connector ? <Allowlist connector={connector} /> : null}
-        </article>
+        <div className="connector-list">
+          <ApifyCard connector={connector} />
+          <AnthropicConnectorCard connector={anthropic} />
+        </div>
       ) : null}
     </section>
   );

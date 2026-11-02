@@ -170,7 +170,7 @@ describe('migration 003', () => {
       expect(batchesBefore).toEqual([...batches].sort((a, b) => a.id.localeCompare(b.id)));
       expect(rowsBefore).toEqual([...rows].sort((a, b) => a.id.localeCompare(b.id)));
 
-      expect(applyMigrations(db)).toEqual(['003_csv_qualify.sql', '004_lookup_indexes.sql']);
+      expect(applyMigrations(db)).toEqual(['003_csv_qualify.sql', '004_lookup_indexes.sql', '005_anthropic.sql', '006_model_call_markers.sql']);
 
       expect(snapshot(db, 'import_batch')).toEqual(batchesBefore);
       expect(snapshot(db, 'import_row')).toEqual(rowsBefore);
@@ -237,6 +237,66 @@ describe('migration 003', () => {
       // New pieces from the same migration.
       expect(db.prepare('SELECT settings FROM workspace WHERE id = ?').get('wsp_1')).toEqual({ settings: null });
       expect(db.prepare('SELECT COUNT(*) AS n FROM qualification_result').get()).toEqual({ n: 0 });
+    } finally {
+      db.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('migration 005', () => {
+  it('keeps connector rows, allows the anthropic kind, and adds model_call', () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'agentcrm-migration-'));
+    const db = new Database(path.join(directory, 'old.db'));
+    db.pragma('foreign_keys = ON');
+    try {
+      db.exec('CREATE TABLE migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
+      for (const file of ['001_init.sql', '002_apify.sql', '003_csv_qualify.sql', '004_lookup_indexes.sql']) {
+        db.exec(readFileSync(path.join(migrationsDirectory, file), 'utf8'));
+        db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, ?)').run(file, '2026-01-01T00:00:00.000Z');
+      }
+      db.prepare('INSERT INTO workspace (id, created_at, name, template) VALUES (?, ?, ?, ?)').run('wsp_1', '2026-01-01', 'Workspace', 't');
+      const connector = {
+        id: 'con_old',
+        created_at: '2026-01-02T03:04:05.001Z',
+        workspace_id: 'wsp_1',
+        kind: 'apify',
+        settings: '{"allowlist":["a/b"],"username":"u"}',
+        secret: 'token-value',
+        status: 'error',
+        updated_at: '2026-01-03T03:04:05.001Z',
+      };
+      insert(db, 'connector', connector);
+      expect(() => insert(db, 'connector', { ...connector, id: 'con_x', kind: 'anthropic' })).toThrow(/CHECK/);
+
+      expect(applyMigrations(db)).toEqual(['005_anthropic.sql', '006_model_call_markers.sql']);
+      expect(snapshot(db, 'connector')).toEqual([connector]);
+      expect(db.pragma('foreign_key_check')).toEqual([]);
+      expect(tableSql(db, 'connector')).not.toContain('_new');
+
+      insert(db, 'connector', { ...connector, id: 'con_new', kind: 'anthropic', settings: '{"model":"claude-opus-5-5"}' });
+      expect(() => insert(db, 'connector', { ...connector, id: 'con_dupe', kind: 'anthropic' })).toThrow(/UNIQUE/);
+      expect(() => insert(db, 'connector', { ...connector, id: 'con_bad', kind: 'other' })).toThrow(/CHECK/);
+
+      const call = { id: 'mcl_1', created_at: '2026-01-04', workspace_id: 'wsp_1', run_id: null, purpose: 'chat', model: 'claude-opus-5-5' };
+      insert(db, 'model_call', call);
+      expect(db.prepare('SELECT input_tokens, output_tokens, cache_read_tokens, estimated_usd FROM model_call').get()).toEqual({
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        estimated_usd: 0,
+      });
+      expect(db.prepare('SELECT cache_creation_tokens, pending, subject_id FROM model_call').get()).toEqual({
+        cache_creation_tokens: 0,
+        pending: 0,
+        subject_id: null,
+      });
+      expect(() => insert(db, 'model_call', { ...call, id: 'mcl_2', purpose: 'other' })).toThrow(/CHECK/);
+      expect(() => insert(db, 'model_call', { ...call, id: 'mcl_3', run_id: 'run_missing' })).toThrow(/FOREIGN KEY/);
+      const indexed = (name: string) => (db.pragma(`index_info(${name})`) as { name: string }[]).map((column) => column.name);
+      expect(indexed('idx_model_call_workspace')).toEqual(['workspace_id', 'created_at']);
+      expect(indexed('idx_model_call_run')).toEqual(['run_id']);
+      expect(indexed('idx_connector_workspace')).toEqual(['workspace_id', 'kind']);
     } finally {
       db.close();
       rmSync(directory, { recursive: true, force: true });

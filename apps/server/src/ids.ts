@@ -19,7 +19,8 @@ export type IdPrefix =
   | 'con'
   | 'imp'
   | 'row'
-  | 'qlr';
+  | 'qlr'
+  | 'mcl';
 
 export function randomId(prefix: IdPrefix): string {
   return `${prefix}_${randomBytes(6).toString('hex')}`;

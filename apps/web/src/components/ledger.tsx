@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useRun } from '../api/hooks';
 import type { Run, RunCounts, RunStep } from '../api/types';
 import { formatDuration, isSimulatedRun } from '../lib/format';
+import { formatUsd } from '../lib/models';
 import { RunStatusChip, SimulatedChip } from './common';
 
 type StepState = 'queued' | 'running' | 'done' | 'waiting' | 'failed' | 'skipped';
@@ -41,16 +42,22 @@ const STATE_LABELS: Record<StepState, string> = {
   skipped: 'Skipped',
 };
 
-// Qualify runs count people who matched every enabled criterion, so "Found" would mislead there.
+function foundLabel(kind?: string): string {
+  // Qualify runs count people who matched every enabled criterion, so "Found" would mislead there.
+  if (kind === 'qualify') return 'Full matches';
+  if (kind === 'draft_outreach') return 'Drafted';
+  return 'Found';
+}
+
 export function CountsList({ counts, kind }: { counts: RunCounts; kind?: string }) {
   return (
-    <dl className="counts">
+    <dl className="counts counts--wrap">
       <div>
         <dt>Processed</dt>
         <dd>{counts.processed}</dd>
       </div>
       <div>
-        <dt>{kind === 'qualify' ? 'Full matches' : 'Found'}</dt>
+        <dt>{foundLabel(kind)}</dt>
         <dd>{counts.found}</dd>
       </div>
       <div>
@@ -61,6 +68,14 @@ export function CountsList({ counts, kind }: { counts: RunCounts; kind?: string 
         <div>
           <dt>Excluded</dt>
           <dd>{counts.excluded}</dd>
+        </div>
+      ) : null}
+      {typeof counts.estimatedUsd === 'number' ? (
+        <div>
+          <dt>Estimated cost</dt>
+          <dd>
+            {formatUsd(counts.estimatedUsd)} <span className="muted counts__qualifier">estimate</span>
+          </dd>
         </div>
       ) : null}
     </dl>

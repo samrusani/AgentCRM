@@ -5,10 +5,11 @@ import { dotSegmentMessage, hasDotSegment } from '../providers/apify.js';
 import { getConnector } from '../queries/connectors.js';
 import { terminalRunStatuses, type RunCounts } from '../records.js';
 import { apifyKind, apifyStepTitles, defaultMaxItems, hardMaxItems, scheduleApifyRun } from './apifyScrape.js';
-import { allowlistIncludes, connectApifyMessage } from './connectors.js';
+import { allowlistIncludes, connectAnthropicMessage, connectApifyMessage } from './connectors.js';
 import { type ActionContext, mutate, parseInput, type Tx } from './context.js';
 import { defaultTargetCount, demoStepTitles, maxTargetCount, scheduleDemoRun } from './demoResearch.js';
 import { csvImportKind, scheduleCsvImportRun } from './csvImport.js';
+import { defaultAgentBudgetUsd, draftKind, draftScopeSchema, draftStepTitles, scheduleDraftRun } from './draftOutreach.js';
 import { closeImportBatchForRun } from './importReview.js';
 import { qualifyKind, qualifyScopeSchema, qualifyStepTitles, scheduleQualifyRun } from './qualify.js';
 
@@ -54,7 +55,15 @@ const qualifyRunSchema = z
   })
   .strict();
 
-const startRunSchema = z.discriminatedUnion('kind', [demoRunSchema, apifyRunSchema, qualifyRunSchema]);
+const draftRunSchema = z
+  .object({
+    kind: z.literal('draft_outreach'),
+    title: z.string().trim().min(1).max(200).optional(),
+    scope: draftScopeSchema,
+  })
+  .strict();
+
+const startRunSchema = z.discriminatedUnion('kind', [demoRunSchema, apifyRunSchema, qualifyRunSchema, draftRunSchema]);
 
 export interface StartRunOptions {
   // Runs started by an agent (MCP or the agent endpoint) may only use allowlisted Apify actors.
@@ -72,8 +81,16 @@ function assertApifyRunAllowed(ctx: ActionContext, actorId: string, origin: 'use
   }
 }
 
+function assertDraftRunAllowed(ctx: ActionContext) {
+  const connector = getConnector(ctx.db, ctx.workspaceId, 'anthropic');
+  if (!connector) throw conflict(connectAnthropicMessage);
+  if (connector.status !== 'connected') throw conflict('Anthropic rejected the saved API key. Update it in Settings.');
+  return connector;
+}
+
 export function scheduleRunJob(tx: Tx, kind: string, runId: string, runAt: string): void {
   if (kind === apifyKind) scheduleApifyRun(tx, runId, runAt);
+  else if (kind === draftKind) scheduleDraftRun(tx, runId, runAt);
   else if (kind === csvImportKind) scheduleCsvImportRun(tx, runId, runAt);
   else if (kind === qualifyKind) scheduleQualifyRun(tx, runId, runAt);
   else scheduleDemoRun(tx, runId, runAt);
@@ -83,6 +100,7 @@ export function startRun(ctx: ActionContext, input: unknown, options: StartRunOp
   const data = parseInput(startRunSchema, input);
   const origin = options.origin ?? 'user';
   if (data.kind === 'apify_scrape') assertApifyRunAllowed(ctx, data.scope.actorId, origin);
+  const draftConnector = data.kind === 'draft_outreach' ? assertDraftRunAllowed(ctx) : null;
   const runId = mutate(ctx, (tx) => {
     const id = tx.newId('run');
     const now = tx.now();
@@ -91,21 +109,41 @@ export function startRun(ctx: ActionContext, input: unknown, options: StartRunOp
     let counts: RunCounts;
     let auditScope: Record<string, unknown>;
     let storedScope: Record<string, unknown> = data.scope;
-    if (data.kind === 'apify_scrape') {
-      if (origin === 'agent') {
-        // Checked inside the write transaction so two processes cannot both pass it.
-        const open = tx.db
-          .prepare(
-            "SELECT 1 FROM run WHERE workspace_id = ? AND kind = ? AND json_extract(scope, '$.origin') = 'agent' AND status IN ('queued', 'running', 'paused', 'waiting_approval') LIMIT 1",
-          )
-          .get(tx.workspaceId, apifyKind);
-        if (open) {
-          throw conflict(
-            'One agent started import may run at a time. Approve, reject, or cancel the open agent import first.',
-          );
-        }
-        storedScope = { ...data.scope, origin: 'agent' };
+    // Agent started imports and draft runs share one slot, checked inside the write transaction so two processes cannot both pass it.
+    if (origin === 'agent' && (data.kind === 'apify_scrape' || data.kind === 'draft_outreach')) {
+      const open = tx.db
+        .prepare(
+          "SELECT 1 FROM run WHERE workspace_id = ? AND kind IN (?, ?) AND json_extract(scope, '$.origin') = 'agent' AND status IN ('queued', 'running', 'paused', 'waiting_approval') LIMIT 1",
+        )
+        .get(tx.workspaceId, apifyKind, draftKind);
+      if (open) {
+        throw conflict(
+          'One agent started run may be open at a time, and imports and draft runs share that limit. Approve, reject, or cancel the open agent run first.',
+        );
       }
+      storedScope = { ...data.scope, origin: 'agent' };
+    }
+    if (data.kind === 'draft_outreach') {
+      title = data.title ?? (data.scope.tag ? `Draft outreach to people tagged ${data.scope.tag}` : 'Draft outreach emails');
+      stepTitles = draftStepTitles;
+      counts = { processed: 0, found: 0, flagged: 0, estimatedUsd: 0 };
+      // An agent that sets no budget gets a default one, and the run scope records that it was defaulted.
+      const defaulted = origin === 'agent' && data.scope.budgetUsd === undefined;
+      storedScope = {
+        ...storedScope,
+        model: draftConnector!.settings.model,
+        ...(defaulted ? { budgetUsd: defaultAgentBudgetUsd, budgetDefaulted: true } : {}),
+      };
+      auditScope = {
+        scope: {
+          ...data.scope,
+          instructions: data.scope.instructions ? '(set)' : undefined,
+          ...(defaulted ? { budgetUsd: defaultAgentBudgetUsd, budgetDefaulted: true } : {}),
+        },
+        origin,
+        model: draftConnector!.settings.model,
+      };
+    } else if (data.kind === 'apify_scrape') {
       title = data.title ?? `Apify import: ${data.scope.actorId}`;
       stepTitles = apifyStepTitles;
       counts = {

@@ -1431,3 +1431,109 @@ textarea.input {
 .toggle input {
   accent-color: var(--accent);
 }
+
+/* Connector list, draft review, usage and counts qualifiers */
+.connector-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.counts__qualifier {
+  font-size: 12px;
+  font-weight: 400;
+}
+.draft-sample {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+}
+.draft-sample__item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.draft-sample__subject {
+  font-weight: 550;
+}
+.draft-rows,
+.draft-issues__list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.draft-row,
+.draft-issues__item {
+  border-bottom: 1px solid var(--line);
+  padding: 6px 0;
+  overflow-wrap: anywhere;
+}
+.draft-row__summary {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  cursor: pointer;
+}
+.draft-row__content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0 2px;
+}
+.draft-row__body {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.draft-row__facts-title {
+  margin: 0;
+  font-weight: 550;
+}
+.draft-row__facts {
+  margin: 0;
+  padding-left: 18px;
+}
+.draft-row__fact--unverified {
+  color: var(--danger);
+}
+.draft-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+}
+.draft-issues__title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.draft-issues__item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.radio-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.radio-stack .input {
+  margin-top: 6px;
+}
+.input--money {
+  width: 140px;
+}
+.estimate-line {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+}

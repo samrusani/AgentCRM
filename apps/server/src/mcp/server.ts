@@ -12,6 +12,7 @@ import { serverVersion } from '../config.js';
 import { openDatabase } from '../db.js';
 import { AppError, validationError } from '../errors.js';
 import { startWorker } from '../jobs/worker.js';
+import { getConnector } from '../queries/connectors.js';
 import { getOpportunityDetail } from '../queries/opportunities.js';
 import { getOrganizationDetail } from '../queries/organizations.js';
 import { getPersonDetail } from '../queries/people.js';
@@ -66,23 +67,30 @@ export async function startMcpServer(): Promise<void> {
       annotations: { readOnlyHint: true },
     },
     async () =>
-      guarded(() => ({
-        workspace: { id: workspace.id, name: workspace.name, template: workspace.template },
-        counts: getCounts(db, workspace.id),
-        modelConnected: false,
-        allowedActions: [
-          'Search people, organizations, and opportunities.',
-          'Read a record with its field claims and activity.',
-          'Propose field changes and read a preview. Nothing is written.',
-          'Apply a proposal with expected versions. A stale version fails the whole batch.',
-          'Start a simulated research run and read its progress.',
-          'Start an Apify import run for an actor on the connector allowlist. Results wait for a person to approve them in the app.',
-          'Start a qualify run, optionally limited to one tag. It writes per criterion verdicts to qualification results, needs no approval, and changes no records.',
-        ],
-        notAllowed: ['Approving or rejecting an approval. Only a person can decide, in the app.'],
-        notes:
-          'demo_research runs are simulated and make no network requests. apify_scrape runs call the real Apify API with the connected account, only for allowlisted actor ids, and stage rows for human review. qualify runs evaluate people against the qualification criteria in Settings, make no network requests, and need no approval. CSV imports are started by a person in the app or with the crm import command.',
-      })),
+      guarded(() => {
+        const anthropic = getConnector(db, workspace.id, 'anthropic');
+        return {
+          workspace: { id: workspace.id, name: workspace.name, template: workspace.template },
+          counts: getCounts(db, workspace.id),
+          modelConnected: Boolean(anthropic) && anthropic?.status === 'connected',
+          anthropic: anthropic
+            ? { configured: true, status: anthropic.status, model: anthropic.settings.model }
+            : { configured: false },
+          allowedActions: [
+            'Search people, organizations, and opportunities.',
+            'Read a record with its field claims and activity.',
+            'Propose field changes and read a preview. Nothing is written.',
+            'Apply a proposal with expected versions. A stale version fails the whole batch.',
+            'Start a simulated research run and read its progress.',
+            'Start an Apify import run for an actor on the connector allowlist. Results wait for a person to approve them in the app.',
+            'Start a qualify run, optionally limited to one tag. It writes per criterion verdicts to qualification results, needs no approval, and changes no records.',
+            'Start a draft_outreach run when the Anthropic connector is configured. It writes one draft email per person with the user\'s model key, which costs money, and waits for a person to approve before saving drafts as notes. Nothing is ever sent.',
+          ],
+          notAllowed: ['Approving or rejecting an approval. Only a person can decide, in the app.'],
+          notes:
+            'demo_research runs are simulated and make no network requests. apify_scrape runs call the real Apify API with the connected account, only for allowlisted actor ids, and stage rows for human review. qualify runs evaluate people against the qualification criteria in Settings, make no network requests, and need no approval. draft_outreach runs call the Anthropic API with the key a person saved in Settings, record estimated costs in the run counts, stop at an optional budgetUsd, and stage drafts for human review. They count toward the one open agent started run limit shared with apify_scrape. CSV imports are started by a person in the app or with the crm import command.',
+        };
+      }),
   );
 
   server.registerTool(
@@ -154,12 +162,16 @@ export async function startMcpServer(): Promise<void> {
     {
       title: 'Start a research run',
       description:
-        'Starts a run and returns its id. kind demo_research (default) is simulated: scripted steps, synthetic candidates. kind apify_scrape runs a real Apify actor with the scope { actorId, input, maxItems } and works only for actor ids on the Apify allowlist set in Settings. Both of those kinds wait for a person to approve in the app. kind qualify evaluates people against the qualification criteria (optional tag limits it to people with that tag), writes results, and needs no approval.',
+        'Starts a run and returns its id. kind demo_research (default) is simulated: scripted steps, synthetic candidates. kind apify_scrape runs a real Apify actor with the scope { actorId, input, maxItems } and works only for actor ids on the Apify allowlist set in Settings. Both of those kinds wait for a person to approve in the app. kind qualify evaluates people against the qualification criteria (optional tag limits it to people with that tag), writes results, and needs no approval. kind draft_outreach drafts one email per person with the Anthropic model a person connected in Settings (optional tag or personIds choose the audience, maxPeople up to 25, instructions for voice, budgetUsd as an estimated spending stop). It costs the user money, waits for a person to approve in the app, and never sends anything.',
       inputSchema: {
-        kind: z.enum(['demo_research', 'apify_scrape', 'qualify']).default('demo_research'),
+        kind: z.enum(['demo_research', 'apify_scrape', 'qualify', 'draft_outreach']).default('demo_research'),
         tag: z.string().min(1).max(60).optional(),
         title: z.string().min(1).max(200).optional(),
         query: z.string().max(200).optional(),
+        personIds: z.array(z.string().min(1).max(64)).min(1).max(25).optional(),
+        instructions: z.string().max(2000).optional(),
+        maxPeople: z.number().int().min(1).max(25).optional(),
+        budgetUsd: z.number().positive().max(1000).optional(),
         targetCount: z.number().int().min(1).max(10).optional(),
         scope: z
           .object({
@@ -170,7 +182,7 @@ export async function startMcpServer(): Promise<void> {
           .optional(),
       },
     },
-    async ({ kind, title, query, targetCount, scope, tag }) =>
+    async ({ kind, title, query, targetCount, scope, tag, personIds, instructions, maxPeople, budgetUsd }) =>
       guarded(() => {
         if (kind === 'qualify') {
           const run = startRun(ctx, { kind, ...(title ? { title } : {}), scope: tag ? { tag } : {} }, { origin: 'agent' });
@@ -179,6 +191,29 @@ export async function startMcpServer(): Promise<void> {
             status: run.status,
             simulated: false,
             note: 'A worker in this process or in the API server advances this run. Read progress with crm_get_run. No approval is needed because it writes only qualification results.',
+          };
+        }
+        if (kind === 'draft_outreach') {
+          const run = startRun(
+            ctx,
+            {
+              kind,
+              ...(title ? { title } : {}),
+              scope: {
+                ...(tag ? { tag } : {}),
+                ...(personIds ? { personIds } : {}),
+                ...(instructions ? { instructions } : {}),
+                ...(maxPeople ? { maxPeople } : {}),
+                ...(budgetUsd ? { budgetUsd } : {}),
+              },
+            },
+            { origin: 'agent' },
+          );
+          return {
+            runId: run.id,
+            status: run.status,
+            simulated: false,
+            note: 'A worker in this process or in the API server advances this run and calls Anthropic with the saved key, which costs the user money (estimated costs appear in the run counts). Read progress with crm_get_run. Only a person can approve saving the drafts. Nothing is sent.',
           };
         }
         if (kind === 'apify_scrape') {

@@ -2,7 +2,7 @@
 
 AgentCRM is a local first, open source CRM built for agent workflows. People and coding agents work through the same core: one action service behind the web UI, the CLI, and an MCP server. Your data lives in a SQLite file on your own computer, so there is no network round trip between you and your records.
 
-Status: early development, not yet ready for real work. The app runs locally with synthetic demo data, and a simulated research run shows the run and approval machinery end to end. Apify imports are the first live provider: bring your own Apify account, run any store Actor, and review staged results before they become records. Model backed runs and email connectors are not built yet. Connector tokens are stored unencrypted in the local database file, which is created with owner only permissions.
+Status: early development, not yet ready for real work. The app runs locally with synthetic demo data, and a simulated research run shows the run and approval machinery end to end. Apify imports are the first live provider: bring your own Apify account, run any store Actor, and review staged results before they become records. Model backed chat and outreach drafting work with your own Anthropic API key; every cost shown is an estimate from list prices, and drafts are never sent because email connectors are not built yet. Connector tokens and keys are stored unencrypted in the local database file, which is created with owner only permissions.
 
 ## Why another CRM
 
@@ -38,16 +38,17 @@ Open http://127.0.0.1:5173 in your browser. The API listens on http://127.0.0.1:
 | Relationships: people and organizations with search and detail views | Working, synthetic data |
 | Pipeline: opportunities in board and table views with stage history | Working |
 | Research: runs with live steps, counts, and partial results | Simulated demo run only |
-| Agent panel: chat, run progress, approvals | Working, no model connected |
+| Agent panel: chat, run progress, approvals | Working; model backed with your own Anthropic key, honest deterministic replies without one |
+| Draft outreach: model written drafts with budgets, review before saving | Working, verified against a stubbed Anthropic API; drafts are never sent |
 | Approvals: review, approve, reject, audit trail | Working |
 | Evidence: field claims with source and verification status | Working, synthetic sources |
 | Apify imports: run any store Actor, staged rows, dedupe, review before anything is saved | Working, verified against a stubbed Apify API; bring your own Apify account |
 | CSV import: column mapping, staged rows, same dedupe and review as Apify | Working, UI and CLI |
 | Qualification: editable criteria, per criterion verdicts with evidence, fit sort | Working; unknown never counts as a match |
-| MCP server over stdio | Working, read and propose tools, can start allowlisted Apify runs |
+| MCP server over stdio | Working, read and propose tools; can start qualify runs, allowlisted Apify runs, and budgeted draft runs |
 | CLI: doctor, seed, serve, search, runs | Working |
 | Email connectors (AgentMail, Gmail) | Not built |
-| Model backed agent runs | Not built |
+| Model costs: per call usage rows, per run estimates from list prices | Working, always labelled estimates |
 
 ## Documentation
 

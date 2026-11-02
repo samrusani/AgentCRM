@@ -70,6 +70,17 @@ function parseStatuses(value: string): RunStatus[] {
   return parts as RunStatus[];
 }
 
+// Large arrays kept in a run's scope. The list leaves them out so one long draft run does not bloat every poll.
+// GET /api/runs/:id and the approval payload keep them.
+const bulkyScopeKeys = ['drafts', 'failures', 'skipped', 'audienceIds'] as const;
+
+function trimScopeForList(run: ReturnType<typeof toRun>): ReturnType<typeof toRun> {
+  if (!bulkyScopeKeys.some((key) => key in run.scope)) return run;
+  const scope = { ...run.scope };
+  for (const key of bulkyScopeKeys) delete scope[key];
+  return { ...run, scope };
+}
+
 export function listRuns(db: Db, workspaceId: string, input: ListRunsInput = {}): Page<ReturnType<typeof toRun>> {
   const where = ['r.workspace_id = ?'];
   const params: unknown[] = [workspaceId];
@@ -90,7 +101,7 @@ export function listRuns(db: Db, workspaceId: string, input: ListRunsInput = {})
     direction: 'DESC',
     cursor: input.cursor,
     limit: input.limit,
-    map: toRun,
+    map: (row) => trimScopeForList(toRun(row)),
   });
 }
 

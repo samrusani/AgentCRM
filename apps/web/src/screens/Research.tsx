@@ -13,9 +13,12 @@ import {
   errorMessage,
 } from '../components/common';
 import { Icon } from '../components/Icons';
+import { DraftRunIssuesView } from '../components/draftReview';
 import { batchHref } from '../components/importReview';
 import { CountsList, RunLedger } from '../components/ledger';
+import { parseDraftRunIssues } from '../lib/drafts';
 import { formatAgo, formatDateTime, isSimulatedRun } from '../lib/format';
+import { DraftOutreachSheet } from './DraftOutreachSheet';
 import { ImportBatchSheet, ImportSetupSheet } from './ImportSheets';
 import { useUI } from '../lib/ui';
 
@@ -33,13 +36,29 @@ export function Research() {
   };
 
   const importOpen = params.get('import') === 'new';
+  const draftOpen = params.get('draft') === 'new';
   const batchId = params.get('batch');
 
   const openImport = () => {
     const copy = new URLSearchParams(params);
     copy.set('import', 'new');
     copy.delete('batch');
+    copy.delete('draft');
     setParams(copy);
+  };
+
+  const openDraft = () => {
+    const copy = new URLSearchParams(params);
+    copy.set('draft', 'new');
+    copy.delete('batch');
+    copy.delete('import');
+    setParams(copy);
+  };
+
+  const closeDraft = () => {
+    const copy = new URLSearchParams(params);
+    copy.delete('draft');
+    setParams(copy, { replace: true });
   };
 
   const closeImport = () => {
@@ -54,9 +73,10 @@ export function Research() {
     setParams(copy, { replace: true });
   };
 
-  const importStarted = (run: Run) => {
+  const runStarted = (run: Run) => {
     const copy = new URLSearchParams(params);
     copy.delete('import');
+    copy.delete('draft');
     copy.delete('batch');
     copy.set('run', run.id);
     setParams(copy, { replace: true });
@@ -72,6 +92,9 @@ export function Research() {
     <>
       <button type="button" className="btn" onClick={openImport} aria-haspopup="dialog">
         Import from Apify
+      </button>
+      <button type="button" className="btn" onClick={openDraft} aria-haspopup="dialog">
+        Draft outreach
       </button>
       <button type="button" className="btn btn--primary" onClick={start} disabled={startRun.isPending}>
         {startRun.isPending ? 'Starting...' : 'Start demo research'}
@@ -104,7 +127,7 @@ export function Research() {
       <PageHeader title="Research">{startButton}</PageHeader>
       {items.length === 0 && !selectedId ? (
         <EmptyState
-          message="No research runs yet. A demo run is simulated: it shows the ledger, counts, and approval flow with synthetic data. An Apify import is real: it runs an actor on your own Apify account. A CSV import starts from the People tab in Relationships."
+          message="No research runs yet. A demo run is simulated: it shows the ledger, counts, and approval flow with synthetic data. An Apify import is real: it runs an actor on your own Apify account. A CSV import starts from the People tab in Relationships. Draft outreach needs an Anthropic key: it writes drafts for you to review and sends nothing."
         />
       ) : (
         <div className="research">
@@ -123,7 +146,9 @@ export function Research() {
       {batchId ? (
         <ImportBatchSheet key={batchId} id={batchId} onClose={closeBatch} />
       ) : importOpen ? (
-        <ImportSetupSheet onClose={closeImport} onStarted={importStarted} />
+        <ImportSetupSheet onClose={closeImport} onStarted={runStarted} />
+      ) : draftOpen ? (
+        <DraftOutreachSheet onClose={closeDraft} onStarted={runStarted} />
       ) : null}
     </div>
   );
@@ -144,7 +169,8 @@ function RunListItem({ run, selected, onSelect }: { run: Run; selected: boolean;
       </span>
       <span className="run-list__meta muted">
         <span className="num">
-          {run.counts.processed} processed, {run.counts.found} found, {run.counts.flagged} flagged
+          {run.counts.processed} processed, {run.counts.found} {run.kind === 'draft_outreach' ? 'drafted' : 'found'},{' '}
+          {run.counts.flagged} flagged
         </span>
         <span>{run.startedAt ? `Started ${formatAgo(run.startedAt)}` : 'Not started'}</span>
       </span>
@@ -166,6 +192,7 @@ function RunDetail({ id }: { id: string }) {
   const canCancel = canPause || canResume;
   const approvals = run.approvals ?? [];
   const isApify = run.kind === 'apify_scrape';
+  const isDraft = run.kind === 'draft_outreach';
   const batchId = typeof run.scope.batchId === 'string' && run.scope.batchId !== '' ? run.scope.batchId : null;
 
   const act = (action: 'pause' | 'resume' | 'cancel') => {
@@ -193,6 +220,13 @@ function RunDetail({ id }: { id: string }) {
       ) : null}
 
       <CountsList counts={run.counts} kind={run.kind} />
+      {isDraft ? (
+        <p className="muted">
+          Costs are estimates from list prices. Drafts are created for review: approved drafts are saved on each
+          person as drafts that were not sent, and nothing is ever sent.
+        </p>
+      ) : null}
+      {isDraft ? <DraftRunIssuesView issues={parseDraftRunIssues(run.scope)} /> : null}
 
       {batchId ? (
         <p>
@@ -223,7 +257,9 @@ function RunDetail({ id }: { id: string }) {
             <span className="run-controls__confirm" role="alert">
               {isApify
                 ? 'Cancel this run? Cancelling is final. It also asks Apify to stop the actor run. Apify still bills for the time the actor already ran.'
-                : 'Cancel this run? Cancelling is final.'}
+                : isDraft
+                  ? 'Cancel this run? Cancelling is final and no drafts are saved. Model calls already made are still billed to your Anthropic account.'
+                  : 'Cancel this run? Cancelling is final.'}
               <button type="button" className="btn btn--danger" onClick={() => act('cancel')}>
                 Cancel run
               </button>
@@ -262,7 +298,11 @@ function RunDetail({ id }: { id: string }) {
         ) : (
           <div className="stack">
             {approvals.map((approval) => (
-              <ApprovalCard key={approval.id} approval={{ ...approval, runKind: approval.runKind ?? run.kind, runId: approval.runId ?? run.id }} />
+              <ApprovalCard
+                key={approval.id}
+                approval={{ ...approval, runKind: approval.runKind ?? run.kind, runId: approval.runId ?? run.id }}
+                expandDrafts
+              />
             ))}
           </div>
         )}

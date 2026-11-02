@@ -14,10 +14,27 @@ export interface AgentAction {
 export interface AgentReply {
   reply: string;
   actions: AgentAction[];
-  modelConnected: false;
+  modelConnected: boolean;
+  // Set when a model is connected but its call failed, so the reply above is the rule based one.
+  modelFailed?: true;
+  usage?: AgentUsage;
 }
 
-const noModel = 'No model connected. Runs are simulated until you add one.';
+export interface AgentUsage {
+  inputTokens: number;
+  outputTokens: number;
+  estimatedUsd: number;
+}
+
+type Intent = 'greeting' | 'help' | 'scrape' | 'count' | 'research' | 'records' | 'unmatched';
+
+interface RuleAnswer {
+  reply: string;
+  actions: AgentAction[];
+  intent: Intent;
+}
+
+const defaultNoModel = 'No model connected. Runs are simulated until you add one.';
 
 const startRunAction: AgentAction = {
   id: 'start_demo_run',
@@ -46,14 +63,33 @@ const researchVerb = /\b(find|research|source|sourcing|discover|look for|search 
 const researchNoun = /\b(investor|investors|fund|funds|vc|vcs|angel|angels|lead|leads|prospects|candidate|candidates|research run|demo run|research)\b/;
 const countIntent = /how many (people|contacts|organi[sz]ations|orgs|funds|companies|opportunities|deals|tasks|runs)/;
 
-export function respondToMessage(db: Db, workspaceId: string, text: string): AgentReply {
+// Rule based answer. With a model connected, pass a note that says the model call failed so the reply
+// does not claim that no model is connected.
+export function respondToMessage(db: Db, workspaceId: string, text: string, modelNote?: string): AgentReply {
+  const answer = answerByRules(db, workspaceId, text, modelNote ?? defaultNoModel);
+  return {
+    reply: answer.reply,
+    actions: answer.actions,
+    modelConnected: modelNote !== undefined,
+    ...(modelNote !== undefined ? { modelFailed: true as const } : {}),
+  };
+}
+
+// Suggested actions for a model backed reply. Only requests the rules recognise on purpose count, so a
+// greeting or an unmatched question does not get a button.
+export function suggestActions(db: Db, workspaceId: string, text: string): AgentAction[] {
+  const answer = answerByRules(db, workspaceId, text, defaultNoModel);
+  return answer.intent === 'scrape' || answer.intent === 'research' || answer.intent === 'records' ? answer.actions : [];
+}
+
+function answerByRules(db: Db, workspaceId: string, text: string, noModel: string): RuleAnswer {
   const normalized = text.toLowerCase().replace(/\s+/g, ' ').trim();
 
   if (greeting.test(normalized) && normalized.split(' ').length <= 4) {
     return {
       reply: `Hello. ${noModel} I follow a few fixed rules, so I can start a simulated research run, answer record counts, or open a record when you give me a name.`,
       actions: [startRunAction],
-      modelConnected: false,
+      intent: 'greeting',
     };
   }
 
@@ -61,7 +97,7 @@ export function respondToMessage(db: Db, workspaceId: string, text: string): Age
     return {
       reply: `${noModel} This is a rule based helper, not a model. It can start a simulated research run, answer record counts such as "how many people", and open a record by name.`,
       actions: [startRunAction],
-      modelConnected: false,
+      intent: 'help',
     };
   }
 
@@ -71,13 +107,13 @@ export function respondToMessage(db: Db, workspaceId: string, text: string): Age
       return {
         reply: `${noModel} Apify is connected. I can open the import setup, where you pick an actor, check its input, and set an item limit. Nothing runs until you start it, and results wait for your review before anything enters the CRM.`,
         actions: [startApifyImportAction],
-        modelConnected: false,
+        intent: 'scrape',
       };
     }
     return {
       reply: `${noModel} Scraping needs Apify. Connect Apify in Settings with your API token, then ask again.`,
       actions: [],
-      modelConnected: false,
+      intent: 'scrape',
     };
   }
 
@@ -103,7 +139,7 @@ export function respondToMessage(db: Db, workspaceId: string, text: string): Age
     return {
       reply: `This workspace has ${value} ${label}. ${noModel}`,
       actions: [],
-      modelConnected: false,
+      intent: 'count',
     };
   }
 
@@ -111,7 +147,7 @@ export function respondToMessage(db: Db, workspaceId: string, text: string): Age
     return {
       reply: `${noModel} I can start a simulated research run. It follows a script, adds synthetic candidates tagged demo-candidate, and asks you to approve a shortlist. It does not search the web.`,
       actions: [startRunAction],
-      modelConnected: false,
+      intent: 'research',
     };
   }
 
@@ -144,7 +180,7 @@ export function respondToMessage(db: Db, workspaceId: string, text: string): Age
       return {
         reply: `I found ${actions.length} matching ${actions.length === 1 ? 'record' : 'records'}. I can open ${actions.length === 1 ? 'it' : 'them'}, but I cannot analyze ${actions.length === 1 ? 'it' : 'them'}. ${noModel}`,
         actions,
-        modelConnected: false,
+        intent: 'records',
       };
     }
   }
@@ -152,6 +188,6 @@ export function respondToMessage(db: Db, workspaceId: string, text: string): Age
   return {
     reply: `${noModel} I could not match that request to anything I can do. Try "find investors", "how many people", or the name of a record.`,
     actions: [startRunAction],
-    modelConnected: false,
+    intent: 'unmatched',
   };
 }

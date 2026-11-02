@@ -161,6 +161,8 @@ export interface RunCounts {
   flagged: number;
   // Reported by qualify runs only.
   excluded?: number;
+  // Reported by model backed runs (draft_outreach): estimated spend observed so far, from list prices.
+  estimatedUsd?: number;
 }
 
 export interface RunStep {
@@ -227,10 +229,37 @@ export interface AgentAction {
   entityId?: string;
 }
 
+export interface AgentUsage {
+  inputTokens: number;
+  outputTokens: number;
+  // An estimate from list prices, never an invoice amount.
+  estimatedUsd: number;
+}
+
 export interface AgentReply {
   reply: string;
   actions: AgentAction[];
   modelConnected?: boolean;
+  // Set by the server when the model call failed and the rule based helper answered instead.
+  modelFailed?: boolean;
+  // Present only when a model produced the reply.
+  usage?: AgentUsage;
+}
+
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  text: string;
+}
+
+export interface AgentContext {
+  entityType: EntityType;
+  entityId: string;
+}
+
+export interface AgentMessageInput {
+  text: string;
+  history?: ChatTurn[];
+  context?: AgentContext;
 }
 
 export interface ApiErrorEnvelope {
@@ -241,10 +270,12 @@ export type ConnectorStatus = 'connected' | 'error' | string;
 
 export interface Connector {
   id: string | null;
-  kind: 'apify' | string;
+  kind: 'apify' | 'anthropic' | string;
   status: ConnectorStatus;
   statusMessage: string | null;
   allowlist: string[];
+  // Anthropic only: the chosen model id from settings.model.
+  model: string | null;
   tokenMasked: string | null;
   updatedAt: string | null;
 }
@@ -320,6 +351,57 @@ export interface ApifyRunInput {
   input: Record<string, unknown>;
   maxItems: number;
   title?: string;
+}
+
+export interface DraftOutreachInput {
+  personIds?: string[];
+  tag?: string;
+  instructions?: string;
+  maxPeople: number;
+  budgetUsd?: number;
+  title?: string;
+}
+
+export interface DraftSample {
+  personName: string | null;
+  subject: string | null;
+}
+
+export interface DraftFact {
+  field: string;
+  value: string;
+}
+
+// One full draft as the approval holds it. Facts are reported by the model and checked only against the record text.
+export interface DraftEntry {
+  personId: string | null;
+  personName: string | null;
+  subject: string | null;
+  body: string | null;
+  factsUsed: DraftFact[];
+}
+
+export interface DraftReviewPayload {
+  count: number;
+  // Up to three entries, kept for approvals made before full drafts were included.
+  sample: DraftSample[];
+  drafts: DraftEntry[];
+  estimatedUsd: number | null;
+}
+
+export interface DraftPersonNote {
+  personName: string | null;
+  reason: string;
+}
+
+// What a draft run reports about people it did not draft for, read from the run scope.
+export interface DraftRunIssues {
+  failures: DraftPersonNote[];
+  skipped: DraftPersonNote[];
+  stoppedEarly: string | null;
+  notDrafted: number | null;
+  budgetUsd: number | null;
+  budgetDefaulted: boolean;
 }
 
 export type CsvField =

@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   abortRemoteRunIfNeeded,
+  configureAnthropicConnector,
   configureApifyConnector,
   controlRun,
   createActivity,
@@ -11,6 +12,7 @@ import {
   createPerson,
   createTask,
   decideApproval,
+  disconnectAnthropicConnector,
   disconnectApifyConnector,
   getApifyActor,
   moveOpportunityStage,
@@ -26,10 +28,11 @@ import {
   updateTask,
 } from '../actions/index.js';
 import { respondToMessage } from '../agent/message.js';
+import { maxHistoryTurnCharacters, maxHistoryTurns, respondWithModel } from '../agent/modelChat.js';
 import { serverVersion } from '../config.js';
 import { displayDatabasePath } from '../paths.js';
 import { listActivities } from '../queries/activities.js';
-import { listConnectors } from '../queries/connectors.js';
+import { getConnector, listConnectors } from '../queries/connectors.js';
 import { getImportDetail } from '../queries/imports.js';
 import { getOpportunityDetail, listOpportunities } from '../queries/opportunities.js';
 import { getOrganizationDetail, listOrganizations } from '../queries/organizations.js';
@@ -70,7 +73,27 @@ const activitiesQuery = z.object({
 });
 const statusQuery = z.object({ status: z.string().optional(), ...pagingQuery });
 const searchQuery = z.object({ q: z.string().default('') });
-const messageBody = z.object({ text: z.string().trim().min(1).max(2000) }).strict();
+const messageBody = z
+  .object({
+    text: z.string().trim().min(1).max(2000),
+    // A long model reply must not block later messages, so over-long turns are cut instead of rejected.
+    history: z
+      .array(
+        z
+          .object({ role: z.enum(['user', 'assistant']), text: z.string().trim().min(1).transform((text) => text.slice(0, maxHistoryTurnCharacters)) })
+          .strict(),
+      )
+      .max(maxHistoryTurns)
+      .default([]),
+    context: z
+      .object({
+        entityType: z.enum(['person', 'organization', 'opportunity']),
+        entityId: z.string().trim().min(1).max(64),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
 const idParams = z.object({ id: z.string().min(1) });
 const importQuery = z.object({
   status: z.string().optional(),
@@ -200,6 +223,15 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
     await disconnectApifyConnector(context());
     return reply.status(204).send();
   });
+  app.put('/api/connectors/anthropic', async (request, reply) => {
+    const { connector, created } = await configureAnthropicConnector(context(), request.body);
+    reply.status(created ? 201 : 200);
+    return connector;
+  });
+  app.delete('/api/connectors/anthropic', async (_request, reply) => {
+    disconnectAnthropicConnector(context());
+    return reply.status(204).send();
+  });
   app.get('/api/connectors/apify/actors', async (request) => searchApifyActors(context(), request.query));
   app.get('/api/connectors/apify/actors/:id', async (request) => getApifyActor(context(), idParam(request.params)));
 
@@ -231,8 +263,13 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   });
 
   app.post('/api/agent/message', async (request) => {
-    const { text } = parseInput(messageBody, request.body);
-    return respondToMessage(db, workspaceId(), text);
+    const { text, history, context: recordContext } = parseInput(messageBody, request.body);
+    const id = workspaceId();
+    // A saved Anthropic connector means the model answers. Without one, the rule based helper answers as before.
+    if (getConnector(db, id, 'anthropic')) {
+      return respondWithModel(context(), { text, history, context: recordContext });
+    }
+    return respondToMessage(db, id, text);
   });
 
   const openStreams = new Set<() => void>();

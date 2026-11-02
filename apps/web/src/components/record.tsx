@@ -266,7 +266,9 @@ export function Timeline({ activities }: { activities: Activity[] }) {
         <li key={activity.id} className="timeline__item">
           <div className="timeline__head">
             <span className="timeline__kind">{KIND_LABELS[activity.kind] ?? humanize(activity.kind)}</span>
-            {activity.kind === 'email_draft' ? <Chip tone="neutral">Demo draft</Chip> : null}
+            {activity.kind === 'email_draft' ? (
+              <Chip tone="neutral">{/^demo draft/i.test(activity.body) ? 'Demo draft, not sent' : 'Draft, not sent'}</Chip>
+            ) : null}
             <span className="muted num timeline__age" title={formatDateTime(activity.createdAt)}>
               {formatAge(activity.createdAt)}
             </span>

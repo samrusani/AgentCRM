@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useAgentMessage, useRun, useStartRun, useToday } from '../api/hooks';
-import type { AgentAction } from '../api/types';
+import { useAgentMessage, useAnthropicConnector, useRun, useStartRun, useToday } from '../api/hooks';
+import type { AgentAction, AgentUsage, ChatTurn } from '../api/types';
 import { ApprovalCard, useSettledApprovals } from '../components/approvals';
 import { errorMessage } from '../components/common';
 import { Icon } from '../components/Icons';
 import { LiveRun } from '../components/ledger';
 import { isRunActive } from '../lib/format';
+import { formatUsd, modelName } from '../lib/models';
 import { PANEL_MAX, PANEL_MIN, useMediaQuery, useUI } from '../lib/ui';
 
 interface ChatItem {
@@ -14,6 +15,27 @@ interface ChatItem {
   role: 'user' | 'agent' | 'system';
   text: string;
   actions?: AgentAction[];
+  usage?: AgentUsage;
+}
+
+const HISTORY_TURNS = 10;
+// The server keeps the first 4,000 characters of a turn. Cutting here keeps one long reply from growing every later request.
+const HISTORY_TURN_CHARACTERS = 4000;
+
+// The last turns of the visible conversation, as the server expects them. Job notes and error notes are not
+// turns. A message that never got a reply leaves two user turns in a row, so same role neighbours are joined.
+function toHistory(items: ChatItem[]): ChatTurn[] {
+  const turns: ChatTurn[] = [];
+  for (const item of items) {
+    if (item.role === 'system') continue;
+    const role = item.role === 'user' ? 'user' : 'assistant';
+    const last = turns[turns.length - 1];
+    if (last && last.role === role) last.text = `${last.text}\n\n${item.text}`;
+    else turns.push({ role, text: item.text });
+  }
+  const recent = turns.slice(-HISTORY_TURNS).map((turn) => ({ ...turn, text: turn.text.slice(0, HISTORY_TURN_CHARACTERS) }));
+  while (recent.length > 0 && recent[0].role !== 'user') recent.shift();
+  return recent;
 }
 
 const SCREEN_LABELS: Record<string, string> = {
@@ -24,7 +46,11 @@ const SCREEN_LABELS: Record<string, string> = {
   '/settings': 'Settings',
 };
 
-const KIND_LABELS = { person: 'Person', organization: 'Organization', opportunity: 'Opportunity' } as const;
+const KIND_LABELS = {
+  person: 'Person',
+  organization: 'Organization',
+  opportunity: 'Opportunity',
+} as const;
 
 function PanelRun({ id, tracked, onDismiss }: { id: string; tracked: boolean; onDismiss: () => void }) {
   const query = useRun(id);
@@ -50,6 +76,8 @@ function PanelBody({ onCollapse }: { onCollapse: () => void }) {
   const today = useToday();
   const startRun = useStartRun();
   const message = useAgentMessage();
+  const { query: connectorsQuery, connector: anthropic } = useAnthropicConnector();
+  const [replyModelConnected, setReplyModelConnected] = useState<boolean | null>(null);
   const [items, setItems] = useState<ChatItem[]>([]);
   const [draft, setDraft] = useState('');
   const [tracked, setTracked] = useState<string[]>([]);
@@ -73,26 +101,50 @@ function PanelBody({ onCollapse }: { onCollapse: () => void }) {
     return ids;
   }, [today.data, tracked]);
 
+  // The connectors list is the live source. A reply flag covers the time before it loads.
+  const modelConnected = connectorsQuery.isSuccess ? anthropic?.status === 'connected' : replyModelConnected === true;
+
   const screen = SCREEN_LABELS[`/${location.pathname.split('/')[1] ?? ''}`] ?? 'AgentCRM';
-  const contextText = selectedRecord ? `${KIND_LABELS[selectedRecord.kind]}: ${selectedRecord.label}` : `Screen: ${screen}`;
+  const contextText = selectedRecord
+    ? `${KIND_LABELS[selectedRecord.kind]}: ${selectedRecord.label}`
+    : `Screen: ${screen}`;
 
   const send = () => {
     const text = draft.trim();
     if (!text || message.isPending) return;
     setItems((current) => [...current, { id: nextId(), role: 'user', text }]);
     setDraft('');
-    message.mutate(text, {
-      onSuccess: (reply) =>
-        setItems((current) => [
-          ...current,
-          { id: nextId(), role: 'agent', text: reply.reply, actions: reply.actions },
-        ]),
-      onError: (error) =>
-        setItems((current) => [
-          ...current,
-          { id: nextId(), role: 'system', text: `No reply. ${errorMessage(error)}` },
-        ]),
-    });
+    message.mutate(
+      {
+        text,
+        history: toHistory(items),
+        context: selectedRecord ? { entityType: selectedRecord.kind, entityId: selectedRecord.id } : undefined,
+      },
+      {
+        onSuccess: (reply) => {
+          setReplyModelConnected(reply.modelConnected === true);
+          setItems((current) => [
+            ...current,
+            {
+              id: nextId(),
+              role: 'agent',
+              text: reply.reply,
+              actions: reply.actions,
+              usage: reply.usage,
+            },
+          ]);
+        },
+        onError: (error) =>
+          setItems((current) => [
+            ...current,
+            {
+              id: nextId(),
+              role: 'system',
+              text: `No reply. ${errorMessage(error)}`,
+            },
+          ]),
+      },
+    );
   };
 
   const openRecord = (action: AgentAction) => {
@@ -156,6 +208,14 @@ function PanelBody({ onCollapse }: { onCollapse: () => void }) {
         <span className="chip chip--accent" title="What the agent panel is looking at">
           {contextText}
         </span>
+        {modelConnected ? (
+          <span
+            className="panel__model"
+            title={anthropic?.model ? `Chat uses ${modelName(anthropic.model)}` : undefined}
+          >
+            Model: connected
+          </span>
+        ) : null}
       </div>
       <div className="panel__scroll">
         {today.isError ? (
@@ -168,13 +228,7 @@ function PanelBody({ onCollapse }: { onCollapse: () => void }) {
           <section className="panel__section" aria-label="Approvals waiting">
             <h3 className="panel__heading">Waiting for you</h3>
             {approvals.map(({ approval, settled: entry }) => (
-              <ApprovalCard
-                key={approval.id}
-                approval={approval}
-                settled={entry}
-                compact
-                onDecided={settled.record}
-              />
+              <ApprovalCard key={approval.id} approval={approval} settled={entry} compact onDecided={settled.record} />
             ))}
           </section>
         ) : null}
@@ -208,11 +262,19 @@ function PanelBody({ onCollapse }: { onCollapse: () => void }) {
                   {item.role === 'user' ? 'You' : item.role === 'agent' ? 'Agent reply' : 'Job'}
                 </span>
                 <p className="chat__text">{item.text}</p>
+                {item.usage ? (
+                  <p className="chat__usage">
+                    {item.usage.inputTokens.toLocaleString()} in / {item.usage.outputTokens.toLocaleString()} out, about{' '}
+                    {formatUsd(item.usage.estimatedUsd)}, estimate
+                  </p>
+                ) : null}
                 {item.actions && item.actions.length > 0 ? (
                   <div className="chat__actions">
                     {item.actions.map((action) => {
-                      const canOpen = action.kind === 'open_record' && Boolean(action.entityId) && Boolean(action.entityType);
-                      const supported = action.kind === 'start_demo_run' || action.kind === 'start_apify_import' || canOpen;
+                      const canOpen =
+                        action.kind === 'open_record' && Boolean(action.entityId) && Boolean(action.entityType);
+                      const supported =
+                        action.kind === 'start_demo_run' || action.kind === 'start_apify_import' || canOpen;
                       const used = usedActions[`${item.id}:${action.id}`];
                       return (
                         <button
@@ -321,7 +383,12 @@ export function AgentPanel() {
 
   if (panelCollapsed) {
     return (
-      <button type="button" className="panel-tab" onClick={() => setPanelCollapsed(false)} aria-label="Open agent panel">
+      <button
+        type="button"
+        className="panel-tab"
+        onClick={() => setPanelCollapsed(false)}
+        aria-label="Open agent panel"
+      >
         <StatusDot />
         <Icon name="chevronLeft" />
         <span className="panel-tab__label" aria-hidden="true">

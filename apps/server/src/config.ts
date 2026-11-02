@@ -39,5 +39,21 @@ export function apifyPollMilliseconds(): number {
 
 export const apifyRequestTimeoutMilliseconds = 10_000;
 
+export const defaultAnthropicBase = 'https://api.anthropic.com';
+
+export function anthropicBaseUrl(): string {
+  const raw = process.env.AGENTCRM_ANTHROPIC_BASE;
+  return (raw && raw.length > 0 ? raw : defaultAnthropicBase).replace(/\/+$/, '');
+}
+
+// The SDK retries rate limits and server errors this many times on its own. Tests set it to 0 to stay fast.
+export function anthropicMaxRetries(): number {
+  return positiveIntegerFromEnvironment('AGENTCRM_ANTHROPIC_RETRIES', 2, true);
+}
+
+export const anthropicChatTimeoutMilliseconds = 30_000;
+export const anthropicDraftTimeoutMilliseconds = 60_000;
+export const anthropicKeyCheckTimeoutMilliseconds = 10_000;
+
 export const workerTickMilliseconds = 300;
 export const serverVersion = '0.1.0';

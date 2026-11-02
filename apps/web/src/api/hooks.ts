@@ -7,7 +7,14 @@ import {
 } from '@tanstack/react-query';
 import { api } from './client';
 import { useEventConnection } from './events';
-import type { ApifyRunInput, CsvImportInput, Opportunity, QualificationConfig } from './types';
+import type {
+  AgentMessageInput,
+  ApifyRunInput,
+  CsvImportInput,
+  DraftOutreachInput,
+  Opportunity,
+  QualificationConfig,
+} from './types';
 import { isRunActive } from '../lib/format';
 import { useUI } from '../lib/ui';
 
@@ -256,13 +263,14 @@ export function useDecideApproval() {
       void queryClient.invalidateQueries({ queryKey: ['activities'] });
       void queryClient.invalidateQueries({ queryKey: ['import'] });
       void queryClient.invalidateQueries({ queryKey: ['people'] });
+      void queryClient.invalidateQueries({ queryKey: ['person'] });
       void queryClient.invalidateQueries({ queryKey: ['organizations'] });
     },
   });
 }
 
 export function useAgentMessage() {
-  return useMutation({ mutationFn: (text: string) => api.agentMessage(text) });
+  return useMutation({ mutationFn: (input: AgentMessageInput) => api.agentMessage(input) });
 }
 
 export function useConnectors() {
@@ -295,6 +303,47 @@ export function useRemoveApifyConnector() {
       void queryClient.invalidateQueries({ queryKey: ['connectors'] });
       void queryClient.removeQueries({ queryKey: ['apify-actors'] });
       void queryClient.removeQueries({ queryKey: ['apify-actor'] });
+    },
+  });
+}
+
+export function useAnthropicConnector() {
+  const query = useConnectors();
+  const connector = query.data?.find((entry) => entry.kind === 'anthropic') ?? null;
+  return { query, connector };
+}
+
+export function useSaveAnthropicConnector() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { token?: string; model?: string }) => api.connectors.saveAnthropic(input),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['connectors'] });
+    },
+  });
+}
+
+export function useRemoveAnthropicConnector() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.connectors.removeAnthropic(),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['connectors'] });
+      void queryClient.invalidateQueries({ queryKey: ['runs'] });
+      void queryClient.invalidateQueries({ queryKey: ['run'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+    },
+  });
+}
+
+export function useStartDraftOutreach() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: DraftOutreachInput) => api.runs.startDraftOutreach(input),
+    onSuccess: (run) => {
+      queryClient.setQueryData(['run', run.id], run);
+      void queryClient.invalidateQueries({ queryKey: ['runs'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
     },
   });
 }

@@ -62,6 +62,7 @@ export function ensureWorkspace(db: Db, options: BootstrapOptions = {}) {
 export function resetAllData(db: Db): void {
   const tables = [
     'audit_event',
+    'model_call',
     'qualification_result',
     'import_row',
     'import_batch',

@@ -4,11 +4,13 @@ import {
   advanceApifyRun,
   advanceCsvImportRun,
   advanceDemoRun,
+  advanceDraftRun,
   advanceQualifyRun,
   apifyJobKind,
   claimDueJobs,
   csvImportJobKind,
   completeJob,
+  draftJobKind,
   failJob,
   failRun,
   type JobRecord,
@@ -53,7 +55,7 @@ function runJob(ctx: ActionContext, job: JobRecord): void {
   }
 }
 
-// Apify steps call the network, so they run on the async path below.
+// Apify and draft steps call the network, so they run on the async paths below.
 async function runApifyJob(ctx: ActionContext, job: JobRecord): Promise<void> {
   const runId = String(job.payload.runId);
   const jobContext: ActionContext = { ...ctx, workspaceId: String(job.payload.workspaceId), actor: 'system' };
@@ -78,9 +80,27 @@ async function runApifyJob(ctx: ActionContext, job: JobRecord): Promise<void> {
   }
 }
 
+async function runDraftJob(ctx: ActionContext, job: JobRecord): Promise<void> {
+  const runId = String(job.payload.runId);
+  const jobContext: ActionContext = { ...ctx, workspaceId: String(job.payload.workspaceId), actor: 'system' };
+  try {
+    const result = await advanceDraftRun(jobContext, runId);
+    if (result.nextRunAt) rescheduleJob(ctx, job.id, result.nextRunAt, true);
+    else completeJob(ctx, job.id);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'The step failed.';
+    if (job.attempts < maxJobAttempts) {
+      rescheduleJob(ctx, job.id, addMilliseconds(ctx.now(), 1000 * job.attempts), false);
+      return;
+    }
+    failJob(ctx, job.id);
+    failRun(jobContext, runId, `The run stopped after ${job.attempts} attempts: ${message}`);
+  }
+}
+
 // Processes every simulated job that is due. Single writer: this runs on the server's event loop, one job at a time.
 export function processJobs(ctx: ActionContext): number {
-  const jobs = claimDueJobs(ctx, 10, { excludeKinds: [apifyJobKind] });
+  const jobs = claimDueJobs(ctx, 10, { excludeKinds: [apifyJobKind, draftJobKind] });
   for (const job of jobs) runJob(ctx, job);
   return jobs.length;
 }
@@ -91,8 +111,14 @@ export async function processApifyJobs(ctx: ActionContext): Promise<number> {
   return jobs.length;
 }
 
+export async function processDraftJobs(ctx: ActionContext): Promise<number> {
+  const jobs = claimDueJobs(ctx, 10, { kinds: [draftJobKind] });
+  for (const job of jobs) await runDraftJob(ctx, job);
+  return jobs.length;
+}
+
 export async function processAllJobs(ctx: ActionContext): Promise<number> {
-  return processJobs(ctx) + (await processApifyJobs(ctx));
+  return processJobs(ctx) + (await processApifyJobs(ctx)) + (await processDraftJobs(ctx));
 }
 
 export interface Worker {
@@ -107,19 +133,30 @@ export function startWorker(
 ): Worker {
   if (options.recover ?? true) recoverStaleJobs(ctx);
   let apifyBusy = false;
+  let draftBusy = false;
   const timer = setInterval(() => {
     try {
       processJobs(ctx);
     } catch (error) {
       onError(error);
     }
-    if (apifyBusy) return;
-    apifyBusy = true;
-    processApifyJobs(ctx)
-      .catch(onError)
-      .finally(() => {
-        apifyBusy = false;
-      });
+    if (!apifyBusy) {
+      apifyBusy = true;
+      processApifyJobs(ctx)
+        .catch(onError)
+        .finally(() => {
+          apifyBusy = false;
+        });
+    }
+    // A draft call can take up to a minute, so drafting has its own lane and never blocks Apify polling.
+    if (!draftBusy) {
+      draftBusy = true;
+      processDraftJobs(ctx)
+        .catch(onError)
+        .finally(() => {
+          draftBusy = false;
+        });
+    }
   }, workerTickMilliseconds);
   return {
     stop: () => {

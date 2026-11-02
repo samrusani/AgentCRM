@@ -1,5 +1,6 @@
-import { useHealth, useWorkspace } from '../api/hooks';
+import { useAnthropicConnector, useHealth, useWorkspace } from '../api/hooks';
 import { ErrorState, Loading, PageHeader } from '../components/common';
+import { modelName } from '../lib/models';
 import { useUI, type ThemeSetting } from '../lib/ui';
 import { ConnectorSettings } from './ConnectorSettings';
 import { QualificationSettings } from './QualificationSettings';
@@ -14,6 +15,7 @@ export function Settings() {
   const { theme, setTheme } = useUI();
   const health = useHealth();
   const workspace = useWorkspace();
+  const { connector: anthropic } = useAnthropicConnector();
 
   return (
     <div className="screen">
@@ -90,7 +92,11 @@ export function Settings() {
               </div>
             </dl>
           ) : null}
-          <p className="muted">No model is connected. Agent runs are simulated until you add one.</p>
+          <p className="muted">
+            {anthropic?.status === 'connected'
+              ? `Model: connected (${modelName(anthropic.model)}). Chat and draft outreach use it, and costs shown are estimates.`
+              : 'No model is connected. Agent runs are simulated until you add one.'}
+          </p>
         </section>
       </div>
     </div>

@@ -40,7 +40,8 @@ IDs are prefixed strings, for example `per_a1b2c3`, generated from random bytes.
 | approval | workspace_id, run_id, kind, title, payload (JSON), payload_hash, status (pending, approved, rejected), note, decided_at, decided_by |
 | job | kind, payload (JSON), run_at, attempts, status (queued, running, done, failed), updated_at |
 | audit_event | workspace_id, actor, action, entity_type, entity_id, detail (JSON) |
-| connector | workspace_id, kind (apify), settings (JSON, no secrets), secret (API token, never returned by any endpoint), status (connected, error), updated_at |
+| connector | workspace_id, kind (apify, anthropic), settings (JSON, no secrets), secret (API token, never returned by any endpoint), status (connected, error), updated_at |
+| model_call | workspace_id, run_id (nullable), purpose (chat, draft), model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, estimated_usd, pending (a row written before the provider call and finalized after, so a crash leaves a visible possibly billed record), subject_id, created_at |
 | import_batch | workspace_id, run_id, source_kind (apify, csv), source_ref (JSON: for apify the actor id, apify run id, dataset id; for csv the file name, row count, delimiter), status (staging, awaiting_review, accepted, rejected, failed), counts (JSON), updated_at |
 | qualification_result | workspace_id, person_id (one row per person), run_id, payload (JSON), updated_at |
 | import_row | batch_id, seq, raw (JSON), mapped (JSON), status (staged, duplicate, invalid, accepted, rejected), match_entity_type, match_entity_id, reason |
@@ -102,6 +103,29 @@ Qualification turns the template's criteria into visible, per criterion verdicts
 - `GET /api/people` gains `sort=fit` (matched desc, then fewer unknowns, excluded and never qualified last) and each list item carries `qualification: { matched, total, unknown, excluded, computedAt } | null`; the UI marks a result "out of date" when the person changed after `computedAt`. `GET /api/people/:id` carries the full result payload: `{ computedAt, excluded, excludedReasons, matched, total, unknown, criteria: [{ id, label, outcome, reason, evidence }] }`.
 - The startup fundraising template seeds editable defaults: an exclusion on tags containing do-not-contact, and criteria for organization kind equals fund, title containing partner, principal, scout, or head of, and tags containing seed.
 
+## Model adapter
+
+The model adapter brings real intelligence to chat and drafting while keeping every honesty rule. Users bring their own Anthropic API key; the product ships no bundled model access, and everything except model calls keeps working without a key.
+
+- Connector kind `anthropic`: `PUT /api/connectors/anthropic` takes `{ token?, model? }`, validates the token against the models endpoint, and stores it with the same secret rules as Apify (local secret column, masked to last four, never in logs, audit, SSE, errors, or MCP). Settings hold the chosen `model`. `DELETE` removes it. The provider base URL is `https://api.anthropic.com`, overridable with `AGENTCRM_ANTHROPIC_BASE` for tests.
+- Supported models with their current list prices per million tokens (a static map in code, used only for estimates and labelled as estimates): `claude-opus-5-5` (default, input 4.00, output 20.00), `claude-sonnet-5-5` (2.00, 10.00), `claude-haiku-5-5` (0.10, 0.50 up to 100K prompts). The default model is Opus 5.5.
+- Every model call writes a `model_call` row: a pending row goes in before the provider call and is finalized with real usage after, so a crash mid call leaves a visible "outcome unknown, possibly billed" record and that person is never silently re billed. Estimates use the price map including cache writes at 1.25 times input and cache reads at a tenth; costs shown in the UI always say estimated.
+- Chat and drafting send record contents (people, organizations, claims, notes) to Anthropic; the connector card and the draft sheet say so plainly.
+- Agent origin draft runs with no budget get a default budget of 1.00 dollars. Draft calls run with SDK retries off (the worker owns the 3 attempts), and a run stops early as partial after three consecutive identical non retryable rejections.
+
+Chat with a model connected: `POST /api/agent/message` accepts `{ text, history?, context? }` where history is up to the last 10 `{ role, text }` turns and context is an optional `{ entityType, entityId }`. The server runs a bounded tool loop (at most 5 tool rounds, 30 second provider timeout) with read only, strict schema tools: `search_crm`, `get_record`, `today_summary`. The model never gets a tool that writes. CRM content enters prompts as data with an explicit instruction that it is not instructions. The reply returns `{ reply, actions, modelConnected: true, usage: { inputTokens, outputTokens, estimatedUsd } }`; suggested actions always come from the server's rule based code, never from model text. A provider failure returns the deterministic reply with `modelFailed: true` and a plain note. With no key configured, the deterministic replies remain exactly as they are.
+
+Run kind `draft_outreach`: scope `{ personIds?, tag?, instructions?, maxPeople (default 10, cap 25), budgetUsd? }`.
+
+1. Load the audience: people with an email, not excluded by qualification, never tagged do-not-contact. Skipped people are counted with reasons.
+2. Draft one person per model call with structured output (subject, body, factsUsed citing the record fields and claims the draft used). The system prompt carries the user's instructions and voice, marks CRM content as data, and is cache stable across the batch. Progress checkpoints in the run scope so a restart never redrafts paid work.
+3. A refusal or per person failure marks that person flagged with the reason and continues. The budget is checked between drafts: when the spend so far plus the average cost per call would cross `budgetUsd`, the run stops drafting and finishes `partial` with honest counts. The first draft always runs, and a costlier than average draft can push the total past the budget; the UI says so.
+4. Final step creates an approval of kind `draft_review` whose payload carries the full drafts (person, subject, body, factsUsed) plus the count and estimated cost, so the approval hash binds exactly what the user read to what gets applied. The UI renders every draft for reading before the decision; facts are labelled as reported by the model, with a server check marking any fact value not found in the record. The run enters `waiting_approval`. The run enters `waiting_approval`. Approving writes one `email_draft` activity per draft, labelled as a draft that was not sent (no email connector exists). Rejecting cancels the run. Nothing is ever sent. Removing the connector fails queued, running, or paused draft runs with a clear step detail before the key is deleted; runs already waiting for review stay decidable.
+
+Counts for draft runs: `processed`, `found` (drafted), `flagged` (skipped or failed, with reasons), plus `estimatedUsd` observed. Agent origin may start `draft_outreach` under the same one active agent run rule as Apify; drafting spends the user's model budget, so the cap applies.
+
+API facts the implementation must follow (current as of this writing): thinking is always on for these models, so the `thinking` parameter is omitted; depth is controlled with `output_config.effort` (`low` for chat, `medium` for drafting). Forced `tool_choice` `any` or `tool` returns a 400 on these models; tools use `auto` with `strict: true` schemas. Structured outputs use `output_config.format`. Refusals surface as HTTP 200 with `stop_reason: "refusal"`; server side fallbacks are enabled with `fallbacks: "default"` plus the beta header `server-side-fallback-2026-07-01`. The stable system prompt carries a `cache_control` breakpoint so batch drafting reuses the prompt cache.
+
 ## API contract
 
 Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expectedVersion`); database columns stay snake_case. List endpoints accept `limit` (default 50, max 200) and an opaque `cursor` (base64url of the last row id, keyset ordered), and return `{ items, nextCursor }` where `nextCursor` is null on the last page. Successful creates return 201. Errors use HTTP status plus `{ "error": { "code", "message" } }`. Codes: `validation`, `not_found`, `version_conflict` (409, with the current record at `error.current`), `conflict`, `internal`. Duplicate person emails and organization domains return 409 `conflict`.
@@ -130,8 +154,8 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 | PATCH `/api/tasks/:id` | `{ expectedVersion, fields }`, completing sets status done |
 | GET `/api/activities?entityType=&entityId=` | Timeline for a record, newest first |
 | POST `/api/activities` | Create a note. `kind` is optional and only accepts `note` |
-| GET `/api/runs?status=` | Runs, newest first. `status` accepts one value, a comma list, or `active`. Simulated runs carry `simulated: true` |
-| POST `/api/runs` | `{ kind, title?, scope? }`, returns the queued run immediately. Kinds: `demo_research` (scope optional JSON), `apify_scrape` (scope requires `actorId` and `input`, optional `maxItems` 1 to 1000 defaulting to 100), and `qualify` (scope `{}` or `{ tag }`). `csv_import` runs are created only through the CSV import route |
+| GET `/api/runs?status=` | Runs, newest first. `status` accepts one value, a comma list, or `active`. Simulated runs carry `simulated: true`. Bulky scope arrays such as drafts are stripped from the list response and live on the run detail |
+| POST `/api/runs` | `{ kind, title?, scope? }`, returns the queued run immediately. Kinds: `demo_research` (scope optional JSON), `apify_scrape` (scope requires `actorId` and `input`, optional `maxItems` 1 to 1000 defaulting to 100), and `qualify` (scope `{}` or `{ tag }`), and `draft_outreach` (scope per the model adapter section, requires the Anthropic connector). `csv_import` runs are created only through the CSV import route |
 | GET `/api/runs/:id` | Run with ordered steps and any linked approvals |
 | POST `/api/runs/:id/control` | `{ action: "pause" | "resume" | "cancel" }` |
 | GET `/api/approvals?status=` | Approvals with run titles |
@@ -139,6 +163,8 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 | POST `/api/approvals/:id/decision` | `{ decision: "approve" | "reject", note? }`. Returns `{ approval, run, alreadyDecided }`. Repeating the same decision is idempotent; the opposite decision returns 409 `conflict` |
 | GET `/api/search?q=` | `{ people, organizations, opportunities }`, up to 8 each, for the command palette |
 | GET `/api/connectors` | Configured connectors with masked settings, never the secret |
+| PUT `/api/connectors/anthropic` | `{ token?, model? }`. With a token: validates and stores it. Without: updates the model choice. Same masked shape as Apify |
+| DELETE `/api/connectors/anthropic` | Remove the connector and its key |
 | PUT `/api/connectors/apify` | `{ token?, allowlist? }`. With a token: validates it against the Apify API and stores it. Without a token: updates the allowlist of an existing connector (error if none exists). Returns the masked connector (`tokenMasked`, `status`, `statusMessage` when status is error, `settings.allowlist`) |
 | DELETE `/api/connectors/apify` | Remove the connector and its token. Queued, running, or paused Apify runs are failed first and Apify is asked to abort them while the token still exists; runs waiting for approval are left to the user |
 | GET `/api/connectors/apify/actors?q=` | Proxied Apify store search: id, name, title, description, stats, pricing hint |
@@ -148,7 +174,7 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 | POST `/api/imports/csv` | Stage a CSV with a confirmed mapping; returns the `csv_import` run, 201 |
 | GET `/api/qualification` | The workspace's qualification config |
 | PUT `/api/qualification` | Replace the qualification config after validation |
-| POST `/api/agent/message` | `{ text }` returns `{ reply, actions, modelConnected }`. Deterministic and rule based. Actions are `{ id, label, kind, entityType?, entityId? }` with kinds `start_demo_run`, `open_record`, and `start_apify_import` (the UI opens the import setup; the server never starts the scrape itself) |
+| POST `/api/agent/message` | `{ text, history?, context? }` returns `{ reply, actions, modelConnected, usage? }`. Model backed with a bounded read only tool loop when the Anthropic connector is configured; deterministic and rule based otherwise. Actions are `{ id, label, kind, entityType?, entityId? }` with kinds `start_demo_run`, `open_record`, and `start_apify_import` (the UI opens the import setup; the server never starts the scrape itself) |
 | GET `/api/events` | Server sent events. Frames: `run_updated` `{type,runId}`, `approval_updated` `{type,approvalId,runId}`, `record_updated` `{type,entityType,entityId}`, plus an initial `ready` event and a 15 second keep alive comment. The web app refetches on these signals |
 
 ## MCP server
@@ -160,7 +186,7 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 - `crm_get_record`: person, organization, or opportunity by id, with evidence
 - `crm_propose_changes`: validate a batch of field changes, return a preview, write nothing
 - `crm_apply_changes`: apply a previously validated proposal with expected versions
-- `crm_start_research`: start a run and return its id: `demo_research`, `qualify`, or `apify_scrape` for an allowlisted actor
+- `crm_start_research`: start a run and return its id: `demo_research`, `qualify`, `apify_scrape` for an allowlisted actor, or `draft_outreach` (one active agent started run at a time)
 - `crm_get_run`: run status, steps, counts
 
 MCP tools call the same actions as the HTTP routes. No tool can decide an approval.
@@ -189,7 +215,7 @@ Exit codes: 0 success, 1 expected failure with a printed reason, 2 usage error.
 ## Conventions
 
 - Loopback only. The server binds 127.0.0.1 and additionally rejects requests whose Host header is not 127.0.0.1, localhost, or [::1] (any port) with 403, as a DNS rebinding guard.
-- Environment overrides: `AGENTCRM_DB` (database path), `AGENTCRM_PORT`, `AGENTCRM_LOG_LEVEL`, `AGENTCRM_STEP_MS` (demo run step interval), `AGENTCRM_APIFY_BASE` (provider base URL, for tests), `AGENTCRM_APIFY_TIMEOUT_MS` (poll timeout, default 600000), `AGENTCRM_APIFY_POLL_MS` (poll interval, default 3000).
+- Environment overrides: `AGENTCRM_DB` (database path), `AGENTCRM_PORT`, `AGENTCRM_LOG_LEVEL`, `AGENTCRM_STEP_MS` (demo run step interval), `AGENTCRM_APIFY_BASE` (provider base URL, for tests), `AGENTCRM_APIFY_TIMEOUT_MS` (poll timeout, default 600000), `AGENTCRM_APIFY_POLL_MS` (poll interval, default 3000), `AGENTCRM_ANTHROPIC_BASE` (provider base URL, for tests), `AGENTCRM_ANTHROPIC_RETRIES` (SDK retry count, default 2).
 - Known limitation: keyset cursors compare against the cursor row's sort keys at read time, so a record edited between pages can shift page boundaries for name, date, or recency ordered lists. A composite cursor that freezes the sort key is planned.
 - All server code TypeScript, ESM, strict mode.
 - Tests with vitest cover the action service: version conflicts, workspace scoping, approval decisions, run transitions.

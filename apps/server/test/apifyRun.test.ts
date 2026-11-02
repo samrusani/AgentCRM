@@ -641,7 +641,7 @@ describe('apify run policy', () => {
     const first = startRun(env.ctx, { kind: 'apify_scrape', scope }, { origin: 'agent' });
     const refused = conflictMessage(() => startRun(env.ctx, { kind: 'apify_scrape', scope }, { origin: 'agent' }));
     expect(refused).toContain('conflict');
-    expect(refused).toContain('One agent started import may run at a time');
+    expect(refused).toContain('One agent started run may be open at a time');
     // A person can still start their own import, and demo runs are not counted.
     const own = startRun(env.ctx, { kind: 'apify_scrape', scope }, { origin: 'user' });
     expect(own.status).toBe('queued');

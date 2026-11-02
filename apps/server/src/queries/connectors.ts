@@ -1,54 +1,81 @@
 import type { Db } from '../db.js';
+import { defaultModel, isSupportedModel, type ModelId } from '../providers/anthropic.js';
 import { type Row } from '../records.js';
 
-export type ConnectorKind = 'apify';
+export type ConnectorKind = 'apify' | 'anthropic';
 
-export interface ConnectorSettings {
+export interface ApifyConnectorSettings {
   allowlist: string[];
   username: string | null;
 }
 
-interface StoredSettings extends ConnectorSettings {
-  statusMessage: string | null;
+export interface AnthropicConnectorSettings {
+  model: ModelId;
 }
 
-// Settings hold the allowlist, the account name, and the last error sentence. They never hold the token.
+// Settings hold the allowlist, the account name, the model choice, and the last error sentence. They never hold the secret.
 // The secret never leaves this module through a response. Only getConnectorSecret reads it.
 export function maskToken(token: string): string {
   return token.length > 4 ? `****${token.slice(-4)}` : '****';
 }
 
-function parseSettings(value: unknown): StoredSettings {
+function parseObject(value: unknown): Record<string, unknown> {
   try {
-    const parsed = JSON.parse(String(value)) as Partial<StoredSettings>;
-    return {
-      allowlist: Array.isArray(parsed.allowlist) ? parsed.allowlist.filter((item) => typeof item === 'string') : [],
-      username: typeof parsed.username === 'string' ? parsed.username : null,
-      statusMessage: typeof parsed.statusMessage === 'string' ? parsed.statusMessage : null,
-    };
+    const parsed = JSON.parse(String(value)) as unknown;
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
   } catch {
-    return { allowlist: [], username: null, statusMessage: null };
+    return {};
   }
 }
 
-export function toConnector(row: Row) {
-  const { statusMessage, ...settings } = parseSettings(row.settings);
+const errorMessages: Record<ConnectorKind, string> = {
+  apify: 'Apify rejected the saved API token.',
+  anthropic: 'Anthropic rejected the saved API key.',
+};
+
+interface ConnectorBase {
+  id: string;
+  workspaceId: string;
+  status: 'connected' | 'error';
+  statusMessage: string | null;
+  tokenMasked: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ApifyConnector = ConnectorBase & { kind: 'apify'; settings: ApifyConnectorSettings };
+export type AnthropicConnector = ConnectorBase & { kind: 'anthropic'; settings: AnthropicConnectorSettings };
+export type Connector = ApifyConnector | AnthropicConnector;
+
+export function toConnector(row: Row): Connector {
+  const kind = String(row.kind) as ConnectorKind;
+  const stored = parseObject(row.settings);
   const status = String(row.status) as 'connected' | 'error';
-  return {
+  const base: ConnectorBase = {
     id: String(row.id),
     workspaceId: String(row.workspace_id),
-    kind: String(row.kind) as ConnectorKind,
     status,
-    statusMessage: status === 'error' ? (statusMessage ?? 'Apify rejected the saved API token.') : null,
-    settings,
+    statusMessage: status === 'error' ? (typeof stored.statusMessage === 'string' ? stored.statusMessage : errorMessages[kind]) : null,
     tokenMasked: maskToken(String(row.secret)),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
+  if (kind === 'anthropic') {
+    return { ...base, kind, settings: { model: isSupportedModel(stored.model) ? stored.model : defaultModel } };
+  }
+  return {
+    ...base,
+    kind: 'apify',
+    settings: {
+      allowlist: Array.isArray(stored.allowlist) ? stored.allowlist.filter((item): item is string => typeof item === 'string') : [],
+      username: typeof stored.username === 'string' ? stored.username : null,
+    },
+  };
 }
 
-export type Connector = ReturnType<typeof toConnector>;
-
+export function getConnector(db: Db, workspaceId: string, kind: 'apify'): ApifyConnector | null;
+export function getConnector(db: Db, workspaceId: string, kind: 'anthropic'): AnthropicConnector | null;
+export function getConnector(db: Db, workspaceId: string, kind: ConnectorKind): Connector | null;
 export function getConnector(db: Db, workspaceId: string, kind: ConnectorKind): Connector | null {
   const row = db.prepare('SELECT * FROM connector WHERE workspace_id = ? AND kind = ?').get(workspaceId, kind) as
     | Row

@@ -4,6 +4,7 @@ import { buildApp } from '../src/http/app.js';
 import { processAllJobs, processJobs } from '../src/jobs/worker.js';
 import { seedDatabase } from '../src/seed/seed.js';
 import { type ApifyStub, startApifyStub, stubToken, useStub } from './apifyStub.js';
+import { type AnthropicStub, draftFor, startAnthropicStub, stubApiKey, textReply, useAnthropicStub } from './anthropicStub.js';
 import { createTestEnvironment } from './helpers.js';
 
 // One success case for every route the web client calls, against a temporary database and no live server.
@@ -11,10 +12,14 @@ const env = createTestEnvironment();
 let app: FastifyInstance;
 let stub: ApifyStub;
 let restoreEnvironment: () => void;
+let anthropic: AnthropicStub;
+let restoreAnthropic: () => void;
 
 beforeAll(async () => {
   stub = await startApifyStub();
   restoreEnvironment = useStub(stub);
+  anthropic = await startAnthropicStub();
+  restoreAnthropic = useAnthropicStub(anthropic);
   seedDatabase(env.db, { now: new Date('2026-03-01T12:00:00.000Z') });
   app = buildApp({ db: env.db, bus: env.bus, databasePath: env.databasePath, logLevel: 'silent', now: env.ctx.now });
   await app.ready();
@@ -23,6 +28,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await app.close();
   await stub.close();
+  await anthropic.close();
+  restoreAnthropic();
   restoreEnvironment();
   env.cleanup();
 });
@@ -171,6 +178,72 @@ describe('web client contract', () => {
 
     expect((await call('DELETE', '/api/connectors/apify')).status).toBe(204);
   });
+  it('serves the anthropic connector, model backed chat, and draft run shapes', async () => {
+    expect((await call('PUT', '/api/connectors/anthropic', { token: 'sk-ant-wrong-0000' })).status).toBe(400);
+    const saved = await call('PUT', '/api/connectors/anthropic', { token: stubApiKey });
+    expect(saved.status).toBe(201);
+    expect(Object.keys(saved.body).sort()).toEqual(['createdAt', 'id', 'kind', 'settings', 'status', 'statusMessage', 'tokenMasked', 'updatedAt', 'workspaceId']);
+    expect(saved.body).toMatchObject({ kind: 'anthropic', status: 'connected', statusMessage: null, tokenMasked: '****1234', settings: { model: 'claude-opus-5-5' } });
+    const switched = await call('PUT', '/api/connectors/anthropic', { model: 'claude-haiku-5-5' });
+    expect(switched.status).toBe(200);
+    expect(switched.body.settings).toEqual({ model: 'claude-haiku-5-5' });
+    expect((await call('PUT', '/api/connectors/anthropic', { model: 'gpt-4' })).status).toBe(400);
+    const connectors = await call('GET', '/api/connectors');
+    expect(connectors.body.items.map((item: { kind: string }) => item.kind)).toEqual(['anthropic']);
+    expect(JSON.stringify(connectors.body)).not.toContain(stubApiKey);
+
+    anthropic.state.fallback = () => textReply('There are people in this workspace.');
+    const chat = await call('POST', '/api/agent/message', {
+      text: 'How is the pipeline?',
+      history: [{ role: 'user', text: 'Hello' }, { role: 'assistant', text: 'Hi, ask me about your records.' }],
+      context: { entityType: 'person', entityId: 'per_000000000000' },
+    });
+    expect(chat.status).toBe(200);
+    expect(Object.keys(chat.body).sort()).toEqual(['actions', 'modelConnected', 'reply', 'usage']);
+    expect(chat.body).toMatchObject({ reply: 'There are people in this workspace.', modelConnected: true, usage: { inputTokens: 1000, outputTokens: 200 } });
+    expect(Object.keys(chat.body.usage).sort()).toEqual(['estimatedUsd', 'inputTokens', 'outputTokens']);
+    expect(typeof chat.body.usage.estimatedUsd).toBe('number');
+
+    anthropic.state.fallback = (body) => draftFor(body);
+    const run = await call('POST', '/api/runs', { kind: 'draft_outreach', scope: { maxPeople: 2, instructions: 'Be brief.', budgetUsd: 5 } });
+    expect(run.status).toBe(201);
+    expect(run.body).toMatchObject({ kind: 'draft_outreach', status: 'queued', simulated: false, counts: { processed: 0, found: 0, flagged: 0 } });
+    for (let tick = 0; tick < 60; tick += 1) {
+      env.advance(1000);
+      await processAllJobs(env.ctx);
+      if ((await call('GET', `/api/runs/${run.body.id}`)).body.status === 'waiting_approval') break;
+    }
+    const waiting = await call('GET', `/api/runs/${run.body.id}`);
+    expect(waiting.body.status).toBe('waiting_approval');
+    expect(waiting.body.counts).toMatchObject({ processed: 2, found: 2, flagged: 0 });
+    expect(typeof waiting.body.counts.estimatedUsd).toBe('number');
+    const approval = waiting.body.approvals[0];
+    expect(approval).toMatchObject({ kind: 'draft_review', title: 'Save 2 drafts for review', status: 'pending' });
+    expect(Object.keys(approval.payload).sort()).toEqual(['count', 'drafts', 'estimatedUsd', 'sample']);
+    expect(approval.payload.drafts).toHaveLength(2);
+    expect(Object.keys(approval.payload.drafts[0]).sort()).toEqual(['body', 'factsUsed', 'personId', 'personName', 'subject']);
+    expect(approval.payload.sample).toHaveLength(2);
+    expect(Object.keys(approval.payload.sample[0]).sort()).toEqual(['personName', 'subject']);
+    // The runs list leaves the bulky draft arrays out. The detail and the approval keep them.
+    const listed = (await call('GET', '/api/runs?limit=50')).body.items.find((item: { id: string }) => item.id === run.body.id);
+    expect(listed.scope).not.toHaveProperty('drafts');
+    expect(listed.scope).not.toHaveProperty('audienceIds');
+    expect(listed.scope).toMatchObject({ maxPeople: 2, budgetUsd: 5 });
+    expect(typeof listed.scope.model).toBe('string');
+    expect(waiting.body.scope.drafts).toHaveLength(2);
+    const decided = await call('POST', `/api/approvals/${approval.id}/decision`, { decision: 'approve' });
+    expect(decided.body.run.status).toBe('succeeded');
+    const drafted = (await call('GET', '/api/activities?entityType=person&limit=200')).body.items.filter((item: { kind: string; actor: string }) => item.kind === 'email_draft' && item.actor === 'agent:draft_outreach');
+    expect(drafted).toHaveLength(2);
+    expect(drafted[0].body.startsWith('Draft, not sent.')).toBe(true);
+
+    expect((await call('DELETE', '/api/connectors/anthropic')).status).toBe(204);
+    expect((await call('POST', '/api/runs', { kind: 'draft_outreach', scope: {} })).status).toBe(409);
+    const plain = await call('POST', '/api/agent/message', { text: 'hello' });
+    expect(plain.body.modelConnected).toBe(false);
+    expect(plain.body).not.toHaveProperty('usage');
+  });
+
   it('serves the csv import and qualification routes', async () => {
     const content = 'Name,Email,Company\nCora Vale,cora.vale@contract-csv.example.com,Contract CSV Fund\n';
     const preview = await call('POST', '/api/imports/csv/preview', { fileName: 'contract.csv', content });

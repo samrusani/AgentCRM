@@ -27,6 +27,8 @@ export interface RunCounts {
   accepted?: number;
   // Qualify runs also report this.
   excluded?: number;
+  // Draft runs report the estimated model cost so far, in US dollars. It is an estimate, not a bill.
+  estimatedUsd?: number;
 }
 
 function text(value: unknown): string | null {

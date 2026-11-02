@@ -1,7 +1,9 @@
 import { normalizeCounts } from '../lib/imports';
 import type {
   Activity,
+  AgentMessageInput,
   AgentReply,
+  AgentUsage,
   ApifyActorDetail,
   ApifyActorSummary,
   ApifyRunInput,
@@ -16,6 +18,7 @@ import type {
   CriterionField,
   CsvImportInput,
   CsvPreview,
+  DraftOutreachInput,
   Health,
   ImportBatch,
   ImportBatchPage,
@@ -185,6 +188,8 @@ function normalizeRun(raw: Run): Run {
   const counts = (parseMaybeJson(raw.counts) ?? {}) as Partial<RunCounts>;
   const scope = parseMaybeJson(raw.scope);
   const excluded = counts.excluded === undefined || counts.excluded === null ? undefined : Number(counts.excluded);
+  const estimatedUsd =
+    counts.estimatedUsd === undefined || counts.estimatedUsd === null ? undefined : Number(counts.estimatedUsd);
   return {
     ...raw,
     counts: {
@@ -192,6 +197,7 @@ function normalizeRun(raw: Run): Run {
       found: Number(counts.found ?? 0),
       flagged: Number(counts.flagged ?? 0),
       ...(excluded !== undefined && Number.isFinite(excluded) ? { excluded } : {}),
+      ...(estimatedUsd !== undefined && Number.isFinite(estimatedUsd) ? { estimatedUsd } : {}),
     },
     scope: scope && typeof scope === 'object' ? (scope as Record<string, unknown>) : {},
     steps: raw.steps ? [...raw.steps].sort((a, b) => a.seq - b.seq) : raw.steps,
@@ -278,8 +284,22 @@ function normalizeConnector(raw: unknown): Connector {
       settings.error,
     ),
     allowlist: toArray<unknown>(allowlistSource).filter((entry): entry is string => typeof entry === 'string'),
+    model: textOrNull(settings.model ?? record.model),
     tokenMasked: textOrNull(record.tokenMasked ?? settings.tokenMasked),
     updatedAt: textOrNull(record.updatedAt),
+  };
+}
+
+function normalizeUsage(raw: unknown): AgentUsage | null {
+  const record = objectOrEmpty(raw);
+  const input = Number(record.inputTokens);
+  const output = Number(record.outputTokens);
+  if (!Number.isFinite(input) || !Number.isFinite(output)) return null;
+  const usd = Number(record.estimatedUsd);
+  return {
+    inputTokens: Math.max(0, Math.round(input)),
+    outputTokens: Math.max(0, Math.round(output)),
+    estimatedUsd: Number.isFinite(usd) && usd >= 0 ? usd : 0,
   };
 }
 
@@ -579,6 +599,10 @@ export const api = {
           },
         }),
       ),
+    startDraftOutreach: async (input: DraftOutreachInput) => {
+      const { title, ...scope } = input;
+      return normalizeRun(await request<Run>('POST', '/runs', { body: { kind: 'draft_outreach', title, scope } }));
+    },
     startQualify: async (scope: { tag?: string } = {}) =>
       normalizeRun(await request<Run>('POST', '/runs', { body: { kind: 'qualify', scope } })),
     get: async (id: string) => normalizeRun(await request<Run>('GET', `/runs/${id}`)),
@@ -607,6 +631,10 @@ export const api = {
     saveApify: async (input: { token?: string; allowlist?: string[] }) =>
       normalizeConnector(await request<unknown>('PUT', '/connectors/apify', { body: input })),
     removeApify: () => request<unknown>('DELETE', '/connectors/apify'),
+    // Token connects or reconnects. Model alone switches models on an existing connector.
+    saveAnthropic: async (input: { token?: string; model?: string }) =>
+      normalizeConnector(await request<unknown>('PUT', '/connectors/anthropic', { body: input })),
+    removeAnthropic: () => request<unknown>('DELETE', '/connectors/anthropic'),
   },
 
   apify: {
@@ -666,8 +694,17 @@ export const api = {
     };
   },
 
-  agentMessage: async (text: string): Promise<AgentReply> => {
-    const data = await request<Partial<AgentReply>>('POST', '/agent/message', { body: { text } });
-    return { reply: data.reply ?? '', actions: toArray(data.actions), modelConnected: data.modelConnected };
+  agentMessage: async (input: AgentMessageInput): Promise<AgentReply> => {
+    const body: AgentMessageInput = { text: input.text };
+    if (input.history && input.history.length > 0) body.history = input.history;
+    if (input.context) body.context = input.context;
+    const data = await request<Partial<AgentReply>>('POST', '/agent/message', { body });
+    const usage = normalizeUsage(data.usage);
+    return {
+      reply: data.reply ?? '',
+      actions: toArray(data.actions),
+      modelConnected: data.modelConnected === true,
+      ...(usage ? { usage } : {}),
+    };
   },
 };
