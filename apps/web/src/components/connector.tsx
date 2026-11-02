@@ -2,6 +2,48 @@ import { useState, type FormEvent, type ReactNode } from 'react';
 import type { Connector } from '../api/types';
 import { formatAgo } from '../lib/format';
 import { errorMessage } from './common';
+import { Icon } from './Icons';
+
+// The card header is a disclosure: collapsed it still names the card, a short summary, and its state chip.
+export function CardToggle({
+  name,
+  summary,
+  chip,
+  open,
+  onToggle,
+  bodyId,
+}: {
+  name: string;
+  summary?: string | null;
+  chip: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  bodyId: string;
+}) {
+  return (
+    <h3 className="connector__name">
+      <button
+        type="button"
+        className="connector__toggle"
+        aria-expanded={open}
+        aria-controls={open ? bodyId : undefined}
+        onClick={onToggle}
+      >
+        <Icon name={open ? 'chevronDown' : 'chevronRight'} className="connector__chevron" />
+        <span>{name}</span>
+        {!open && summary ? <span className="connector__summary">{summary}</span> : null}
+        <span className="connector__chips">{chip}</span>
+      </button>
+    </h3>
+  );
+}
+
+// Open when the user says so; a card whose connection has an error opens on its own so the problem is not hidden.
+export function useCardOpen(connector: Connector | null): [boolean, () => void] {
+  const [choice, setChoice] = useState<boolean | null>(null);
+  const open = choice ?? connector?.status === 'error';
+  return [open, () => setChoice(!open)];
+}
 
 export function lastFour(masked: string | null): string | null {
   if (!masked) return null;

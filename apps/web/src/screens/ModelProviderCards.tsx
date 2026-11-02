@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   useModelConnector,
   useOllamaModels,
@@ -8,8 +8,7 @@ import {
 } from '../api/hooks';
 import type { Connector, ModelProviderKind, ModelProviderSelection } from '../api/types';
 import { Chip, errorMessage } from '../components/common';
-import { Icon } from '../components/Icons';
-import { RemoveControl, TokenForm, TokenLine } from '../components/connector';
+import { CardToggle, RemoveControl, TokenForm, TokenLine, useCardOpen } from '../components/connector';
 import {
   OLLAMA_DEFAULT_BASE_URL,
   localModelHint,
@@ -25,48 +24,11 @@ interface CardProps {
   active: ModelProviderSelection | null;
 }
 
-// The card header is a disclosure: collapsed it still says what is connected, which model, and what is in use.
-function CardToggle({
-  preset,
-  connector,
-  active,
-  open,
-  onToggle,
-  bodyId,
-}: CardProps & { open: boolean; onToggle: () => void; bodyId: string }) {
-  const hasError = connector?.status === 'error';
-  const activeHere = active?.kind === preset.kind;
-  return (
-    <h3 className="connector__name">
-      <button
-        type="button"
-        className="connector__toggle"
-        aria-expanded={open}
-        aria-controls={open ? bodyId : undefined}
-        onClick={onToggle}
-      >
-        <Icon name={open ? 'chevronDown' : 'chevronRight'} className="connector__chevron" />
-        <span>{preset.name}</span>
-        {!open && connector?.model ? <span className="connector__summary">{modelName(connector.model)}</span> : null}
-        <span className="connector__chips">
-          {hasError ? (
-            <Chip tone="danger">Error</Chip>
-          ) : activeHere ? (
-            <Chip tone="accent">In use</Chip>
-          ) : (
-            <Chip tone="neutral">{connector ? 'Connected' : 'Not connected'}</Chip>
-          )}
-        </span>
-      </button>
-    </h3>
-  );
-}
-
-// Open when the user says so; a card whose connection has an error opens on its own so the problem is not hidden.
-function useCardOpen(connector: Connector | null): [boolean, () => void] {
-  const [choice, setChoice] = useState<boolean | null>(null);
-  const open = choice ?? connector?.status === 'error';
-  return [open, () => setChoice(!open)];
+// Collapsed, a provider card still says which model is chosen and whether this provider is the one in use.
+function providerChip({ preset, connector, active }: CardProps): ReactNode {
+  if (connector?.status === 'error') return <Chip tone="danger">Error</Chip>;
+  if (active?.kind === preset.kind) return <Chip tone="accent">In use</Chip>;
+  return <Chip tone="neutral">{connector ? 'Connected' : 'Not connected'}</Chip>;
 }
 
 // Exactly one configured provider is in use. The active card says so in text, others offer a quiet switch.
@@ -218,7 +180,14 @@ export function KeyedProviderCard({ preset, connector, active }: CardProps) {
 
   return (
     <article className="connector" aria-label={`${preset.name} connector`}>
-      <CardToggle preset={preset} connector={connector} active={active} open={open} onToggle={toggle} bodyId={bodyId} />
+      <CardToggle
+        name={preset.name}
+        summary={connector?.model ? modelName(connector.model) : null}
+        chip={providerChip({ preset, connector, active })}
+        open={open}
+        onToggle={toggle}
+        bodyId={bodyId}
+      />
 
       {open ? (
         <div className="connector__body" id={bodyId}>
@@ -329,7 +298,14 @@ export function OllamaCard({ preset, connector, active }: CardProps) {
 
   return (
     <article className="connector" aria-label={`${preset.name} connector`}>
-      <CardToggle preset={preset} connector={connector} active={active} open={open} onToggle={toggle} bodyId={bodyId} />
+      <CardToggle
+        name={preset.name}
+        summary={connector?.model ? modelName(connector.model) : null}
+        chip={providerChip({ preset, connector, active })}
+        open={open}
+        onToggle={toggle}
+        bodyId={bodyId}
+      />
 
       {open ? (
         <div className="connector__body" id={bodyId}>

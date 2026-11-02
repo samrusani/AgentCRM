@@ -7,7 +7,7 @@ import {
 } from '../api/hooks';
 import type { Connector } from '../api/types';
 import { Chip, errorMessage } from '../components/common';
-import { RemoveControl, TokenForm, TokenLine } from '../components/connector';
+import { CardToggle, RemoveControl, TokenForm, TokenLine, useCardOpen } from '../components/connector';
 import { DAILY_SEND_CAP } from '../lib/mail';
 
 function InboxSection({ connector }: { connector: Connector }) {
@@ -184,21 +184,29 @@ export function AgentMailConnectorCard({ connector }: { connector: Connector | n
     }
   };
 
+  const [open, toggle] = useCardOpen(connector);
+  // Collapsed, the card still says which address sends, or that none is selected yet.
+  const summary = connector ? (connector.inboxEmail ?? connector.inboxId ?? 'no inbox selected') : null;
+
   return (
     <article className="connector" aria-label="AgentMail connector">
-      <header className="connector__header">
-        <h3 className="connector__name">AgentMail</h3>
-        {connector ? (
+      <CardToggle
+        name="AgentMail"
+        summary={summary}
+        chip={
           hasError ? (
             <Chip tone="danger">Error</Chip>
           ) : (
-            <Chip tone="neutral">Connected</Chip>
+            <Chip tone="neutral">{connector ? 'Connected' : 'Not connected'}</Chip>
           )
-        ) : (
-          <Chip tone="neutral">Not connected</Chip>
-        )}
-      </header>
+        }
+        open={open}
+        onToggle={toggle}
+        bodyId="agentmail-card-body"
+      />
 
+      {open ? (
+        <div className="connector__body" id="agentmail-card-body">
       {connector ? (
         <TokenLine connector={connector} noun="key" />
       ) : (
@@ -238,6 +246,8 @@ export function AgentMailConnectorCard({ connector }: { connector: Connector | n
           mutation={{ isPending: remove.isPending, isError: remove.isError, error: remove.error, mutate: () => remove.mutate() }}
           warning="Remove AgentMail and delete the stored key? Messages that are queued or approved will be blocked and will not send. Sent messages and replies already stored stay."
         />
+      ) : null}
+        </div>
       ) : null}
     </article>
   );
