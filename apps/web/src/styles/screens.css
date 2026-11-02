@@ -642,3 +642,6 @@
   font-size: 12px;
   color: var(--ink-muted);
 }
+.panel__model--attention {
+  color: var(--warn);
+}

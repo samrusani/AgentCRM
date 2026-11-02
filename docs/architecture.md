@@ -40,11 +40,11 @@ IDs are prefixed strings, for example `per_a1b2c3`, generated from random bytes.
 | approval | workspace_id, run_id, kind, title, payload (JSON), payload_hash, status (pending, approved, rejected), note, decided_at, decided_by |
 | job | kind, payload (JSON), run_at, attempts, status (queued, running, done, failed), updated_at |
 | audit_event | workspace_id, actor, action, entity_type, entity_id, detail (JSON) |
-| connector | workspace_id, kind (apify, anthropic, agentmail), settings (JSON, no secrets), secret (API token, never returned by any endpoint), status (connected, error), updated_at |
+| connector | workspace_id, kind (apify, anthropic, openai, deepseek, zai, ollama, agentmail), settings (JSON, no secrets), secret (API token; empty for ollama; never returned by any endpoint), status (connected, error), updated_at |
 | email_message | workspace_id, provider_message_id (unique), provider_thread_id, direction (in, out), person_id (nullable), from_email, to (JSON array), subject, preview, body_text (nullable until fetched), labels (JSON), provider_timestamp, created_at |
 | send_intent | workspace_id, person_id, draft_activity_id, inbox_id, to_email, subject, body, payload_hash, status (awaiting_approval, approved, queued, submitting, accepted, failed, unknown, blocked, cancelled, replied, bounced), approval_id, provider_message_id, provider_thread_id, error, submitted_at, updated_at. The intent id doubles as the provider idempotency key |
 | suppression | workspace_id, email (unique, normalized lowercase), reason (bounce, opt_out, manual, demo_address), source, created_at |
-| model_call | workspace_id, run_id (nullable), purpose (chat, draft), model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, estimated_usd, pending (a row written before the provider call and finalized after, so a crash leaves a visible possibly billed record), subject_id, created_at |
+| model_call | workspace_id, run_id (nullable), purpose (chat, draft), provider, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, estimated_usd, pending (a row written before the provider call and finalized after, so a crash leaves a visible possibly billed record), subject_id, created_at |
 | import_batch | workspace_id, run_id, source_kind (apify, csv), source_ref (JSON: for apify the actor id, apify run id, dataset id; for csv the file name, row count, delimiter), status (staging, awaiting_review, accepted, rejected, failed), counts (JSON), updated_at |
 | qualification_result | workspace_id, person_id (one row per person), run_id, payload (JSON), updated_at |
 | import_row | batch_id, seq, raw (JSON), mapped (JSON), status (staged, duplicate, invalid, accepted, rejected), match_entity_type, match_entity_id, reason |
@@ -108,7 +108,21 @@ Qualification turns the template's criteria into visible, per criterion verdicts
 
 ## Model adapter
 
-The model adapter brings real intelligence to chat and drafting while keeping every honesty rule. Users bring their own Anthropic API key; the product ships no bundled model access, and everything except model calls keeps working without a key.
+The model adapter brings real intelligence to chat and drafting while keeping every honesty rule. Users bring their own model access; the product ships none, and everything except model calls keeps working without it. Five providers are supported, each its own connector kind with the same secret rules: `anthropic` (the reference implementation below), `openai`, `deepseek`, `zai` (GLM), and `ollama` (a local server, no key). Exactly one configured provider is active at a time, chosen in Settings and stored in `workspace.settings.modelProvider`; chat and drafting use the active one, and every `model_call` row records the provider and model.
+
+Provider presets (API facts read from each provider's live documentation on 2026-11-02; prices are list prices per million tokens and every cost shown is an estimate labelled with that date):
+
+| Kind | Base URL (env override for tests) | Auth | Models offered (default first) | Tools | JSON output |
+| --- | --- | --- | --- | --- | --- |
+| openai | https://api.openai.com/v1 (`AGENTCRM_OPENAI_BASE`) | Bearer key | gpt-5.6-terra (2.00 in / 12.00 out, cached 0.20), gpt-5.6-sol (4.00 / 20.00, cached 0.40), gpt-6-luna (0.10 / 0.50, cached 0.01) | Chat Completions tools with `strict: true`. The gpt-6-astra and gpt-6.1-sol flagships need the Responses API for tools, so they are not offered | `response_format` json_schema (strict) |
+| deepseek | https://api.deepseek.com (`AGENTCRM_DEEPSEEK_BASE`) | Bearer key | deepseek-flash (0.30 in / 1.20 out peak, cache hit 0.006), deepseek-v4-pro (1.32 / 3.96 peak, cache hit 0.044) | Tools, non strict (strict needs their beta base, not used) | `json_object` only: the schema goes in the prompt, the word json must appear, blank content means retry once then flag |
+| zai | https://api.z.ai/api/paas/v4 (`AGENTCRM_ZAI_BASE`) | Bearer key | glm-5.3 (1.40 / 4.40, cached 0.26), glm-4.7 (0.60 / 2.20, cached 0.11) | Tools, `tool_choice` auto only; `function.arguments` may arrive as an object or a string, parse both | `json_object` only, text models only (flash vision models are not offered) |
+| ollama | http://127.0.0.1:11434, user editable in settings | None locally | Installed models from `GET /api/tags`, user picks | Native `/api/chat` tools; a model that rejects tools degrades per the rules below | Native `format` accepts a full JSON schema |
+
+- The four OpenAI compatible providers share one adapter parameterized by these presets; Ollama uses its native API (`/api/chat` with `stream: false`, usage from `prompt_eval_count` and `eval_count`, cost shown as "local, no cost"). OpenAI uses `max_completion_tokens`, not the deprecated `max_tokens`. zai requests send `reasoning_effort: "low"` because glm-5.3 always reasons and defaults to max. DeepSeek estimates use peak prices (off peak is half, and the estimate says so).
+- Capability degradation is explicit, never silent: a provider or model without tool support answers chat from the visible context alone and the reply says lookups were unavailable; a provider without json_schema gets the schema embedded in the drafting prompt with `json_object` mode, zod validation unchanged, and one repair retry before the person is flagged.
+- Key validation: openai and deepseek via their models list endpoint, zai via a one token completion on the free glm-4.7-flash, ollama via `GET /api/tags` (which also fills the model list).
+- Everything else in this section (budgets, pending model_call rows, checkpoints, approval binding, inbound text fencing, disclosure lines) applies identically to every provider; disclosure names the configured provider instead of Anthropic, and the Ollama card says records go to the local server at the configured address.
 
 - Connector kind `anthropic`: `PUT /api/connectors/anthropic` takes `{ token?, model? }`, validates the token against the models endpoint, and stores it with the same secret rules as Apify (local secret column, masked to last four, never in logs, audit, SSE, errors, or MCP). Settings hold the chosen `model`. `DELETE` removes it. The provider base URL is `https://api.anthropic.com`, overridable with `AGENTCRM_ANTHROPIC_BASE` for tests.
 - Supported models with their current list prices per million tokens (a static map in code, used only for estimates and labelled as estimates): `claude-opus-5-5` (default, input 4.00, output 20.00), `claude-sonnet-5-5` (2.00, 10.00), `claude-haiku-5-5` (0.10, 0.50 up to 100K prompts). The default model is Opus 5.5.
@@ -200,8 +214,11 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 | POST `/api/approvals/:id/decision` | `{ decision: "approve" | "reject", note? }`. Returns `{ approval, run, alreadyDecided }`. Repeating the same decision is idempotent; the opposite decision returns 409 `conflict` |
 | GET `/api/search?q=` | `{ people, organizations, opportunities }`, up to 8 each, for the command palette |
 | GET `/api/connectors` | Configured connectors with masked settings, never the secret |
-| PUT `/api/connectors/anthropic` | `{ token?, model? }`. With a token: validates and stores it. Without: updates the model choice. Same masked shape as Apify |
-| DELETE `/api/connectors/anthropic` | Remove the connector and its key |
+| PUT `/api/connectors/anthropic` | `{ token?, model? }`. With a token: validates and stores it. Without: updates the model choice. Same masked shape as Apify. The same route shape exists for `openai`, `deepseek`, and `zai`; `ollama` takes `{ baseUrl?, model? }` and no token: a base URL alone saves and validates the connection with the model unset, and the model is chosen afterwards |
+| DELETE `/api/connectors/anthropic` | Remove the connector and its key (same for the other model provider kinds) |
+| GET `/api/connectors/ollama/models` | Installed models from the configured Ollama server's tags endpoint |
+| GET `/api/model-providers` | The preset catalog: kind, label, default model, models with dated price hints |
+| PUT `/api/model-provider` | `{ kind }`: set the active model provider among configured ones; GET returns `{ kind, model, status, statusMessage, ready }` or null, where ready means connected, no error, and for ollama a model chosen; every surface treats ready, not selection, as "a model is available". Connecting the first model provider activates it automatically; removing the active one reassigns to another configured provider or null, and only removing the active provider stops draft runs |
 | PUT `/api/connectors/apify` | `{ token?, allowlist? }`. With a token: validates it against the Apify API and stores it. Without a token: updates the allowlist of an existing connector (error if none exists). Returns the masked connector (`tokenMasked`, `status`, `statusMessage` when status is error, `settings.allowlist`) |
 | DELETE `/api/connectors/apify` | Remove the connector and its token. Queued, running, or paused Apify runs are failed first and Apify is asked to abort them while the token still exists; runs waiting for approval are left to the user |
 | GET `/api/connectors/apify/actors?q=` | Proxied Apify store search: id, name, title, description, stats, pricing hint |
@@ -211,14 +228,14 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 | POST `/api/imports/csv` | Stage a CSV with a confirmed mapping; returns the `csv_import` run, 201 |
 | GET `/api/qualification` | The workspace's qualification config |
 | PUT `/api/qualification` | Replace the qualification config after validation |
-| POST `/api/agent/message` | `{ text, history?, context? }` returns `{ reply, actions, modelConnected, usage? }`. Model backed with a bounded read only tool loop when the Anthropic connector is configured; deterministic and rule based otherwise. Actions are `{ id, label, kind, entityType?, entityId? }` with kinds `start_demo_run`, `open_record`, and `start_apify_import` (the UI opens the import setup; the server never starts the scrape itself) |
+| POST `/api/agent/message` | `{ text, history?, context? }` returns `{ reply, actions, modelConnected, usage?, provider?, model? }`. Model backed with a bounded read only tool loop when the active model provider is ready; deterministic and rule based otherwise. Actions are `{ id, label, kind, entityType?, entityId? }` with kinds `start_demo_run`, `open_record`, and `start_apify_import` (the UI opens the import setup; the server never starts the scrape itself) |
 | GET `/api/events` | Server sent events. Frames: `run_updated` `{type,runId}`, `approval_updated` `{type,approvalId,runId}`, `record_updated` `{type,entityType,entityId}`, plus an initial `ready` event and a 15 second keep alive comment. The web app refetches on these signals |
 
 ## MCP server
 
 `npm run --silent mcp --prefix apps/server` (and CLI `crm mcp`) starts an MCP server over stdio using the official TypeScript SDK. The `--silent` flag matters: without it npm prints its script banner to stdout and corrupts the protocol stream. Tools, all workspace scoped and read mostly:
 
-- `crm_describe`: capabilities, template, counts, allowed actions
+- `crm_describe`: capabilities, template, counts, allowed actions, and `modelProvider: { configured, kind, status, model }`, never a key
 - `crm_search`: query with type filter, bounded results
 - `crm_get_record`: person, organization, or opportunity by id, with evidence
 - `crm_propose_changes`: validate a batch of field changes, return a preview, write nothing
@@ -252,7 +269,7 @@ Exit codes: 0 success, 1 expected failure with a printed reason, 2 usage error.
 ## Conventions
 
 - Loopback only. The server binds 127.0.0.1 and additionally rejects requests whose Host header is not 127.0.0.1, localhost, or [::1] (any port) with 403, as a DNS rebinding guard.
-- Environment overrides: `AGENTCRM_DB` (database path), `AGENTCRM_PORT`, `AGENTCRM_LOG_LEVEL`, `AGENTCRM_STEP_MS` (demo run step interval), `AGENTCRM_APIFY_BASE` (provider base URL, for tests), `AGENTCRM_APIFY_TIMEOUT_MS` (poll timeout, default 600000), `AGENTCRM_APIFY_POLL_MS` (poll interval, default 3000), `AGENTCRM_ANTHROPIC_BASE` (provider base URL, for tests), `AGENTCRM_ANTHROPIC_RETRIES` (SDK retry count, default 2), `AGENTCRM_AGENTMAIL_BASE` and `AGENTCRM_AGENTMAIL_TIMEOUT_MS` (mail provider, for tests), `AGENTCRM_MAIL_POLL_MS` (inbound poll, default 60000, min 5000), `AGENTCRM_MAIL_RECONCILE_MS` (reconcile schedule override).
+- Environment overrides: `AGENTCRM_DB` (database path), `AGENTCRM_PORT`, `AGENTCRM_LOG_LEVEL`, `AGENTCRM_STEP_MS` (demo run step interval), `AGENTCRM_APIFY_BASE` (provider base URL, for tests), `AGENTCRM_APIFY_TIMEOUT_MS` (poll timeout, default 600000), `AGENTCRM_APIFY_POLL_MS` (poll interval, default 3000), `AGENTCRM_ANTHROPIC_BASE` (provider base URL, for tests), `AGENTCRM_ANTHROPIC_RETRIES` (SDK retry count, default 2), `AGENTCRM_AGENTMAIL_BASE` and `AGENTCRM_AGENTMAIL_TIMEOUT_MS` (mail provider, for tests), `AGENTCRM_MAIL_POLL_MS` (inbound poll, default 60000, min 5000), `AGENTCRM_MAIL_RECONCILE_MS` (reconcile schedule override), `AGENTCRM_OPENAI_BASE`, `AGENTCRM_DEEPSEEK_BASE`, and `AGENTCRM_ZAI_BASE` (provider base URLs, for tests; Ollama's address lives in its connector settings).
 - Known limitation: keyset cursors compare against the cursor row's sort keys at read time, so a record edited between pages can shift page boundaries for name, date, or recency ordered lists. A composite cursor that freezes the sort key is planned.
 - All server code TypeScript, ESM, strict mode.
 - Tests with vitest cover the action service: version conflicts, workspace scoping, approval decisions, run transitions.

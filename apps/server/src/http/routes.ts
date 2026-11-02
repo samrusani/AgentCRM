@@ -6,6 +6,8 @@ import {
   configureAgentmailConnector,
   configureAnthropicConnector,
   configureApifyConnector,
+  configureModelConnector,
+  configureOllamaConnector,
   controlRun,
   controlSendIntent,
   createActivity,
@@ -19,15 +21,19 @@ import {
   disconnectAgentmailConnector,
   disconnectAnthropicConnector,
   disconnectApifyConnector,
+  disconnectModelConnector,
   getApifyActor,
+  getModelProvider,
   liftSuppression,
   listAgentmailInboxes,
+  listOllamaModels,
   moveOpportunityStage,
   parseInput,
   prepareSendIntents,
   previewCsvFile,
   saveQualificationConfig,
   searchApifyActors,
+  setModelProvider,
   stageCsvImport,
   startRun,
   updateOpportunity,
@@ -40,7 +46,9 @@ import { maxHistoryTurnCharacters, maxHistoryTurns, respondWithModel } from '../
 import { serverVersion } from '../config.js';
 import { displayDatabasePath } from '../paths.js';
 import { listActivities } from '../queries/activities.js';
-import { getConnector, listConnectors } from '../queries/connectors.js';
+import { providerCatalog } from '../providers/presets.js';
+import { listConnectors } from '../queries/connectors.js';
+import { getActiveModelConnector } from '../queries/modelProvider.js';
 import { getImportDetail } from '../queries/imports.js';
 import { getOpportunityDetail, listOpportunities } from '../queries/opportunities.js';
 import { getOrganizationDetail, listOrganizations } from '../queries/organizations.js';
@@ -241,6 +249,33 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
     disconnectAnthropicConnector(context());
     return reply.status(204).send();
   });
+  for (const kind of ['openai', 'deepseek', 'zai'] as const) {
+    app.put(`/api/connectors/${kind}`, async (request, reply) => {
+      const { connector, created } = await configureModelConnector(context(), kind, request.body);
+      reply.status(created ? 201 : 200);
+      return connector;
+    });
+    app.delete(`/api/connectors/${kind}`, async (_request, reply) => {
+      disconnectModelConnector(context(), kind);
+      return reply.status(204).send();
+    });
+  }
+  app.put('/api/connectors/ollama', async (request, reply) => {
+    const { connector, created } = await configureOllamaConnector(context(), request.body);
+    reply.status(created ? 201 : 200);
+    return connector;
+  });
+  app.delete('/api/connectors/ollama', async (_request, reply) => {
+    disconnectModelConnector(context(), 'ollama');
+    return reply.status(204).send();
+  });
+  app.get('/api/connectors/ollama/models', async () => listOllamaModels(context()));
+  app.get('/api/model-provider', async (_request, reply) => {
+    const active = getModelProvider(context());
+    return reply.send(active ?? null);
+  });
+  app.put('/api/model-provider', async (request) => setModelProvider(context(), request.body));
+  app.get('/api/model-providers', async () => ({ items: providerCatalog(), nextCursor: null }));
   app.put('/api/connectors/agentmail', async (request, reply) => {
     const { connector, created } = await configureAgentmailConnector(context(), request.body);
     reply.status(created ? 201 : 200);
@@ -313,8 +348,8 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   app.post('/api/agent/message', async (request) => {
     const { text, history, context: recordContext } = parseInput(messageBody, request.body);
     const id = workspaceId();
-    // A saved Anthropic connector means the model answers. Without one, the rule based helper answers as before.
-    if (getConnector(db, id, 'anthropic')) {
+    // A configured model provider means the model answers. Without one, the rule based helper answers as before.
+    if (getActiveModelConnector(db, id)) {
       return respondWithModel(context(), { text, history, context: recordContext });
     }
     return respondToMessage(db, id, text);

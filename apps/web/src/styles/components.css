@@ -1017,6 +1017,17 @@ textarea.input {
   flex: 1;
   min-width: 0;
 }
+.connector__use {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.provider-summary {
+  font-weight: 500;
+}
 .connector__remove {
   display: flex;
   flex-direction: column;

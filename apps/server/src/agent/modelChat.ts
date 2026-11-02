@@ -1,18 +1,20 @@
 import { z } from 'zod';
-import { markConnectorError, requireAnthropic } from '../actions/connectors.js';
+import { markConnectorError, requireActiveModel } from '../actions/connectors.js';
 import type { ActionContext } from '../actions/context.js';
 import { recordModelCall } from '../actions/modelCalls.js';
 import { AppError } from '../errors.js';
+import { createModelProvider } from '../providers/factory.js';
 import {
   addUsage,
   type ChatToolCall,
   type ChatToolDefinition,
   type ChatToolResult,
-  createAnthropicProvider,
   emptyUsage,
   ModelProviderError,
   type ModelUsage,
-} from '../providers/anthropic.js';
+} from '../providers/modelTypes.js';
+import { providerLabels } from '../providers/presets.js';
+import { getActiveModelConnector } from '../queries/modelProvider.js';
 import { getOpportunityDetail } from '../queries/opportunities.js';
 import { getOrganizationDetail } from '../queries/organizations.js';
 import { getPersonDetail } from '../queries/people.js';
@@ -39,6 +41,16 @@ export const chatSystemPrompt = [
   'If you do not know something, or the records do not say, say so plainly. Do not guess and do not invent records, names, emails, amounts, or dates. Take facts about the CRM only from tool results.',
   'Name the records you rely on. Keep answers short and in plain language.',
 ].join('\n\n');
+
+// Used when a model cannot take tools, so the prompt does not promise lookups it cannot make.
+export const chatSystemPromptWithoutTools = [
+  'You are the assistant inside AgentCRM, a local CRM. You answer questions about the records in this workspace.',
+  'You have no tools in this conversation, so you cannot look anything up, change data, send email, or start a run. You can only use what is written in the conversation itself.',
+  'If the conversation does not contain the answer, say so plainly. Do not guess and do not invent records, names, emails, amounts, or dates.',
+  'Keep answers short and in plain language.',
+].join('\n\n');
+
+export const lookupsUnavailableSentence = 'Lookups were not available on this model, so this answer comes from the visible context.';
 
 const recordTypes = ['person', 'organization', 'opportunity'] as const;
 
@@ -205,13 +217,23 @@ export async function respondWithModel(ctx: ActionContext, input: ChatInput): Pr
       : reply;
   };
 
+  const active = getActiveModelConnector(ctx.db, ctx.workspaceId);
+  const label = active ? providerLabels[active.kind] : 'The model provider';
   let connection;
   try {
-    connection = requireAnthropic(ctx);
+    connection = requireActiveModel(ctx);
   } catch (error) {
-    if (error instanceof AppError) return fallback('the saved Anthropic key is not usable, update it in Settings');
-    throw error;
+    if (!(error instanceof AppError)) throw error;
+    return {
+      ...fallback(
+        active?.kind === 'ollama'
+          ? 'no Ollama model is chosen, pick one in Settings'
+          : `the saved ${label} key is not usable, update it in Settings`,
+      ),
+      ...(active ? { provider: active.kind } : {}),
+    };
   }
+  const identity = { provider: connection.kind, model: connection.model };
 
   const context = input.context
     ? `Context from the app: the user is looking at the ${input.context.entityType} record ${input.context.entityId}. Use get_record if you need its details.\n\n`
@@ -221,9 +243,10 @@ export async function respondWithModel(ctx: ActionContext, input: ChatInput): Pr
   let usage = emptyUsage;
   let estimatedUsd = 0;
   try {
-    const result = await createAnthropicProvider(connection.apiKey).chat({
+    const result = await createModelProvider(connection.kind, connection).chat({
       model: connection.model,
       system: chatSystemPrompt,
+      systemWithoutTools: chatSystemPromptWithoutTools,
       messages,
       tools: chatTools,
       maxToolRounds: maxChatToolRounds,
@@ -246,16 +269,18 @@ export async function respondWithModel(ctx: ActionContext, input: ChatInput): Pr
       } else if (result.cutOff) {
         reply += ' The answer was cut off because it reached the length limit.';
       }
+      if (result.toolsUnavailable) reply += ` ${lookupsUnavailableSentence}`;
     }
     return {
       reply,
       actions: suggestActions(ctx.db, ctx.workspaceId, input.text),
       modelConnected: true,
+      ...identity,
       usage: usageSummary(usage, estimatedUsd),
     };
   } catch (error) {
     if (!(error instanceof ModelProviderError)) throw error;
-    if (error.kind === 'unauthorized') markConnectorError(ctx, connection.apiKey, 'anthropic');
-    return fallback(reasonOf(error), { usage, estimatedUsd });
+    if (error.kind === 'unauthorized') markConnectorError(ctx, connection.apiKey, connection.kind);
+    return { ...fallback(reasonOf(error), { usage, estimatedUsd }), ...identity };
   }
 }

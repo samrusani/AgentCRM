@@ -18,6 +18,9 @@ export interface AgentReply {
   // Set when a model is connected but its call failed, so the reply above is the rule based one.
   modelFailed?: true;
   usage?: AgentUsage;
+  // Which provider and model answered, or would have answered if the call had not failed.
+  provider?: string;
+  model?: string;
 }
 
 export interface AgentUsage {

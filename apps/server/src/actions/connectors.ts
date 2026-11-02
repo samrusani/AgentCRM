@@ -9,28 +9,31 @@ import {
   searchActors,
   validateToken,
 } from '../providers/apify.js';
-import {
-  createAnthropicProvider,
-  defaultModel,
-  type ModelId,
-  ModelProviderError,
-  supportedModels,
-} from '../providers/anthropic.js';
+import { createModelProvider } from '../providers/factory.js';
+import { ModelProviderError } from '../providers/modelTypes.js';
+import { createOllamaProvider, type OllamaModelInfo } from '../providers/ollama.js';
+import { defaultModelId, offeredModelIds, providerLabels } from '../providers/presets.js';
+import { defaultOllamaBase } from '../config.js';
 import {
   type AnthropicConnector,
   type ApifyConnector,
   type ConnectorKind,
+  type KeyedModelKind,
+  type ModelConnector,
+  type ModelConnectorKind,
+  type OllamaConnector,
   getConnector,
   getConnectorSecret,
+  isModelConnectorKind,
 } from '../queries/connectors.js';
+import { getActiveModelConnector } from '../queries/modelProvider.js';
 import { abortRemoteRunIfNeeded, failActiveApifyRuns } from './apifyScrape.js';
 import { type ActionContext, mutate, parseInput } from './context.js';
 import { failActiveDraftRuns } from './draftOutreach.js';
+import { activateIfFirstIn, noModelProviderMessage, reassignAfterRemovalIn } from './modelProvider.js';
 
 export const tokenRejectedMessage = 'Apify rejected the saved API token. Enter a new one to reconnect.';
 export const connectApifyMessage = 'Apify is not connected. Connect Apify in Settings first.';
-export const anthropicKeyRejectedMessage = 'Anthropic rejected the saved API key. Enter a new one to reconnect.';
-export const connectAnthropicMessage = 'Anthropic is not connected. Connect Anthropic in Settings first.';
 
 const actorIdPattern = /^[A-Za-z0-9_.~/-]+$/;
 
@@ -187,7 +190,9 @@ export function markConnectorError(ctx: ActionContext, failedToken: string, kind
       .prepare("SELECT id, settings, secret FROM connector WHERE workspace_id = ? AND kind = ? AND status != 'error'")
       .get(tx.workspaceId, kind) as { id: string; settings: string; secret: string } | undefined;
     if (!row || row.secret !== failedToken) return;
-    const message = kind === 'anthropic' ? anthropicKeyRejectedMessage : tokenRejectedMessage;
+    const message = isModelConnectorKind(kind)
+      ? `${providerLabels[kind]} rejected the saved API key. Enter a new one to reconnect.`
+      : tokenRejectedMessage;
     const settings = { ...(JSON.parse(row.settings) as Record<string, unknown>), statusMessage: message };
     tx.db
       .prepare("UPDATE connector SET status = 'error', settings = ?, updated_at = ? WHERE id = ?")
@@ -230,69 +235,78 @@ export async function getApifyActor(ctx: ActionContext, actorId: string) {
   return proxy(ctx, `Actor "${id}"`, (token) => getActor(token, id));
 }
 
-const anthropicConfigureSchema = z
-  .object({
-    token: z
-      .string()
-      .trim()
-      .min(1)
-      .max(500)
-      .refine((value) => !/\s/.test(value), 'Token must not contain spaces')
-      .optional(),
-    model: z
-      .string()
-      .refine((value): value is ModelId => (supportedModels as readonly string[]).includes(value), {
-        message: `Choose one of ${supportedModels.join(', ')}`,
-      })
-      .optional(),
-  })
-  .strict();
+function keyedConfigureSchema(kind: KeyedModelKind) {
+  const models = offeredModelIds(kind);
+  return z
+    .object({
+      token: z
+        .string()
+        .trim()
+        .min(1)
+        .max(500)
+        .refine((value) => !/\s/.test(value), 'Token must not contain spaces')
+        .optional(),
+      model: z
+        .string()
+        .refine((value) => models.includes(value), { message: `Choose one of ${models.join(', ')}` })
+        .optional(),
+    })
+    .strict();
+}
 
 // Turns a provider failure into the standard error envelope. The message never carries the key.
-export function mapModelError(error: unknown): AppError {
-  if (!(error instanceof ModelProviderError)) return new AppError('internal', 'Something went wrong while talking to Anthropic.');
+export function mapModelError(error: unknown, label = 'Anthropic'): AppError {
+  if (!(error instanceof ModelProviderError)) return new AppError('internal', `Something went wrong while talking to ${label}.`);
   switch (error.kind) {
     case 'unauthorized':
-      return new AppError('conflict', 'Anthropic did not accept the saved API key. Update it in Settings.');
+      return new AppError('conflict', `${label} did not accept the saved API key. Update it in Settings.`);
     case 'rate_limited':
-      return new AppError('conflict', 'Anthropic is rate limiting requests. Wait a moment and try again.', { status: 429 });
+      return new AppError('conflict', `${label} is rate limiting requests. Wait a moment and try again.`, { status: 429 });
     case 'rejected':
       return new AppError('conflict', error.message);
     case 'timeout':
-      return new AppError('internal', 'Anthropic did not answer in time. Try again.', { status: 504 });
+      return new AppError('internal', `${label} did not answer in time. Try again.`, { status: 504 });
     case 'unavailable':
-      return new AppError('internal', 'Could not reach Anthropic. Check your connection and try again.', { status: 502 });
+      return new AppError(
+        'internal',
+        label === 'Ollama'
+          ? 'Could not reach the Ollama server. Check that it is running and that the address is right.'
+          : `Could not reach ${label}. Check your connection and try again.`,
+        { status: 502 },
+      );
     case 'bad_response':
-      return new AppError('internal', 'Anthropic sent a response this app could not read.', { status: 502 });
+      return new AppError('internal', `${label} sent a response this app could not read.`, { status: 502 });
   }
 }
 
-export async function configureAnthropicConnector(
+export async function configureModelConnector(
   ctx: ActionContext,
+  kind: KeyedModelKind,
   input: unknown,
-): Promise<{ connector: AnthropicConnector; created: boolean }> {
-  const data = parseInput(anthropicConfigureSchema, input);
-  const existing = getConnector(ctx.db, ctx.workspaceId, 'anthropic');
-  if (!data.token && !existing) throw validationError('token: A key is required to connect Anthropic.');
+): Promise<{ connector: ModelConnector; created: boolean }> {
+  const label = providerLabels[kind];
+  const data = parseInput(keyedConfigureSchema(kind), input);
+  const existing = getConnector(ctx.db, ctx.workspaceId, kind);
+  if (!data.token && !existing) throw validationError(`token: A key is required to connect ${label}.`);
   if (!data.token && data.model === undefined) throw validationError('Send a key, a model, or both.');
 
   if (data.token) {
     try {
-      await createAnthropicProvider(data.token).validateKey();
+      await createModelProvider(kind, { apiKey: data.token }).validateKey();
     } catch (error) {
       if (error instanceof ModelProviderError && error.kind === 'unauthorized') {
-        throw validationError('Anthropic did not accept this key. Check it and try again.');
+        throw validationError(`${label} did not accept this key. Check it and try again.`);
       }
-      throw mapModelError(error);
+      throw mapModelError(error, label);
     }
   }
 
   // The saved row is read again inside the write transaction, so a model change made while the key
   // was being checked is not overwritten with stale values.
   const save = (): boolean => mutate(ctx, (tx) => {
-    const current = getConnector(tx.db, tx.workspaceId, 'anthropic');
-    if (!data.token && !current) throw validationError('token: A key is required to connect Anthropic.');
-    const model: ModelId = data.model ?? current?.settings.model ?? defaultModel;
+    const current = getConnector(tx.db, tx.workspaceId, kind);
+    if (!data.token && !current) throw validationError(`token: A key is required to connect ${label}.`);
+    const model: string = data.model ?? current?.settings.model ?? defaultModelId(kind);
     const keptMessage = !data.token && current?.status === 'error' ? current.statusMessage : null;
     const settings = JSON.stringify({ model, statusMessage: keptMessage });
     const now = tx.now();
@@ -304,16 +318,17 @@ export async function configureAnthropicConnector(
       } else {
         tx.db.prepare('UPDATE connector SET settings = ?, updated_at = ? WHERE id = ?').run(settings, now, current.id);
       }
-      tx.audit('connector.configure', 'connector', current.id, { kind: 'anthropic', tokenReplaced: Boolean(data.token), model });
+      tx.audit('connector.configure', 'connector', current.id, { kind, tokenReplaced: Boolean(data.token), model });
       return false;
     }
     const created = tx.newId('con');
     tx.db
       .prepare(
-        "INSERT INTO connector (id, created_at, workspace_id, kind, settings, secret, status, updated_at) VALUES (?, ?, ?, 'anthropic', ?, ?, 'connected', ?)",
+        "INSERT INTO connector (id, created_at, workspace_id, kind, settings, secret, status, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'connected', ?)",
       )
-      .run(created, now, tx.workspaceId, settings, data.token ?? '', now);
-    tx.audit('connector.configure', 'connector', created, { kind: 'anthropic', tokenReplaced: true, model });
+      .run(created, now, tx.workspaceId, kind, settings, data.token ?? '', now);
+    tx.audit('connector.configure', 'connector', created, { kind, tokenReplaced: true, model });
+    activateIfFirstIn(tx, kind);
     return true;
   });
   let created: boolean;
@@ -323,29 +338,161 @@ export async function configureAnthropicConnector(
     if (error instanceof AppError) throw error;
     throw new AppError('internal', 'The key is valid, but it could not be saved to the local database.');
   }
-  return { connector: getConnector(ctx.db, ctx.workspaceId, 'anthropic')!, created };
+  return { connector: getConnector(ctx.db, ctx.workspaceId, kind)!, created };
 }
 
-// Draft runs that are still working cannot continue without the key, so they are failed first.
-// Runs waiting for review keep their drafts, because approving them needs no key.
-export function disconnectAnthropicConnector(ctx: ActionContext): void {
-  if (!getConnector(ctx.db, ctx.workspaceId, 'anthropic')) throw notFound('Anthropic connector');
-  const stopped = failActiveDraftRuns(ctx, 'Anthropic was disconnected in Settings, so this run was stopped.');
+export async function configureAnthropicConnector(
+  ctx: ActionContext,
+  input: unknown,
+): Promise<{ connector: AnthropicConnector; created: boolean }> {
+  const result = await configureModelConnector(ctx, 'anthropic', input);
+  return result as { connector: AnthropicConnector; created: boolean };
+}
+
+const ollamaConfigureSchema = z
+  .object({
+    baseUrl: z.string().trim().min(1).max(300).optional(),
+    model: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict();
+
+const ollamaAddressMessage = 'baseUrl: Use an http or https address, for example http://127.0.0.1:11434, without a username or password.';
+
+// Keeps the scheme, host, and any path prefix. Drops a trailing slash, the query, and the fragment.
+export function normalizeOllamaBaseUrl(value: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw validationError(ollamaAddressMessage);
+  }
+  if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.username !== '' || parsed.password !== '') {
+    throw validationError(ollamaAddressMessage);
+  }
+  return `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}`;
+}
+
+function installedList(models: OllamaModelInfo[]): string {
+  const names = models.slice(0, 10).map((model) => model.name);
+  return `${names.join(', ')}${models.length > 10 ? ', and more' : ''}`;
+}
+
+// Saves the address and the chosen model. The address alone is enough to connect: the model stays unset
+// until a person picks one of the installed models. Both are checked against the server's model list.
+export async function configureOllamaConnector(
+  ctx: ActionContext,
+  input: unknown,
+): Promise<{ connector: OllamaConnector; created: boolean }> {
+  const data = parseInput(ollamaConfigureSchema, input);
+  const existing = getConnector(ctx.db, ctx.workspaceId, 'ollama');
+  if (data.baseUrl === undefined && data.model === undefined && existing) {
+    throw validationError('Send an address, a model, or both.');
+  }
+  const baseUrl = data.baseUrl !== undefined ? normalizeOllamaBaseUrl(data.baseUrl) : (existing?.settings.baseUrl ?? defaultOllamaBase);
+
+  let installed: OllamaModelInfo[];
+  try {
+    installed = await createOllamaProvider(baseUrl).listModels();
+  } catch (error) {
+    throw mapModelError(error, 'Ollama');
+  }
+  // A changed address keeps the old model only if the new server has it too.
+  const keptModel = existing?.settings.model && installed.some((model) => model.name === existing.settings.model) ? existing.settings.model : null;
+  const model = data.model ?? keptModel;
+  if (data.model !== undefined && !installed.some((entry) => entry.name === data.model)) {
+    throw validationError(
+      installed.length === 0
+        ? 'model: No models are installed on this Ollama server. Pull one first, then pick it here.'
+        : `model: ${data.model} is not installed on this Ollama server. Installed models: ${installedList(installed)}.`,
+    );
+  }
+
+  const save = (): boolean => mutate(ctx, (tx) => {
+    const current = getConnector(tx.db, tx.workspaceId, 'ollama');
+    const settings = JSON.stringify({ baseUrl, model, statusMessage: null });
+    const now = tx.now();
+    if (current) {
+      tx.db.prepare("UPDATE connector SET settings = ?, status = 'connected', updated_at = ? WHERE id = ?").run(settings, now, current.id);
+      tx.audit('connector.configure', 'connector', current.id, { kind: 'ollama', model });
+      return false;
+    }
+    const created = tx.newId('con');
+    tx.db
+      .prepare("INSERT INTO connector (id, created_at, workspace_id, kind, settings, secret, status, updated_at) VALUES (?, ?, ?, 'ollama', ?, '', 'connected', ?)")
+      .run(created, now, tx.workspaceId, settings, now);
+    tx.audit('connector.configure', 'connector', created, { kind: 'ollama', model });
+    activateIfFirstIn(tx, 'ollama');
+    return true;
+  });
+  let created: boolean;
+  try {
+    created = save();
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError('internal', 'The address works, but it could not be saved to the local database.');
+  }
+  return { connector: getConnector(ctx.db, ctx.workspaceId, 'ollama')!, created };
+}
+
+// Installed models from the saved server's tags endpoint.
+export async function listOllamaModels(ctx: ActionContext): Promise<{ items: OllamaModelInfo[]; nextCursor: null }> {
+  const connector = getConnector(ctx.db, ctx.workspaceId, 'ollama');
+  if (!connector) throw conflict('Ollama is not connected. Save the server address in Settings first.');
+  try {
+    return { items: await createOllamaProvider(connector.settings.baseUrl).listModels(), nextCursor: null };
+  } catch (error) {
+    throw mapModelError(error, 'Ollama');
+  }
+}
+
+// Draft runs pinned to this provider that have written nothing yet cannot continue without it, so they are failed
+// first, whether or not it is the active provider. Runs pinned to another provider keep going. A run that already
+// has drafts, or is waiting for review, keeps them, because approving them needs no key.
+export function disconnectModelConnector(ctx: ActionContext, kind: ModelConnectorKind): void {
+  if (!getConnector(ctx.db, ctx.workspaceId, kind)) throw notFound(`${providerLabels[kind]} connector`);
+  const wasActive = getActiveModelConnector(ctx.db, ctx.workspaceId)?.kind === kind;
+  const stopped = failActiveDraftRuns(ctx, kind, `${providerLabels[kind]} was disconnected in Settings, so this run was stopped.`);
   mutate(ctx, (tx) => {
-    const row = tx.db.prepare('SELECT id FROM connector WHERE workspace_id = ? AND kind = ?').get(tx.workspaceId, 'anthropic') as
+    const row = tx.db.prepare('SELECT id FROM connector WHERE workspace_id = ? AND kind = ?').get(tx.workspaceId, kind) as
       | { id: string }
       | undefined;
-    if (!row) throw notFound('Anthropic connector');
+    if (!row) throw notFound(`${providerLabels[kind]} connector`);
     tx.db.prepare('DELETE FROM connector WHERE id = ?').run(row.id);
-    tx.audit('connector.disconnect', 'connector', row.id, { kind: 'anthropic', runsStopped: stopped.length });
+    tx.audit('connector.disconnect', 'connector', row.id, { kind, runsStopped: stopped.length });
+    reassignAfterRemovalIn(tx, wasActive);
   });
 }
 
-// The saved key and model for a provider call, or a conflict a person can fix in Settings.
-export function requireAnthropic(ctx: ActionContext): { apiKey: string; model: ModelId } {
-  const connector = getConnector(ctx.db, ctx.workspaceId, 'anthropic');
-  const apiKey = getConnectorSecret(ctx.db, ctx.workspaceId, 'anthropic');
-  if (!connector || !apiKey) throw conflict(connectAnthropicMessage);
-  if (connector.status === 'error') throw conflict('Anthropic rejected the saved key. Update it in Settings.');
-  return { apiKey, model: connector.settings.model };
+export function disconnectAnthropicConnector(ctx: ActionContext): void {
+  disconnectModelConnector(ctx, 'anthropic');
+}
+
+export interface ModelConnection {
+  kind: ModelConnectorKind;
+  label: string;
+  model: string;
+  apiKey: string;
+  // Only set for Ollama.
+  baseUrl: string | null;
+}
+
+// The saved connection for one provider, or a conflict a person can fix in Settings.
+export function requireModelConnection(ctx: ActionContext, kind: ModelConnectorKind): ModelConnection {
+  const label = providerLabels[kind];
+  const connector = getConnector(ctx.db, ctx.workspaceId, kind);
+  const apiKey = getConnectorSecret(ctx.db, ctx.workspaceId, kind);
+  if (!connector || apiKey === null || (kind !== 'ollama' && apiKey === '')) throw conflict(`${label} is not connected. Connect ${label} in Settings first.`);
+  if (connector.status === 'error') throw conflict(`${label} rejected the saved key. Update it in Settings.`);
+  if (connector.kind === 'ollama') {
+    if (!connector.settings.model) throw conflict('No Ollama model is chosen. Pick an installed model in Settings first.');
+    return { kind, label, model: connector.settings.model, apiKey: '', baseUrl: connector.settings.baseUrl };
+  }
+  return { kind, label, model: connector.settings.model, apiKey, baseUrl: null };
+}
+
+// The connection chat and new draft runs use: the active provider chosen in Settings.
+export function requireActiveModel(ctx: ActionContext): ModelConnection {
+  const active = getActiveModelConnector(ctx.db, ctx.workspaceId);
+  if (!active) throw conflict(noModelProviderMessage);
+  return requireModelConnection(ctx, active.kind);
 }

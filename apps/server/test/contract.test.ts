@@ -7,6 +7,8 @@ import { type ApifyStub, startApifyStub, stubToken, useStub } from './apifyStub.
 import { type AnthropicStub, draftFor, startAnthropicStub, stubApiKey, textReply, useAnthropicStub } from './anthropicStub.js';
 import { type AgentmailStub, startAgentmailStub, stubAgentmailKey, stubInboxId, useAgentmailStub } from './agentmailStub.js';
 import { createContext } from '../src/actions/index.js';
+import { compatKeys, type CompatStub, startCompatStub, useCompatStub } from './openaiCompatStub.js';
+import { type OllamaStub, startOllamaStub } from './ollamaStub.js';
 import { requireWorkspace } from '../src/queries/workspace.js';
 import { createTestEnvironment } from './helpers.js';
 
@@ -17,6 +19,9 @@ let stub: ApifyStub;
 let restoreEnvironment: () => void;
 let anthropic: AnthropicStub;
 let restoreAnthropic: () => void;
+let openai: CompatStub;
+let restoreOpenai: () => void;
+let ollama: OllamaStub;
 let agentmail: AgentmailStub;
 let restoreAgentmail: () => void;
 
@@ -25,6 +30,9 @@ beforeAll(async () => {
   restoreEnvironment = useStub(stub);
   anthropic = await startAnthropicStub();
   restoreAnthropic = useAnthropicStub(anthropic);
+  openai = await startCompatStub('openai');
+  restoreOpenai = useCompatStub(openai);
+  ollama = await startOllamaStub();
   agentmail = await startAgentmailStub();
   restoreAgentmail = useAgentmailStub(agentmail);
   seedDatabase(env.db, { now: new Date('2026-03-01T12:00:00.000Z') });
@@ -37,6 +45,9 @@ afterAll(async () => {
   await stub.close();
   await anthropic.close();
   await agentmail.close();
+  await openai.close();
+  await ollama.close();
+  restoreOpenai();
   restoreAgentmail();
   restoreAnthropic();
   restoreEnvironment();
@@ -208,7 +219,8 @@ describe('web client contract', () => {
       context: { entityType: 'person', entityId: 'per_000000000000' },
     });
     expect(chat.status).toBe(200);
-    expect(Object.keys(chat.body).sort()).toEqual(['actions', 'modelConnected', 'reply', 'usage']);
+    expect(Object.keys(chat.body).sort()).toEqual(['actions', 'model', 'modelConnected', 'provider', 'reply', 'usage']);
+    expect(chat.body).toMatchObject({ provider: 'anthropic', model: 'claude-haiku-5-5' });
     expect(chat.body).toMatchObject({ reply: 'There are people in this workspace.', modelConnected: true, usage: { inputTokens: 1000, outputTokens: 200 } });
     expect(Object.keys(chat.body.usage).sort()).toEqual(['estimatedUsd', 'inputTokens', 'outputTokens']);
     expect(typeof chat.body.usage.estimatedUsd).toBe('number');
@@ -228,7 +240,7 @@ describe('web client contract', () => {
     expect(typeof waiting.body.counts.estimatedUsd).toBe('number');
     const approval = waiting.body.approvals[0];
     expect(approval).toMatchObject({ kind: 'draft_review', title: 'Save 2 drafts for review', status: 'pending' });
-    expect(Object.keys(approval.payload).sort()).toEqual(['count', 'drafts', 'estimatedUsd', 'sample']);
+    expect(Object.keys(approval.payload).sort()).toEqual(['count', 'drafts', 'estimatedUsd', 'provider', 'sample']);
     expect(approval.payload.drafts).toHaveLength(2);
     expect(Object.keys(approval.payload.drafts[0]).sort()).toEqual(['body', 'factsUsed', 'personId', 'personName', 'subject']);
     expect(approval.payload.sample).toHaveLength(2);
@@ -321,6 +333,41 @@ describe('web client contract', () => {
     expect(['matched', 'not_matched', 'unknown']).toContain(detail.body.qualification.criteria[0].outcome);
   });
 
+  it('serves the model provider routes for the other providers', async () => {
+    expect((await call('GET', '/api/model-provider')).body).toBeNull();
+    expect((await call('GET', '/api/connectors/ollama/models')).status).toBe(409);
+    expect((await call('PUT', '/api/model-provider', { kind: 'openai' })).status).toBe(409);
+
+    const saved = await call('PUT', '/api/connectors/openai', { token: compatKeys.openai });
+    expect(saved.status).toBe(201);
+    expect(Object.keys(saved.body).sort()).toEqual(['createdAt', 'id', 'kind', 'settings', 'status', 'statusMessage', 'tokenMasked', 'updatedAt', 'workspaceId']);
+    expect(saved.body).toMatchObject({ kind: 'openai', tokenMasked: '****ab12', settings: { model: 'gpt-5.6-terra' } });
+    expect(JSON.stringify(saved.body)).not.toContain(compatKeys.openai);
+    expect((await call('PUT', '/api/connectors/openai', { model: 'gpt-6-astra' })).status).toBe(400);
+    expect((await call('GET', '/api/model-provider')).body).toEqual({ kind: 'openai', model: 'gpt-5.6-terra', status: 'connected', statusMessage: null, ready: true });
+
+    const connected = await call('PUT', '/api/connectors/ollama', { baseUrl: ollama.url });
+    expect(connected.status).toBe(201);
+    expect(Object.keys(connected.body).sort()).toEqual(['createdAt', 'id', 'kind', 'settings', 'status', 'statusMessage', 'updatedAt', 'workspaceId']);
+    expect(connected.body.settings).toEqual({ baseUrl: ollama.url, model: null });
+    const models = await call('GET', '/api/connectors/ollama/models');
+    expect(models.body.items.map((item: { name: string }) => item.name)).toEqual(['llama-stub:8b', 'qwen-stub:4b']);
+    expect(Object.keys(models.body).sort()).toEqual(['items', 'nextCursor']);
+    expect((await call('PUT', '/api/connectors/ollama', { model: 'qwen-stub:4b' })).body.settings.model).toBe('qwen-stub:4b');
+
+    const switched = await call('PUT', '/api/model-provider', { kind: 'ollama' });
+    expect(switched.status).toBe(200);
+    expect((await call('GET', '/api/model-provider')).body).toEqual({ kind: 'ollama', model: 'qwen-stub:4b', status: 'connected', statusMessage: null, ready: true });
+    const catalog = await call('GET', '/api/model-providers');
+    expect(catalog.body.items.map((item: { kind: string }) => item.kind)).toEqual(['anthropic', 'openai', 'deepseek', 'zai', 'ollama']);
+    expect(Object.keys(catalog.body.items[1]).sort()).toEqual(['defaultModel', 'kind', 'label', 'models', 'pricesAsOf']);
+
+    expect((await call('DELETE', '/api/connectors/ollama')).status).toBe(204);
+    expect((await call('GET', '/api/model-provider')).body).toEqual({ kind: 'openai', model: 'gpt-5.6-terra', status: 'connected', statusMessage: null, ready: true });
+    expect((await call('DELETE', '/api/connectors/openai')).status).toBe(204);
+    expect((await call('GET', '/api/model-provider')).body).toBeNull();
+    for (const kind of ['deepseek', 'zai']) expect((await call('DELETE', `/api/connectors/${kind}`)).status).toBe(404);
+  });
   it('serves the agentmail connector, send intent, suppression, and mail summary routes', async () => {
     const ctx = createContext(env.db, requireWorkspace(env.db).id, { bus: env.bus, now: env.ctx.now });
 

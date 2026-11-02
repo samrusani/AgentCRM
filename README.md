@@ -2,7 +2,7 @@
 
 AgentCRM is a local first, open source CRM built for agent workflows. People and coding agents work through the same core: one action service behind the web UI, the CLI, and an MCP server. Your data lives in a SQLite file on your own computer, so there is no network round trip between you and your records.
 
-Status: early development, not yet ready for real work. The app runs locally with synthetic demo data, and a simulated research run shows the run and approval machinery end to end. Apify imports are the first live provider: bring your own Apify account, run any store Actor, and review staged results before they become records. Model backed chat and outreach drafting work with your own Anthropic API key; every cost shown is an estimate from list prices. Sending works through your own AgentMail account: every message is approved word for word before it goes out, submits reuse the provider's duplicate protection so retries do not send twice within its roughly one day window (an attempt whose outcome stays unknown past that window is surfaced to you, never retried), replies and opt outs are handled, and neither MCP, chat, nor the CLI can approve or submit a send. Connector tokens and keys are stored unencrypted in the local database file, which is created with owner only permissions.
+Status: early development, not yet ready for real work. The app runs locally with synthetic demo data, and a simulated research run shows the run and approval machinery end to end. Apify imports are the first live provider: bring your own Apify account, run any store Actor, and review staged results before they become records. Model backed chat and outreach drafting work with your own model access: Anthropic, OpenAI, DeepSeek, or Z.ai keys, or a local Ollama server, with one active provider chosen in Settings; every cost shown is an estimate from list prices. Sending works through your own AgentMail account: every message is approved word for word before it goes out, submits reuse the provider's duplicate protection so retries do not send twice within its roughly one day window (an attempt whose outcome stays unknown past that window is surfaced to you, never retried), replies and opt outs are handled, and neither MCP, chat, nor the CLI can approve or submit a send. Connector tokens and keys are stored unencrypted in the local database file, which is created with owner only permissions.
 
 ## Why another CRM
 
@@ -38,8 +38,8 @@ Open http://127.0.0.1:5173 in your browser. The API listens on http://127.0.0.1:
 | Relationships: people and organizations with search and detail views | Working, synthetic data |
 | Pipeline: opportunities in board and table views with stage history | Working |
 | Research: runs with live steps, counts, and partial results | Simulated demo run only |
-| Agent panel: chat, run progress, approvals | Working; model backed with your own Anthropic key, honest deterministic replies without one |
-| Draft outreach: model written drafts with budgets, review before saving | Working, verified against a stubbed Anthropic API; drafts are never sent |
+| Agent panel: chat, run progress, approvals | Working; model backed with your own key for Anthropic, OpenAI, DeepSeek, or Z.ai, or a local Ollama server; honest deterministic replies with none |
+| Draft outreach: model written drafts with budgets, review before saving | Working, verified against stubbed provider APIs; drafts are never sent |
 | Approvals: review, approve, reject, audit trail | Working |
 | Evidence: field claims with source and verification status | Working, synthetic sources |
 | Apify imports: run any store Actor, staged rows, dedupe, review before anything is saved | Working, verified against a stubbed Apify API; bring your own Apify account |

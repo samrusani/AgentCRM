@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useAnthropicConnector, useStartDraftOutreach } from '../api/hooks';
+import { useModelConnector, useModelProvider, useStartDraftOutreach } from '../api/hooks';
 import type { DraftOutreachInput, Run } from '../api/types';
 import { ErrorState, Loading, Sheet, errorMessage } from '../components/common';
 import { SheetSection } from '../components/record';
@@ -8,10 +8,13 @@ import { MAX_PEOPLE_CAP, MAX_PEOPLE_DEFAULT, checkBudget, checkMaxPeople } from 
 import {
   DRAFT_INPUT_TOKENS,
   DRAFT_OUTPUT_TOKENS,
-  MODELS,
   estimateDraftCost,
-  findModel,
+  findProvider,
   formatUsd,
+  isLocalProvider,
+  pricedModel,
+  providerAttention,
+  providerName,
 } from '../lib/models';
 
 type Audience = 'eligible' | 'tag';
@@ -23,8 +26,16 @@ export function DraftOutreachSheet({
   onClose: () => void;
   onStarted: (run: Run) => void;
 }) {
-  const { query, connector } = useAnthropicConnector();
-  const connected = connector?.status === 'connected';
+  const query = useModelProvider();
+  const active = query.data ?? null;
+  // Only a ready provider lets drafting start: connected, no rejected key, and for Ollama a model chosen.
+  const connected = active !== null && active.ready;
+  const attention = active && !active.ready ? providerAttention(active) : null;
+  const local = isLocalProvider(active?.kind);
+  const { connector: ollama } = useModelConnector('ollama');
+  const providerLabel = providerName(active?.kind);
+  const destination =
+    local && ollama?.baseUrl ? `the Ollama server at ${ollama.baseUrl}` : local ? 'the local Ollama server' : providerLabel;
   const start = useStartDraftOutreach();
   const [audience, setAudience] = useState<Audience>('eligible');
   const [tag, setTag] = useState('');
@@ -37,9 +48,9 @@ export function DraftOutreachSheet({
   const tagValue = tag.trim();
   const tagMissing = audience === 'tag' && tagValue === '';
 
-  const knownModel = findModel(connector?.model);
-  const priced = knownModel ?? MODELS[0];
-  const range = maxCheck.ok ? estimateDraftCost(maxCheck.value, priced.id) : null;
+  const priced = local ? null : pricedModel(active?.kind, active?.model);
+  const range = maxCheck.ok && priced ? estimateDraftCost(maxCheck.value, priced.model) : null;
+  const peakNote = findProvider(active?.kind)?.priceNote ?? null;
   const budget = budgetCheck.ok ? budgetCheck.value : null;
 
   const canStart = connected && maxCheck.ok && budgetCheck.ok && !tagMissing && !start.isPending;
@@ -62,17 +73,27 @@ export function DraftOutreachSheet({
       subtitle="The agent writes one draft per person. Drafts are created for review and nothing is sent."
       onClose={onClose}
     >
-      {query.isPending ? <Loading what="connector" /> : null}
+      {query.isPending ? <Loading what="the model provider" /> : null}
       {query.isError ? (
-        <ErrorState what="the Anthropic connector" error={query.error} onRetry={() => void query.refetch()} />
+        <ErrorState what="the model provider" error={query.error} onRetry={() => void query.refetch()} />
       ) : null}
 
-      {query.isSuccess && !connected ? (
+      {query.isSuccess && attention ? (
         <div className="state">
           <p className="state__body">
-            {connector?.status === 'error'
-              ? `The Anthropic connection has an error: ${connector.statusMessage ?? 'the last check of the key failed.'} `
-              : 'Anthropic is not connected, so no drafts can be written. Add your Anthropic API key to draft outreach. '}
+            {attention} No drafts can be written until it is fixed.{' '}
+            <Link className="link" to="/settings">
+              Open Settings
+            </Link>
+          </p>
+        </div>
+      ) : null}
+
+      {query.isSuccess && !active ? (
+        <div className="state">
+          <p className="state__body">
+            No model provider is connected, so no drafts can be written. Connect one in Settings and choose it, then
+            draft outreach.{' '}
             <Link className="link" to="/settings">
               Open Settings
             </Link>
@@ -149,7 +170,7 @@ export function DraftOutreachSheet({
               data, not as instructions.
             </p>
             <p className="muted">
-              Drafting sends record contents (people, organizations, claims, notes) to Anthropic.
+              Drafting sends record contents (people, organizations, claims, notes) to {destination}.
             </p>
           </SheetSection>
 
@@ -210,23 +231,43 @@ export function DraftOutreachSheet({
             </p>
 
             <div className="estimate-line" aria-live="polite">
-              {range ? (
-                <span>
-                  Estimated cost: <span className="num">{formatUsd(range.low)}</span> to{' '}
-                  <span className="num">{formatUsd(range.high)}</span> (estimate)
-                </span>
+              {local ? (
+                <>
+                  <span>Estimated cost: local, no cost</span>
+                  <span className="muted">
+                    Drafts run on {destination}, so there is no per token charge. Time depends on your computer and the
+                    model.
+                  </span>
+                </>
               ) : (
-                <span>Estimated cost: enter a valid max people to see it.</span>
+                <>
+                  {range ? (
+                    <span>
+                      Estimated cost: <span className="num">{formatUsd(range.low)}</span> to{' '}
+                      <span className="num">{formatUsd(range.high)}</span> (estimate)
+                    </span>
+                  ) : maxCheck.ok ? (
+                    <span>Estimated cost: not available, this build has no list prices for {providerLabel}.</span>
+                  ) : (
+                    <span>Estimated cost: enter a valid max people to see it.</span>
+                  )}
+                  {priced ? (
+                    <span className="muted">
+                      Assumes about <span className="num">{DRAFT_INPUT_TOKENS.toLocaleString()}</span> input and{' '}
+                      <span className="num">{DRAFT_OUTPUT_TOKENS}</span> output tokens per draft at{' '}
+                      {priced.exact
+                        ? `${providerLabel} ${priced.model.name}`
+                        : `${providerLabel} ${priced.model.name} (the chosen model is unknown here, so the default model is priced)`}{' '}
+                      list prices,
+                      <span className="num"> {priced.model.inputPerMillion.toFixed(2)}</span> in /{' '}
+                      <span className="num">{priced.model.outputPerMillion.toFixed(2)}</span> out per million tokens.
+                      {peakNote ? ` ${peakNote}` : ''} The range is wide because prompts vary with each record.
+                      Thinking tokens bill as output, so real cost can pass the high end. {providerLabel} bills your own
+                      account.
+                    </span>
+                  ) : null}
+                </>
               )}
-              <span className="muted">
-                Assumes about <span className="num">{DRAFT_INPUT_TOKENS.toLocaleString()}</span> input and{' '}
-                <span className="num">{DRAFT_OUTPUT_TOKENS}</span> output tokens per draft at{' '}
-                {knownModel ? `${priced.name}` : `${priced.name} (the connected model is unknown here)`} list prices,
-                <span className="num"> {priced.inputPerMillion.toFixed(2)}</span> in /{' '}
-                <span className="num">{priced.outputPerMillion.toFixed(2)}</span> out per million tokens. The range is
-                wide because prompts vary with each record. Thinking tokens bill as output, so real cost can pass the
-                high end. Anthropic bills your own account.
-              </span>
             </div>
           </SheetSection>
 

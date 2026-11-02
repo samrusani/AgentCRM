@@ -2,7 +2,8 @@ import { Link } from 'react-router-dom';
 import { useRun } from '../api/hooks';
 import type { Run, RunCounts, RunStep } from '../api/types';
 import { formatDuration, isSimulatedRun } from '../lib/format';
-import { formatUsd } from '../lib/models';
+import { runProvider } from '../lib/drafts';
+import { formatUsd, isLocalProvider } from '../lib/models';
 import { RunStatusChip, SimulatedChip } from './common';
 
 type StepState = 'queued' | 'running' | 'done' | 'waiting' | 'failed' | 'skipped';
@@ -49,7 +50,8 @@ function foundLabel(kind?: string): string {
   return 'Found';
 }
 
-export function CountsList({ counts, kind }: { counts: RunCounts; kind?: string }) {
+// A run on a local model costs nothing, so its cost line says so instead of showing a dollar estimate.
+export function CountsList({ counts, kind, provider }: { counts: RunCounts; kind?: string; provider?: string | null }) {
   return (
     <dl className="counts counts--wrap">
       <div>
@@ -72,9 +74,15 @@ export function CountsList({ counts, kind }: { counts: RunCounts; kind?: string 
       ) : null}
       {typeof counts.estimatedUsd === 'number' ? (
         <div>
-          <dt>Estimated cost</dt>
+          <dt>{isLocalProvider(provider) ? 'Cost' : 'Estimated cost'}</dt>
           <dd>
-            {formatUsd(counts.estimatedUsd)} <span className="muted counts__qualifier">estimate</span>
+            {isLocalProvider(provider) ? (
+              'Local, no cost'
+            ) : (
+              <>
+                {formatUsd(counts.estimatedUsd)} <span className="muted counts__qualifier">estimate</span>
+              </>
+            )}
           </dd>
         </div>
       ) : null}
@@ -131,7 +139,7 @@ export function LiveRun({ run, showLink = true }: { run: Run; showLink?: boolean
           <RunStatusChip status={current.status} />
         </div>
       </header>
-      <CountsList counts={current.counts} kind={current.kind} />
+      <CountsList counts={current.counts} kind={current.kind} provider={runProvider(current.scope)} />
       <RunLedger steps={current.steps ?? []} runStatus={current.status} compact />
       {showLink ? (
         <Link className="link" to={`/research?run=${current.id}`}>

@@ -23,6 +23,10 @@ import type {
   Health,
   MailInbox,
   MailReply,
+  ModelProviderInput,
+  ModelProviderKind,
+  ModelProviderSelection,
+  OllamaModel,
   MailSummary,
   ImportBatch,
   ImportBatchPage,
@@ -293,11 +297,39 @@ function normalizeConnector(raw: unknown): Connector {
     ),
     allowlist: toArray<unknown>(allowlistSource).filter((entry): entry is string => typeof entry === 'string'),
     model: textOrNull(settings.model ?? record.model),
+    baseUrl: textOrNull(settings.baseUrl ?? record.baseUrl),
     inboxId: textOrNull(settings.inboxId ?? record.inboxId),
     inboxEmail: textOrNull(settings.inboxEmail ?? settings.email ?? record.inboxEmail),
     tokenMasked: textOrNull(record.tokenMasked ?? settings.tokenMasked),
     updatedAt: textOrNull(record.updatedAt),
   };
+}
+
+// Accepts a bare array, { models }, or { items }, with entries as strings or objects carrying name or model.
+function normalizeOllamaModels(data: unknown): OllamaModel[] {
+  const source = objectOrEmpty(data);
+  const list = Array.isArray(data) ? data : source.models ?? source.items ?? source.data;
+  const names: string[] = [];
+  for (const entry of asPage<unknown>(list).items) {
+    const name =
+      typeof entry === 'string' ? textOrNull(entry) : textOrNull(objectOrEmpty(entry).name ?? objectOrEmpty(entry).model);
+    if (name && !names.includes(name)) names.push(name);
+  }
+  return names.map((name) => ({ name }));
+}
+
+// Null when no provider is configured. Also tolerates the selection nested under a key.
+function normalizeModelProvider(data: unknown): ModelProviderSelection | null {
+  const record = objectOrEmpty(data);
+  const nested = objectOrEmpty(record.modelProvider ?? record.provider);
+  const source = textOrNull(record.kind) ? record : nested;
+  const kind = textOrNull(source.kind);
+  if (!kind) return null;
+  const model = textOrNull(source.model);
+  const status = textOrNull(source.status) === 'error' ? 'error' : 'connected';
+  // An older server sends neither field, so readiness falls back to the same rule the server applies.
+  const ready = typeof source.ready === 'boolean' ? source.ready : status === 'connected' && (kind !== 'ollama' || model !== null);
+  return { kind, model, status, statusMessage: textOrNull(source.statusMessage), ready };
 }
 
 function normalizeInbox(raw: unknown): MailInbox | null {
@@ -747,10 +779,13 @@ export const api = {
     saveApify: async (input: { token?: string; allowlist?: string[] }) =>
       normalizeConnector(await request<unknown>('PUT', '/connectors/apify', { body: input })),
     removeApify: () => request<unknown>('DELETE', '/connectors/apify'),
-    // Token connects or reconnects. Model alone switches models on an existing connector.
-    saveAnthropic: async (input: { token?: string; model?: string }) =>
-      normalizeConnector(await request<unknown>('PUT', '/connectors/anthropic', { body: input })),
-    removeAnthropic: () => request<unknown>('DELETE', '/connectors/anthropic'),
+    // Model providers share one shape. A token (or an Ollama base URL) connects or reconnects.
+    // Model alone switches models on an existing connector.
+    saveModelProvider: async (kind: ModelProviderKind, input: ModelProviderInput) =>
+      normalizeConnector(await request<unknown>('PUT', `/connectors/${kind}`, { body: input })),
+    removeModelProvider: (kind: ModelProviderKind) => request<unknown>('DELETE', `/connectors/${kind}`),
+    ollamaModels: async (): Promise<OllamaModel[]> =>
+      normalizeOllamaModels(await request<unknown>('GET', '/connectors/ollama/models')),
     // Token connects or reconnects. Inbox fields select the sending inbox on an existing connector.
     saveAgentMail: async (input: { token?: string; inboxId?: string; inboxEmail?: string }) =>
       normalizeConnector(await request<unknown>('PUT', '/connectors/agentmail', { body: input })),
@@ -844,6 +879,12 @@ export const api = {
     };
   },
 
+  modelProvider: {
+    get: async (): Promise<ModelProviderSelection | null> =>
+      normalizeModelProvider(await request<unknown>('GET', '/model-provider')),
+    set: async (kind: ModelProviderKind): Promise<ModelProviderSelection | null> =>
+      normalizeModelProvider(await request<unknown>('PUT', '/model-provider', { body: { kind } })),
+  },
   agentMessage: async (input: AgentMessageInput): Promise<AgentReply> => {
     const body: AgentMessageInput = { text: input.text };
     if (input.history && input.history.length > 0) body.history = input.history;
@@ -855,6 +896,8 @@ export const api = {
       actions: toArray(data.actions),
       modelConnected: data.modelConnected === true,
       ...(usage ? { usage } : {}),
+      ...(typeof data.provider === 'string' ? { provider: data.provider } : {}),
+      ...(typeof data.model === 'string' ? { model: data.model } : {}),
     };
   },
 };

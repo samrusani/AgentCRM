@@ -39,7 +39,7 @@ function parseFacts(value: unknown): DraftFact[] {
   });
 }
 
-// The payload carries { count, sample: up to 3 { personName, subject }, drafts: full drafts, estimatedUsd }.
+// The payload carries { count, sample: up to 3 { personName, subject }, drafts: full drafts, estimatedUsd, provider }.
 // Approvals made before full drafts were included have no drafts list.
 export function parseDraftReviewPayload(payload: unknown): DraftReviewPayload {
   const source = record(payload);
@@ -66,7 +66,14 @@ export function parseDraftReviewPayload(payload: unknown): DraftReviewPayload {
     sample,
     drafts,
     estimatedUsd: Number.isFinite(usd) && usd >= 0 ? usd : null,
+    // Approvals made before the provider setting carry none, and those runs were Anthropic runs.
+    provider: text(source.provider),
   };
+}
+
+// The provider a run was pinned to when it started, or null for a run from before the provider setting.
+export function runProvider(scope: unknown): string | null {
+  return text(record(scope).provider);
 }
 
 export function draftCountLabel(count: number): string {

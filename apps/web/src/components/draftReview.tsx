@@ -1,6 +1,6 @@
 import type { DraftEntry, DraftReviewPayload, DraftRunIssues } from '../api/types';
 import { isUnverifiedFact } from '../lib/drafts';
-import { formatUsd } from '../lib/models';
+import { formatUsd, isLocalProvider } from '../lib/models';
 
 function DraftRow({ draft, expanded }: { draft: DraftEntry; expanded: boolean }) {
   return (
@@ -42,7 +42,12 @@ export function DraftReviewBody({ review, expanded = false }: { review: DraftRev
           <dt>Drafts</dt>
           <dd>{review.count.toLocaleString()}</dd>
         </div>
-        {review.estimatedUsd !== null ? (
+        {isLocalProvider(review.provider) ? (
+          <div>
+            <dt>Cost</dt>
+            <dd>Local, no cost</dd>
+          </div>
+        ) : review.estimatedUsd !== null ? (
           <div>
             <dt>Estimated cost so far</dt>
             <dd>

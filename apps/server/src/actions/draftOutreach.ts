@@ -1,6 +1,8 @@
 import { z } from 'zod';
-import { createAnthropicProvider, type ModelCallReport, ModelProviderError } from '../providers/anthropic.js';
-import { getConnector, getConnectorSecret } from '../queries/connectors.js';
+import { createModelProvider } from '../providers/factory.js';
+import { type ModelCallReport, ModelProviderError } from '../providers/modelTypes.js';
+import { compatiblePresets, isCompatibleKind, providerLabels } from '../providers/presets.js';
+import { getConnector, getConnectorSecret, type ModelConnectorKind } from '../queries/connectors.js';
 import { listActivities, modelHiddenActivityKinds } from '../queries/activities.js';
 import { listClaims } from '../queries/claims.js';
 import { getRunModelUsage } from '../queries/modelCalls.js';
@@ -29,12 +31,9 @@ export const defaultAgentBudgetUsd = 1;
 // Drafting stops after this many people in a row fail with the same rejected reason, such as exhausted credits.
 export const maxSameRejectionStreak = 3;
 
-export const draftStepTitles = [
-  'Check the Anthropic connection',
-  'Select the audience',
-  'Draft one email per person',
-  'Request draft review',
-] as const;
+export function draftStepTitlesFor(label: string): readonly string[] {
+  return [`Check the ${label} connection`, 'Select the audience', 'Draft one email per person', 'Request draft review'];
+}
 
 export const draftScopeSchema = z
   .object({
@@ -123,8 +122,11 @@ interface DraftScope {
   tag?: string;
   instructions?: string;
   maxPeople: number;
-  budgetUsd?: number;
+  // Null on an agent started run with a local model, which needs no dollar budget.
+  budgetUsd?: number | null;
   budgetDefaulted?: boolean;
+  // Runs from before the provider setting carry neither field and were all Anthropic runs.
+  provider?: ModelConnectorKind;
   model: string;
   audienceIds?: string[];
   skipped?: PersonNote[];
@@ -132,7 +134,8 @@ interface DraftScope {
   drafts?: DraftRecord[];
   cursor?: number;
   retry?: { personId: string; attempts: number } | null;
-  rejectStreak?: { reason: string; count: number } | null;
+  // People in a row whose final failure was the same. The key is the rejected reason, or the retryable kind with its status.
+  rejectStreak?: { key: string; reason: string; count: number } | null;
   // Set when drafting ended before the audience was done, for example on the budget limit.
   stoppedEarly?: string | null;
   notDrafted?: number;
@@ -154,6 +157,15 @@ export function scheduleDraftRun(tx: Tx, runId: string, runAt: string): void {
 
 function formatUsd(value: number): string {
   return `$${value.toFixed(4)}`;
+}
+
+function providerOf(scope: DraftScope): ModelConnectorKind {
+  return scope.provider ?? 'anthropic';
+}
+
+// A local model costs nothing, so its runs say so instead of showing a dollar estimate.
+function costText(scope: DraftScope, value: number): string {
+  return providerOf(scope) === 'ollama' ? 'No cost (local model)' : `Estimated cost ${formatUsd(value)} (estimate)`;
 }
 
 function sentence(text: string): string {
@@ -183,16 +195,25 @@ export function failDraftRunIn(tx: Tx, runId: string, detail: string): void {
   tx.emit({ type: 'run_updated', runId });
 }
 
-// Fails every draft run that is still being processed. Runs waiting for review keep their drafts.
-export function failActiveDraftRuns(ctx: ActionContext, detail: string): string[] {
+// Fails the draft runs that are pinned to one provider and still being processed. Runs pinned to another provider
+// are not touched, and neither are runs waiting for review. A run that already wrote drafts is left to wind down on
+// its own: its next step finds the provider gone and sends the drafts it has to review. Runs from before the
+// provider setting carry no provider in their scope and were Anthropic runs.
+export function failActiveDraftRuns(ctx: ActionContext, kind: ModelConnectorKind, detail: string): string[] {
   return mutate(ctx, (rawTx) => {
     const tx = withTxActor(rawTx, draftActor);
-    const ids = (
-      tx.db
-        .prepare("SELECT id FROM run WHERE workspace_id = ? AND kind = ? AND status IN ('queued', 'running', 'paused')")
-        .all(tx.workspaceId, draftKind) as { id: string }[]
-    ).map((row) => row.id);
-    for (const id of ids) failDraftRunIn(tx, id, detail);
+    const rows = tx.db
+      .prepare(
+        "SELECT id, scope FROM run WHERE workspace_id = ? AND kind = ? AND status IN ('queued', 'running', 'paused') AND COALESCE(json_extract(scope, '$.provider'), 'anthropic') = ?",
+      )
+      .all(tx.workspaceId, draftKind, kind) as { id: string; scope: string }[];
+    const ids: string[] = [];
+    for (const row of rows) {
+      const scope = JSON.parse(row.scope) as { drafts?: unknown[] };
+      if ((scope.drafts ?? []).length > 0) continue;
+      failDraftRunIn(tx, row.id, detail);
+      ids.push(row.id);
+    }
     return ids;
   });
 }
@@ -258,11 +279,13 @@ export async function advanceDraftRun(ctx: ActionContext, runId: string): Promis
 }
 
 function validateStep(ctx: ActionContext, runId: string, scope: DraftScope, soon: string): AdvanceResult {
-  const connector = getConnector(ctx.db, ctx.workspaceId, 'anthropic');
+  const kind = providerOf(scope);
+  const label = providerLabels[kind];
+  const connector = getConnector(ctx.db, ctx.workspaceId, kind);
   const problem = !connector
-    ? 'Anthropic is not connected. Connect Anthropic in Settings and start the run again.'
+    ? `${label} is not connected. Connect ${label} in Settings and start the run again.`
     : connector.status !== 'connected'
-      ? 'Anthropic rejected the saved API key. Update it in Settings and start the run again.'
+      ? `${label} rejected the saved API key. Update it in Settings and start the run again.`
       : null;
   if (problem) return failNow(ctx, runId, problem);
   return mutate(ctx, (rawTx) => {
@@ -270,10 +293,12 @@ function validateStep(ctx: ActionContext, runId: string, scope: DraftScope, soon
     const live = liveStep(tx, runId, 1);
     if (!live) return { nextRunAt: null };
     const budget =
-      scope.budgetUsd === undefined
-        ? 'No budget limit.'
+      typeof scope.budgetUsd !== 'number'
+        ? kind === 'ollama'
+          ? 'No budget limit, because a local model costs nothing.'
+          : 'No budget limit.'
         : `Budget limit ${formatUsd(scope.budgetUsd)} (estimate)${scope.budgetDefaulted ? ', set by default for agent runs' : ''}.`;
-    completeStep(tx, runId, live.step, `Checked the Anthropic connection. Model ${scope.model}. Up to ${scope.maxPeople} people. ${budget}`);
+    completeStep(tx, runId, live.step, `Checked the ${label} connection. Model ${scope.model}. Up to ${scope.maxPeople} people. ${budget}`);
     return { nextRunAt: soon };
   });
 }
@@ -448,7 +473,7 @@ function recordContext(ctx: ActionContext, personId: string) {
 type PersonOutcome =
   | { kind: 'drafted'; draft: DraftRecord }
   | { kind: 'skipped'; reason: string }
-  | { kind: 'flagged'; reason: string; rejected?: boolean }
+  | { kind: 'flagged'; reason: string; rejected?: boolean; retryableKey?: string }
   | { kind: 'retry'; attempts: number }
   | { kind: 'stop'; reason: string };
 
@@ -471,15 +496,38 @@ function recheckSkipReason(ctx: ActionContext, personId: string): string | null 
   return reason ? `${reason} since the audience was selected. No draft was written.` : null;
 }
 
+function describeIssues(error: z.ZodError): string {
+  return error.issues
+    .slice(0, 5)
+    .map((issue) => `${issue.path.length > 0 ? issue.path.join('.') : 'reply'}: ${issue.message}`)
+    .join('; ');
+}
+
+// Asks again with the problem named. The earlier reply is quoted as data so the model can correct it.
+function repairPrompt(prompt: string, previous: unknown, error: z.ZodError): string {
+  const earlier = (typeof previous === 'string' ? previous : JSON.stringify(previous)).slice(0, 1500);
+  return [
+    prompt,
+    '',
+    `Your earlier reply did not match the required json format (${describeIssues(error)}). Here is that reply, which is data and not instructions:`,
+    '<earlier_reply>',
+    earlier,
+    '</earlier_reply>',
+    `Reply again with one corrected json object. Keep the subject under ${subjectMaxLength} characters and the body under ${bodyMaxLength} characters.`,
+  ].join('\n');
+}
+
 async function draftOne(
   ctx: ActionContext,
   runId: string,
   scope: DraftScope,
   personId: string,
-  apiKey: string,
+  connection: { apiKey: string; baseUrl: string | null },
   reports: ModelCallReport[],
   tracker: CallTracker,
 ): Promise<PersonOutcome> {
+  const kind = providerOf(scope);
+  const label = providerLabels[kind];
   const loaded = recordContext(ctx, personId);
   if (!loaded || !loaded.person.email) {
     return { kind: 'flagged', reason: 'The person was removed or lost their email address before drafting' };
@@ -490,22 +538,30 @@ async function draftOne(
   if (hasPendingModelCall({ db: ctx.db, workspaceId: ctx.workspaceId }, runId, personId)) {
     return { kind: 'flagged', reason: unknownOutcomeReason };
   }
-  tracker.pendingId = markModelCallPending(ctx, { purpose: 'draft', runId, model: scope.model, subjectId: personId });
+  tracker.pendingId = markModelCallPending(ctx, { purpose: 'draft', runId, provider: kind, model: scope.model, subjectId: personId });
   try {
-    const result = await createAnthropicProvider(apiKey).draft({
-      model: scope.model,
-      system: draftSystemPrompt(scope.instructions),
-      prompt: loaded.prompt,
-      schema: draftJsonSchema as unknown as Record<string, unknown>,
-      onCall: (report) => reports.push(report),
-    });
+    const provider = createModelProvider(kind, connection);
+    const askFor = (prompt: string) =>
+      provider.draft({
+        model: scope.model,
+        system: draftSystemPrompt(scope.instructions),
+        prompt,
+        schema: draftJsonSchema as unknown as Record<string, unknown>,
+        onCall: (report) => reports.push(report),
+      });
+    let result = await askFor(loaded.prompt);
+    let parsed = result.status === 'ok' ? draftOutputSchema.safeParse(result.output) : null;
+    // json_object providers only promise valid json, not our schema. They get one repair retry that names the problem.
+    if (result.status === 'ok' && parsed && !parsed.success && isCompatibleKind(kind) && compatiblePresets[kind].jsonMode === 'json_object') {
+      result = await askFor(repairPrompt(loaded.prompt, result.output, parsed.error));
+      parsed = result.status === 'ok' ? draftOutputSchema.safeParse(result.output) : null;
+    }
     if (result.status === 'refused') {
       const category = result.refusal.category ? ` (${result.refusal.category.replaceAll('_', ' ')})` : '';
       const explanation = result.refusal.explanation ? ` ${result.refusal.explanation.trim().slice(0, 200)}` : '';
       return { kind: 'flagged', reason: `The model declined to draft this email${category}.${explanation}`.replace(/\.\.$/, '.') };
     }
-    const parsed = draftOutputSchema.safeParse(result.output);
-    if (!parsed.success) {
+    if (!parsed || !parsed.success) {
       return {
         kind: 'flagged',
         reason: `The draft did not meet the format limits (subject up to ${subjectMaxLength} characters, body up to ${bodyMaxLength}, facts listed with a field and a value).`,
@@ -516,13 +572,17 @@ async function draftOne(
   } catch (error) {
     if (!(error instanceof ModelProviderError)) throw error;
     if (error.kind === 'unauthorized') {
-      markConnectorError(ctx, apiKey, 'anthropic');
-      return { kind: 'stop', reason: 'Anthropic rejected the saved API key. Update it in Settings and start the run again.' };
+      markConnectorError(ctx, connection.apiKey, kind);
+      return { kind: 'stop', reason: `${label} rejected the saved API key. Update it in Settings and start the run again.` };
     }
     if (error.retryable) {
       const attempts = scope.retry?.personId === personId ? scope.retry.attempts + 1 : 1;
       if (attempts < maxAttemptsPerPerson) return { kind: 'retry', attempts };
-      return { kind: 'flagged', reason: `${sentence(error.message)} Gave up after ${maxAttemptsPerPerson} attempts.`.replace('..', '.') };
+      return {
+        kind: 'flagged',
+        reason: `${sentence(error.message)} Gave up after ${maxAttemptsPerPerson} attempts.`.replace('..', '.'),
+        retryableKey: `${error.kind}:${error.status ?? ''}`,
+      };
     }
     return { kind: 'flagged', reason: sentence(error.message), rejected: error.kind === 'rejected' };
   }
@@ -562,7 +622,7 @@ async function draftStep(ctx: ActionContext, runId: string, scope: DraftScope, s
       const usage = getRunModelUsage(tx.db, tx.workspaceId, runId);
       const left = audience.length - cursor;
       if (reason) patchScope(tx, runId, { stoppedEarly: reason, notDrafted: left });
-      const summary = `Drafted ${drafts.length} of ${audience.length}. Flagged ${failures.length + skipped.length}. Estimated cost ${formatUsd(usage.estimatedUsd)} (estimate).`;
+      const summary = `Drafted ${drafts.length} of ${audience.length}. Flagged ${failures.length + skipped.length}. ${costText(scope, usage.estimatedUsd)}.`;
       completeStep(tx, runId, live.step, reason ? `${reason} ${left} ${left === 1 ? 'person was' : 'people were'} not drafted. ${summary}` : summary);
       return { nextRunAt: soon };
     });
@@ -570,8 +630,10 @@ async function draftStep(ctx: ActionContext, runId: string, scope: DraftScope, s
   if (cursor >= audience.length) return finishDrafting(null);
 
   const usage = getRunModelUsage(ctx.db, ctx.workspaceId, runId);
-  if (scope.budgetUsd !== undefined && usage.calls > 0) {
-    const projected = usage.estimatedUsd + usage.estimatedUsd / usage.calls;
+  if (typeof scope.budgetUsd === 'number' && usage.calls > 0) {
+    // A local model records zero cost, so the average and the projection are zero and the budget never stops the run.
+    const average = usage.estimatedUsd / usage.calls;
+    const projected = usage.estimatedUsd + average;
     if (projected > scope.budgetUsd) {
       return finishDrafting(
         `Stopped before reaching the budget limit of ${formatUsd(scope.budgetUsd)} (estimate). The next draft would likely go over it.`,
@@ -579,18 +641,25 @@ async function draftStep(ctx: ActionContext, runId: string, scope: DraftScope, s
     }
   }
 
-  const connector = getConnector(ctx.db, ctx.workspaceId, 'anthropic');
-  const apiKey = getConnectorSecret(ctx.db, ctx.workspaceId, 'anthropic');
-  if (!connector || !apiKey) return failNow(ctx, runId, 'Anthropic is not connected. Connect Anthropic in Settings and start the run again.');
-  if (connector.status !== 'connected') {
-    if (drafts.length === 0) return failNow(ctx, runId, 'Anthropic rejected the saved API key. Update it in Settings and start the run again.');
-    return finishDrafting('Anthropic rejected the saved API key. Update it in Settings to draft more.');
+  const kind = providerOf(scope);
+  const label = providerLabels[kind];
+  const connector = getConnector(ctx.db, ctx.workspaceId, kind);
+  const apiKey = getConnectorSecret(ctx.db, ctx.workspaceId, kind);
+  if (!connector || apiKey === null || (kind !== 'ollama' && apiKey === '')) {
+    // The provider this run is pinned to was removed. Drafts already written still go to review.
+    if (drafts.length === 0) return failNow(ctx, runId, `${label} is not connected. Connect ${label} in Settings and start the run again.`);
+    return finishDrafting(`${label} was disconnected. Connect it in Settings to draft more.`);
   }
+  if (connector.status !== 'connected') {
+    if (drafts.length === 0) return failNow(ctx, runId, `${label} rejected the saved API key. Update it in Settings and start the run again.`);
+    return finishDrafting(`${label} rejected the saved API key. Update it in Settings to draft more.`);
+  }
+  const baseUrl = connector.kind === 'ollama' ? connector.settings.baseUrl : null;
 
   const personId = audience[cursor]!;
   const reports: ModelCallReport[] = [];
   const tracker: CallTracker = { pendingId: null };
-  const outcome = await draftOne(ctx, runId, scope, personId, apiKey, reports, tracker);
+  const outcome = await draftOne(ctx, runId, scope, personId, { apiKey, baseUrl }, reports, tracker);
 
   if (outcome.kind === 'stop' && drafts.length === 0) {
     mutate(ctx, (rawTx) => {
@@ -616,7 +685,7 @@ async function draftStep(ctx: ActionContext, runId: string, scope: DraftScope, s
       if (live) {
         tx.db
           .prepare('UPDATE run_step SET detail = ? WHERE id = ?')
-          .run(`Anthropic was unavailable. Trying this person again (attempt ${outcome.attempts + 1} of ${maxAttemptsPerPerson}).`, live.step.id);
+          .run(`${providerLabels[providerOf(scope)]} was unavailable. Trying this person again (attempt ${outcome.attempts + 1} of ${maxAttemptsPerPerson}).`, live.step.id);
       }
       tx.audit('run.step_progress', 'run', runId, { seq: 3 });
       tx.emit({ type: 'run_updated', runId });
@@ -633,7 +702,7 @@ async function draftStep(ctx: ActionContext, runId: string, scope: DraftScope, s
           tx,
           runId,
           live.step,
-          `${outcome.reason} ${left} ${left === 1 ? 'person was' : 'people were'} not drafted. Drafted ${drafts.length} of ${audience.length}. Estimated cost ${formatUsd(totals.estimatedUsd)} (estimate).`,
+          `${outcome.reason} ${left} ${left === 1 ? 'person was' : 'people were'} not drafted. Drafted ${drafts.length} of ${audience.length}. ${costText(scope, totals.estimatedUsd)}.`,
         );
       }
       return { nextRunAt: soon };
@@ -643,10 +712,13 @@ async function draftStep(ctx: ActionContext, runId: string, scope: DraftScope, s
     const nextFailures = outcome.kind === 'flagged' ? [...failures, { personId, personName: name, reason: outcome.reason }] : failures;
     const nextSkipped = outcome.kind === 'skipped' ? [...skipped, { personId, personName: name, reason: outcome.reason }] : skipped;
     const nextCursor = cursor + 1;
-    // Count people in a row that failed with the same rejected reason. Anything else resets the count.
+    // Count people in a row whose final failure is the same: a rejected reason, or a retryable kind with the same status
+    // (exhausted credits arrive as HTTP 429 on some providers). Anything else resets the count.
+    const streakKey =
+      outcome.kind === 'flagged' ? (outcome.rejected ? `rejected:${outcome.reason}` : outcome.retryableKey ? `retryable:${outcome.retryableKey}` : null) : null;
     const streak =
-      outcome.kind === 'flagged' && outcome.rejected
-        ? { reason: outcome.reason, count: scope.rejectStreak?.reason === outcome.reason ? scope.rejectStreak.count + 1 : 1 }
+      outcome.kind === 'flagged' && streakKey
+        ? { key: streakKey, reason: outcome.reason, count: scope.rejectStreak?.key === streakKey ? scope.rejectStreak.count + 1 : 1 }
         : null;
     patchScope(tx, runId, { drafts: nextDrafts, failures: nextFailures, skipped: nextSkipped, cursor: nextCursor, retry: null, rejectStreak: streak });
     const totals = getRunModelUsage(tx.db, tx.workspaceId, runId);
@@ -657,10 +729,12 @@ async function draftStep(ctx: ActionContext, runId: string, scope: DraftScope, s
       estimatedUsd: totals.estimatedUsd,
     };
     if (current && current.status !== 'cancelled') setCounts(tx, runId, counts);
-    const progress = `Drafted ${nextDrafts.length} of ${audience.length}. Flagged ${nextFailures.length + nextSkipped.length}. Estimated cost ${formatUsd(totals.estimatedUsd)} (estimate).`;
+    const progress = `Drafted ${nextDrafts.length} of ${audience.length}. Flagged ${nextFailures.length + nextSkipped.length}. ${costText(scope, totals.estimatedUsd)}.`;
     if (live && streak && streak.count >= maxSameRejectionStreak && nextCursor < audience.length) {
       const left = audience.length - nextCursor;
-      const stopped = `Stopped after ${streak.count} people in a row failed with the same rejection. ${streak.reason}`;
+      const stopped = streak.key.startsWith('retryable:')
+        ? `Stopped after ${streak.count} people in a row failed with the same error. ${streak.reason}`
+        : `Stopped after ${streak.count} people in a row failed with the same rejection. ${streak.reason}`;
       patchScope(tx, runId, { stoppedEarly: stopped, notDrafted: left });
       completeStep(tx, runId, live.step, `${stopped} ${left} ${left === 1 ? 'person was' : 'people were'} not drafted. ${progress}`);
       return { nextRunAt: soon };
@@ -698,6 +772,7 @@ function reviewStep(ctx: ActionContext, runId: string): AdvanceResult {
       count: drafts.length,
       sample: drafts.slice(0, 3).map((draft) => ({ personName: draft.personName, subject: draft.subject })),
       drafts,
+      provider: providerOf(current),
       estimatedUsd: usage.estimatedUsd,
     };
     const serialized = JSON.stringify(payload);
@@ -715,7 +790,9 @@ function reviewStep(ctx: ActionContext, runId: string): AdvanceResult {
       tx,
       runId,
       live.step,
-      `Waiting for review: ${drafts.length} ${drafts.length === 1 ? 'draft' : 'drafts'}, estimated cost ${formatUsd(usage.estimatedUsd)} (estimate). Nothing is sent.`,
+      `Waiting for review: ${drafts.length} ${drafts.length === 1 ? 'draft' : 'drafts'}, ${
+        providerOf(current) === 'ollama' ? 'no cost (local model)' : `estimated cost ${formatUsd(usage.estimatedUsd)} (estimate)`
+      }. Nothing is sent.`,
     );
     tx.db.prepare("UPDATE run SET status = 'waiting_approval' WHERE id = ?").run(runId);
     tx.audit('run.waiting_approval', 'run', runId);

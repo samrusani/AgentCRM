@@ -26,12 +26,13 @@ export function useEventConnection(): Connection {
 const MAIL_KEYS = ['send-intents', 'mail-summary', 'suppressions'];
 
 const KEYS_BY_EVENT: Record<ServerEventName, string[]> = {
-  run_updated: ['today', 'runs', 'run', 'approvals', 'import', 'connectors', 'people', 'person', 'qualification'],
+  run_updated: ['today', 'runs', 'run', 'approvals', 'import', 'connectors', 'model-provider', 'people', 'person', 'qualification'],
   approval_updated: ['today', 'approvals', 'runs', 'run', 'import', ...MAIL_KEYS],
   record_updated: [
     'today',
     'import',
     'connectors',
+    'model-provider',
     'people',
     'person',
     'organizations',

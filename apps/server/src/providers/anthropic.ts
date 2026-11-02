@@ -7,6 +7,35 @@ import {
   anthropicKeyCheckTimeoutMilliseconds,
   anthropicMaxRetries,
 } from '../config.js';
+import {
+  addUsage,
+  type ChatToolDefinition,
+  emptyUsage,
+  isRecord,
+  type ModelProvider,
+  ModelProviderError,
+  type ModelUsage,
+  type Refusal,
+} from './modelTypes.js';
+
+export {
+  addUsage,
+  type ChatRequest,
+  type ChatResponse,
+  type ChatToolCall,
+  type ChatToolDefinition,
+  type ChatToolResult,
+  type ChatTurn,
+  type DraftRequest,
+  type DraftResponse,
+  emptyUsage,
+  type ModelCallReport,
+  type ModelErrorKind,
+  type ModelProvider,
+  ModelProviderError,
+  type ModelUsage,
+  type Refusal,
+} from './modelTypes.js';
 
 export const supportedModels = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] as const;
 export type ModelId = (typeof supportedModels)[number];
@@ -27,24 +56,6 @@ export const modelListPrices: Record<ModelId, { inputPerMillionUsd: number; outp
 const cacheReadPriceFactor = 0.1;
 const cacheWritePriceFactor = 1.25;
 
-export interface ModelUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-}
-
-export const emptyUsage: ModelUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
-
-export function addUsage(left: ModelUsage, right: ModelUsage): ModelUsage {
-  return {
-    inputTokens: left.inputTokens + right.inputTokens,
-    outputTokens: left.outputTokens + right.outputTokens,
-    cacheReadTokens: left.cacheReadTokens + right.cacheReadTokens,
-    cacheCreationTokens: left.cacheCreationTokens + right.cacheCreationTokens,
-  };
-}
-
 // An estimate from list prices, rounded to a millionth of a dollar. It is not a bill.
 export function estimateUsd(model: string, usage: ModelUsage): number {
   const prices = isSupportedModel(model) ? modelListPrices[model] : modelListPrices[defaultModel];
@@ -57,102 +68,6 @@ export function estimateUsd(model: string, usage: ModelUsage): number {
   return Math.round(dollars * 1_000_000) / 1_000_000;
 }
 
-export type ModelErrorKind = 'unauthorized' | 'rate_limited' | 'unavailable' | 'timeout' | 'rejected' | 'bad_response';
-
-// Messages are written in this file and never include the API key.
-export class ModelProviderError extends Error {
-  readonly kind: ModelErrorKind;
-  readonly status: number | null;
-
-  constructor(kind: ModelErrorKind, message: string, status: number | null = null) {
-    super(message);
-    this.name = 'ModelProviderError';
-    this.kind = kind;
-    this.status = status;
-  }
-
-  // Rate limits, server errors, and network trouble can pass. Everything else needs a person to change something.
-  get retryable(): boolean {
-    return this.kind === 'rate_limited' || this.kind === 'unavailable' || this.kind === 'timeout';
-  }
-}
-
-export interface ChatTurn {
-  role: 'user' | 'assistant';
-  text: string;
-}
-
-export interface ChatToolDefinition {
-  name: string;
-  description: string;
-  inputSchema: {
-    type: 'object';
-    properties: Record<string, unknown>;
-    required: string[];
-    additionalProperties: false;
-  };
-}
-
-export interface ChatToolCall {
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-}
-
-export interface ChatToolResult {
-  content: string;
-  isError?: boolean;
-}
-
-export interface Refusal {
-  category: string | null;
-  explanation: string | null;
-}
-
-// Reported once per provider response, including refusals, so each paid call is recorded as it happens.
-export interface ModelCallReport {
-  model: string;
-  usage: ModelUsage;
-}
-
-export interface ChatRequest {
-  model: string;
-  system: string;
-  messages: ChatTurn[];
-  tools: ChatToolDefinition[];
-  maxToolRounds: number;
-  runTool: (call: ChatToolCall) => Promise<ChatToolResult> | ChatToolResult;
-  onCall?: (report: ModelCallReport) => void;
-}
-
-export interface ChatResponse {
-  text: string;
-  usage: ModelUsage;
-  refusal: Refusal | null;
-  toolRounds: number;
-  hitToolLimit: boolean;
-  cutOff: boolean;
-}
-
-export interface DraftRequest {
-  model: string;
-  system: string;
-  prompt: string;
-  schema: Record<string, unknown>;
-  onCall?: (report: ModelCallReport) => void;
-}
-
-export type DraftResponse =
-  | { status: 'ok'; output: unknown; usage: ModelUsage }
-  | { status: 'refused'; refusal: Refusal; usage: ModelUsage };
-
-// Shaped so another provider, such as a local endpoint, can implement the same three calls.
-export interface ModelProvider {
-  validateKey(): Promise<void>;
-  chat(request: ChatRequest): Promise<ChatResponse>;
-  draft(request: DraftRequest): Promise<DraftResponse>;
-}
-
 const fallbackBeta = 'server-side-fallback-2026-07-01';
 const chatMaxTokens = 6000;
 const draftMaxTokens = 12000;
@@ -163,10 +78,6 @@ const fallbacksRejected = new Set<string>();
 
 export function resetFallbackMemory(): void {
   fallbacksRejected.clear();
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function scrub(message: string, apiKey: string): string {
@@ -308,7 +219,7 @@ export function createAnthropicProvider(apiKey: string): ModelProvider {
         );
         const callUsage = usageOf(response);
         usage = addUsage(usage, callUsage);
-        request.onCall?.({ model: request.model, usage: callUsage });
+        request.onCall?.({ provider: 'anthropic', model: request.model, usage: callUsage });
 
         if (response.stop_reason === 'refusal') {
           return { text: lastText, usage, refusal: refusalOf(response), toolRounds, hitToolLimit: false, cutOff: false };
@@ -366,7 +277,7 @@ export function createAnthropicProvider(apiKey: string): ModelProvider {
         { maxRetries: 0 },
       );
       const usage = usageOf(response);
-      request.onCall?.({ model: request.model, usage });
+      request.onCall?.({ provider: 'anthropic', model: request.model, usage });
       if (response.stop_reason === 'refusal') return { status: 'refused', refusal: refusalOf(response), usage };
       if (response.stop_reason === 'max_tokens') {
         throw new ModelProviderError('bad_response', 'Anthropic cut the draft off before it was complete.');

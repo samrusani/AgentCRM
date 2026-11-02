@@ -5,11 +5,11 @@ import { dotSegmentMessage, hasDotSegment } from '../providers/apify.js';
 import { getConnector } from '../queries/connectors.js';
 import { terminalRunStatuses, type RunCounts } from '../records.js';
 import { apifyKind, apifyStepTitles, defaultMaxItems, hardMaxItems, scheduleApifyRun } from './apifyScrape.js';
-import { allowlistIncludes, connectAnthropicMessage, connectApifyMessage } from './connectors.js';
+import { allowlistIncludes, connectApifyMessage, requireActiveModel } from './connectors.js';
 import { type ActionContext, mutate, parseInput, type Tx } from './context.js';
 import { defaultTargetCount, demoStepTitles, maxTargetCount, scheduleDemoRun } from './demoResearch.js';
 import { csvImportKind, scheduleCsvImportRun } from './csvImport.js';
-import { defaultAgentBudgetUsd, draftKind, draftScopeSchema, draftStepTitles, scheduleDraftRun } from './draftOutreach.js';
+import { defaultAgentBudgetUsd, draftKind, draftScopeSchema, draftStepTitlesFor, scheduleDraftRun } from './draftOutreach.js';
 import { closeImportBatchForRun } from './importReview.js';
 import { cancelIntentsForRunIn } from './sendIntents.js';
 import { qualifyKind, qualifyScopeSchema, qualifyStepTitles, scheduleQualifyRun } from './qualify.js';
@@ -82,11 +82,10 @@ function assertApifyRunAllowed(ctx: ActionContext, actorId: string, origin: 'use
   }
 }
 
+// Draft runs use the active model provider. The run keeps that provider and model for its whole life.
 function assertDraftRunAllowed(ctx: ActionContext) {
-  const connector = getConnector(ctx.db, ctx.workspaceId, 'anthropic');
-  if (!connector) throw conflict(connectAnthropicMessage);
-  if (connector.status !== 'connected') throw conflict('Anthropic rejected the saved API key. Update it in Settings.');
-  return connector;
+  const { kind, label, model } = requireActiveModel(ctx);
+  return { kind, label, model };
 }
 
 export function scheduleRunJob(tx: Tx, kind: string, runId: string, runAt: string): void {
@@ -126,23 +125,31 @@ export function startRun(ctx: ActionContext, input: unknown, options: StartRunOp
     }
     if (data.kind === 'draft_outreach') {
       title = data.title ?? (data.scope.tag ? `Draft outreach to people tagged ${data.scope.tag}` : 'Draft outreach emails');
-      stepTitles = draftStepTitles;
+      stepTitles = draftStepTitlesFor(draftConnector!.label);
       counts = { processed: 0, found: 0, flagged: 0, estimatedUsd: 0 };
       // An agent that sets no budget gets a default one, and the run scope records that it was defaulted.
-      const defaulted = origin === 'agent' && data.scope.budgetUsd === undefined;
+      // A local model costs nothing, so an agent run on Ollama gets no dollar budget and the scope records null.
+      const unbudgeted = origin === 'agent' && data.scope.budgetUsd === undefined;
+      const local = draftConnector!.kind === 'ollama';
+      const defaulted = unbudgeted && !local;
+      const skippedBudget = unbudgeted && local;
       storedScope = {
         ...storedScope,
-        model: draftConnector!.settings.model,
+        provider: draftConnector!.kind,
+        model: draftConnector!.model,
         ...(defaulted ? { budgetUsd: defaultAgentBudgetUsd, budgetDefaulted: true } : {}),
+        ...(skippedBudget ? { budgetUsd: null } : {}),
       };
       auditScope = {
         scope: {
           ...data.scope,
           instructions: data.scope.instructions ? '(set)' : undefined,
           ...(defaulted ? { budgetUsd: defaultAgentBudgetUsd, budgetDefaulted: true } : {}),
+          ...(skippedBudget ? { budgetUsd: null, budgetNote: 'No dollar budget, because a local model costs nothing.' } : {}),
         },
         origin,
-        model: draftConnector!.settings.model,
+        provider: draftConnector!.kind,
+        model: draftConnector!.model,
       };
     } else if (data.kind === 'apify_scrape') {
       title = data.title ?? `Apify import: ${data.scope.actorId}`;

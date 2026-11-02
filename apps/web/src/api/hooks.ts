@@ -12,6 +12,8 @@ import type {
   ApifyRunInput,
   CsvImportInput,
   DraftOutreachInput,
+  ModelProviderInput,
+  ModelProviderKind,
   Opportunity,
   QualificationConfig,
   StageSendInput,
@@ -308,32 +310,62 @@ export function useRemoveApifyConnector() {
   });
 }
 
-export function useAnthropicConnector() {
+export function useModelConnector(kind: ModelProviderKind) {
   const query = useConnectors();
-  const connector = query.data?.find((entry) => entry.kind === 'anthropic') ?? null;
+  const connector = query.data?.find((entry) => entry.kind === kind) ?? null;
   return { query, connector };
 }
 
-export function useSaveAnthropicConnector() {
+// The provider chat and drafting use, or null when none is configured.
+export function useModelProvider() {
+  return useQuery({ queryKey: ['model-provider'], queryFn: api.modelProvider.get });
+}
+
+export function useSetModelProvider() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { token?: string; model?: string }) => api.connectors.saveAnthropic(input),
+    mutationFn: (kind: ModelProviderKind) => api.modelProvider.set(kind),
     onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['model-provider'] });
       void queryClient.invalidateQueries({ queryKey: ['connectors'] });
     },
   });
 }
 
-export function useRemoveAnthropicConnector() {
+export function useSaveModelConnector(kind: ModelProviderKind) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => api.connectors.removeAnthropic(),
+    mutationFn: (input: ModelProviderInput) => api.connectors.saveModelProvider(kind, input),
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ['connectors'] });
+      void queryClient.invalidateQueries({ queryKey: ['model-provider'] });
+    },
+  });
+}
+
+export function useRemoveModelConnector(kind: ModelProviderKind) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.connectors.removeModelProvider(kind),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['connectors'] });
+      void queryClient.invalidateQueries({ queryKey: ['model-provider'] });
       void queryClient.invalidateQueries({ queryKey: ['runs'] });
       void queryClient.invalidateQueries({ queryKey: ['run'] });
       void queryClient.invalidateQueries({ queryKey: ['today'] });
+      if (kind === 'ollama') void queryClient.removeQueries({ queryKey: ['ollama-models'] });
     },
+  });
+}
+
+// Installed models on the configured local server. Fetch on demand with refetch(), or automatically once enabled.
+export function useOllamaModels(enabled: boolean) {
+  return useQuery({
+    queryKey: ['ollama-models'],
+    queryFn: api.connectors.ollamaModels,
+    enabled,
+    retry: false,
+    staleTime: 30_000,
   });
 }
 

@@ -1,8 +1,9 @@
-import { useAnthropicConnector, useHealth, useWorkspace } from '../api/hooks';
+import { useHealth, useModelProvider, useWorkspace } from '../api/hooks';
 import { ErrorState, Loading, PageHeader } from '../components/common';
-import { modelName } from '../lib/models';
+import { isLocalProvider, modelName, providerAttention, providerName } from '../lib/models';
 import { useUI, type ThemeSetting } from '../lib/ui';
 import { ConnectorSettings } from './ConnectorSettings';
+import { ModelProviderSettings } from './ModelProviderSettings';
 import { QualificationSettings } from './QualificationSettings';
 import { SuppressionSettings } from './SuppressionSettings';
 
@@ -16,7 +17,8 @@ export function Settings() {
   const { theme, setTheme } = useUI();
   const health = useHealth();
   const workspace = useWorkspace();
-  const { connector: anthropic } = useAnthropicConnector();
+  const modelProvider = useModelProvider();
+  const activeProvider = modelProvider.data ?? null;
 
   return (
     <div className="screen">
@@ -44,6 +46,8 @@ export function Settings() {
           </div>
           <p className="muted">This choice is stored in this browser only.</p>
         </section>
+
+        <ModelProviderSettings />
 
         <ConnectorSettings />
 
@@ -96,9 +100,19 @@ export function Settings() {
             </dl>
           ) : null}
           <p className="muted">
-            {anthropic?.status === 'connected'
-              ? `Model: connected (${modelName(anthropic.model)}). Chat and draft outreach use it, and costs shown are estimates.`
-              : 'No model is connected. Agent runs are simulated until you add one.'}
+            {modelProvider.isPending
+              ? 'Checking the model provider...'
+              : modelProvider.isError
+                ? 'Could not check the model provider. See the Model providers section above.'
+                : activeProvider && !activeProvider.ready
+                  ? `${providerAttention(activeProvider)} Fix it in the Model providers section above.`
+                  : activeProvider
+                    ? `Model: connected (${providerName(activeProvider.kind)}${activeProvider.model ? `, ${modelName(activeProvider.model)}` : ''}). ${
+                        isLocalProvider(activeProvider.kind)
+                          ? 'Chat and draft outreach use it. It runs on this computer, so there is no cost.'
+                          : 'Chat and draft outreach use it, and costs shown are estimates.'
+                      }`
+                    : 'No model is connected. Agent runs are simulated until you add one.'}
           </p>
         </section>
       </div>

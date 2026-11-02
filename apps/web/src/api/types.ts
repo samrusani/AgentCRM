@@ -244,6 +244,9 @@ export interface AgentReply {
   modelFailed?: boolean;
   // Present only when a model produced the reply.
   usage?: AgentUsage;
+  // The provider and model that answered. Ollama runs on this computer, so its replies carry no cost.
+  provider?: string;
+  model?: string;
 }
 
 export interface ChatTurn {
@@ -268,14 +271,42 @@ export interface ApiErrorEnvelope {
 
 export type ConnectorStatus = 'connected' | 'error' | string;
 
+export type ModelProviderKind = 'anthropic' | 'openai' | 'deepseek' | 'zai' | 'ollama';
+export type ConnectorKind = 'apify' | 'agentmail' | ModelProviderKind;
+
+// The one provider chat and drafting use. The server answers null when none is configured.
+export interface ModelProviderSelection {
+  kind: ModelProviderKind | string;
+  model: string | null;
+  // 'error' means the saved key was rejected. The provider stays saved and active but cannot run work.
+  status: 'connected' | 'error';
+  statusMessage: string | null;
+  // Connected, no error, and for Ollama a model chosen. Only a ready provider can answer chat or draft.
+  ready: boolean;
+}
+
+export interface ModelProviderInput {
+  // Keyed providers.
+  token?: string;
+  // Ollama.
+  baseUrl?: string;
+  model?: string;
+}
+
+export interface OllamaModel {
+  name: string;
+}
+
 export interface Connector {
   id: string | null;
-  kind: 'apify' | 'anthropic' | 'agentmail' | string;
+  kind: ConnectorKind | string;
   status: ConnectorStatus;
   statusMessage: string | null;
   allowlist: string[];
-  // Anthropic only: the chosen model id from settings.model.
+  // Model providers only: the chosen model id from settings.model.
   model: string | null;
+  // Ollama only: the server address from settings.baseUrl.
+  baseUrl: string | null;
   // AgentMail only: the selected sending inbox from settings.
   inboxId: string | null;
   inboxEmail: string | null;
@@ -390,6 +421,8 @@ export interface DraftReviewPayload {
   sample: DraftSample[];
   drafts: DraftEntry[];
   estimatedUsd: number | null;
+  // The provider that wrote the drafts. A local model costs nothing, so no dollar line is shown for it.
+  provider: string | null;
 }
 
 export interface DraftPersonNote {

@@ -10,7 +10,6 @@ import { RemoveControl, TokenForm, TokenLine } from '../components/connector';
 import { Icon } from '../components/Icons';
 import { normalizeActorId } from '../lib/imports';
 import { AgentMailConnectorCard } from './AgentMailConnectorCard';
-import { AnthropicConnectorCard } from './AnthropicConnectorCard';
 
 function ApifyRemoveControl() {
   const remove = useRemoveApifyConnector();
@@ -176,7 +175,6 @@ function ApifyCard({ connector }: { connector: Connector | null }) {
 
 export function ConnectorSettings() {
   const { query, connector } = useApifyConnector();
-  const anthropic = query.data?.find((entry) => entry.kind === 'anthropic') ?? null;
   const agentmail = query.data?.find((entry) => entry.kind === 'agentmail') ?? null;
 
   return (
@@ -189,7 +187,6 @@ export function ConnectorSettings() {
       {query.isSuccess ? (
         <div className="connector-list">
           <ApifyCard connector={connector} />
-          <AnthropicConnectorCard connector={anthropic} />
           <AgentMailConnectorCard connector={agentmail} />
         </div>
       ) : null}

@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { useAgentMessage, useAnthropicConnector, useRun, useStartRun, useToday } from '../api/hooks';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useAgentMessage, useModelProvider, useRun, useStartRun, useToday } from '../api/hooks';
 import type { AgentAction, AgentUsage, ChatTurn } from '../api/types';
 import { ApprovalCard, useSettledApprovals } from '../components/approvals';
 import { errorMessage } from '../components/common';
 import { Icon } from '../components/Icons';
 import { LiveRun } from '../components/ledger';
 import { isRunActive } from '../lib/format';
-import { formatUsd, modelName } from '../lib/models';
+import { formatUsd, isLocalProvider, modelName, providerAttention, providerName } from '../lib/models';
 import { NARROW_QUERY, PANEL_MAX, PANEL_MIN, useMediaQuery, useUI } from '../lib/ui';
 
 interface ChatItem {
@@ -16,6 +16,8 @@ interface ChatItem {
   text: string;
   actions?: AgentAction[];
   usage?: AgentUsage;
+  // Which provider answered, so a local model's reply shows no dollar line.
+  provider?: string;
 }
 
 const HISTORY_TURNS = 10;
@@ -76,7 +78,8 @@ function PanelBody({ onCollapse }: { onCollapse: () => void }) {
   const today = useToday();
   const startRun = useStartRun();
   const message = useAgentMessage();
-  const { query: connectorsQuery, connector: anthropic } = useAnthropicConnector();
+  const providerQuery = useModelProvider();
+  const activeProvider = providerQuery.data ?? null;
   const [replyModelConnected, setReplyModelConnected] = useState<boolean | null>(null);
   const [items, setItems] = useState<ChatItem[]>([]);
   const [draft, setDraft] = useState('');
@@ -101,8 +104,10 @@ function PanelBody({ onCollapse }: { onCollapse: () => void }) {
     return ids;
   }, [today.data, tracked]);
 
-  // The connectors list is the live source. A reply flag covers the time before it loads.
-  const modelConnected = connectorsQuery.isSuccess ? anthropic?.status === 'connected' : replyModelConnected === true;
+  // The model provider query is the live source. A reply flag covers the time before it loads.
+  // A provider with a rejected key, or an Ollama server with no model chosen, is saved but not ready.
+  const modelConnected = providerQuery.isSuccess ? activeProvider?.ready === true : replyModelConnected === true;
+  const attention = providerQuery.isSuccess && activeProvider ? providerAttention(activeProvider) : null;
 
   const screen = SCREEN_LABELS[`/${location.pathname.split('/')[1] ?? ''}`] ?? 'AgentCRM';
   const contextText = selectedRecord
@@ -131,6 +136,7 @@ function PanelBody({ onCollapse }: { onCollapse: () => void }) {
               text: reply.reply,
               actions: reply.actions,
               usage: reply.usage,
+              provider: reply.provider,
             },
           ]);
         },
@@ -211,9 +217,19 @@ function PanelBody({ onCollapse }: { onCollapse: () => void }) {
         {modelConnected ? (
           <span
             className="panel__model"
-            title={anthropic?.model ? `Chat uses ${modelName(anthropic.model)}` : undefined}
+            title={activeProvider?.model ? `Chat uses ${modelName(activeProvider.model)}` : undefined}
           >
-            Model: connected
+            {activeProvider
+              ? `Model: connected (${providerName(activeProvider.kind)}${activeProvider.model ? `, ${modelName(activeProvider.model)}` : ''})`
+              : 'Model: connected'}
+          </span>
+        ) : null}
+        {attention ? (
+          <span className="panel__model panel__model--attention" role="status">
+            {attention}{' '}
+            <Link className="link" to="/settings">
+              Open Settings
+            </Link>
           </span>
         ) : null}
       </div>
@@ -264,8 +280,10 @@ function PanelBody({ onCollapse }: { onCollapse: () => void }) {
                 <p className="chat__text">{item.text}</p>
                 {item.usage ? (
                   <p className="chat__usage">
-                    {item.usage.inputTokens.toLocaleString()} in / {item.usage.outputTokens.toLocaleString()} out, about{' '}
-                    {formatUsd(item.usage.estimatedUsd)}, estimate
+                    {item.usage.inputTokens.toLocaleString()} in / {item.usage.outputTokens.toLocaleString()} out,{' '}
+                    {isLocalProvider(item.provider)
+                      ? 'local model, no cost'
+                      : `about ${formatUsd(item.usage.estimatedUsd)}, estimate`}
                   </p>
                 ) : null}
                 {item.actions && item.actions.length > 0 ? (

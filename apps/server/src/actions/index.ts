@@ -9,6 +9,7 @@ export { advanceDraftRun, draftJobKind, draftKind } from './draftOutreach.js';
 export { advanceCsvImportRun, csvImportJobKind, csvImportKind, previewCsvFile, stageCsvImport } from './csvImport.js';
 export { advanceDemoRun, demoActor, demoCandidateEmails } from './demoResearch.js';
 export * from './jobs.js';
+export { getModelProvider, setModelProvider } from './modelProvider.js';
 export { recordModelCall } from './modelCalls.js';
 export {
   advanceQualifyRun,

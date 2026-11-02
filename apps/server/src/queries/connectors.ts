@@ -1,8 +1,12 @@
 import type { Db } from '../db.js';
 import { defaultModel, isSupportedModel, type ModelId } from '../providers/anthropic.js';
+import { isModelProviderKind, type ModelProviderKind } from '../providers/modelTypes.js';
+import { defaultModelId, isOfferedModel, providerLabels } from '../providers/presets.js';
 import { type Row } from '../records.js';
 
-export type ConnectorKind = 'apify' | 'anthropic' | 'agentmail';
+export type ModelConnectorKind = ModelProviderKind;
+export type KeyedModelKind = 'anthropic' | 'openai' | 'deepseek' | 'zai';
+export type ConnectorKind = 'apify' | 'agentmail' | ModelConnectorKind;
 
 export interface ApifyConnectorSettings {
   allowlist: string[];
@@ -11,6 +15,16 @@ export interface ApifyConnectorSettings {
 
 export interface AnthropicConnectorSettings {
   model: ModelId;
+}
+
+export interface KeyedModelConnectorSettings {
+  model: string;
+}
+
+export interface OllamaConnectorSettings {
+  baseUrl: string;
+  // Null until a person picks one of the installed models.
+  model: string | null;
 }
 
 export interface AgentmailConnectorSettings {
@@ -41,6 +55,10 @@ function parseObject(value: unknown): Record<string, unknown> {
 const errorMessages: Record<ConnectorKind, string> = {
   apify: 'Apify rejected the saved API token.',
   anthropic: 'Anthropic rejected the saved API key.',
+  openai: 'OpenAI rejected the saved API key.',
+  deepseek: 'DeepSeek rejected the saved API key.',
+  zai: 'Z.ai rejected the saved API key.',
+  ollama: 'The Ollama server rejected the request.',
   agentmail: 'AgentMail rejected the saved API key.',
 };
 
@@ -49,15 +67,39 @@ interface ConnectorBase {
   workspaceId: string;
   status: 'connected' | 'error';
   statusMessage: string | null;
-  tokenMasked: string;
   createdAt: string;
   updatedAt: string;
 }
 
-export type ApifyConnector = ConnectorBase & { kind: 'apify'; settings: ApifyConnectorSettings };
-export type AnthropicConnector = ConnectorBase & { kind: 'anthropic'; settings: AnthropicConnectorSettings };
-export type AgentmailConnector = ConnectorBase & { kind: 'agentmail'; settings: AgentmailConnectorSettings };
-export type Connector = ApifyConnector | AnthropicConnector | AgentmailConnector;
+type WithToken = ConnectorBase & { tokenMasked: string };
+
+export type ApifyConnector = WithToken & { kind: 'apify'; settings: ApifyConnectorSettings };
+export type AnthropicConnector = WithToken & { kind: 'anthropic'; settings: AnthropicConnectorSettings };
+export type OpenAiConnector = WithToken & { kind: 'openai'; settings: KeyedModelConnectorSettings };
+export type DeepseekConnector = WithToken & { kind: 'deepseek'; settings: KeyedModelConnectorSettings };
+export type ZaiConnector = WithToken & { kind: 'zai'; settings: KeyedModelConnectorSettings };
+// Ollama has no key, so its shape has no tokenMasked.
+export type OllamaConnector = ConnectorBase & { kind: 'ollama'; settings: OllamaConnectorSettings };
+export type AgentmailConnector = WithToken & { kind: 'agentmail'; settings: AgentmailConnectorSettings };
+
+export interface ConnectorByKind {
+  apify: ApifyConnector;
+  anthropic: AnthropicConnector;
+  openai: OpenAiConnector;
+  deepseek: DeepseekConnector;
+  zai: ZaiConnector;
+  ollama: OllamaConnector;
+  agentmail: AgentmailConnector;
+}
+
+export type Connector = ConnectorByKind[ConnectorKind];
+export type ModelConnector = ConnectorByKind[ModelConnectorKind];
+
+export function isModelConnectorKind(value: unknown): value is ModelConnectorKind {
+  return isModelProviderKind(value);
+}
+
+export const defaultOllamaServer = 'http://127.0.0.1:11434';
 
 export function toConnector(row: Row): Connector {
   const kind = String(row.kind) as ConnectorKind;
@@ -68,17 +110,30 @@ export function toConnector(row: Row): Connector {
     workspaceId: String(row.workspace_id),
     status,
     statusMessage: status === 'error' ? (typeof stored.statusMessage === 'string' ? stored.statusMessage : errorMessages[kind]) : null,
-    tokenMasked: maskToken(String(row.secret)),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
+  const withToken = { ...base, tokenMasked: maskToken(String(row.secret)) };
   if (kind === 'anthropic') {
-    return { ...base, kind, settings: { model: isSupportedModel(stored.model) ? stored.model : defaultModel } };
+    return { ...withToken, kind, settings: { model: isSupportedModel(stored.model) ? stored.model : defaultModel } };
+  }
+  if (kind === 'openai' || kind === 'deepseek' || kind === 'zai') {
+    return { ...withToken, kind, settings: { model: isOfferedModel(kind, stored.model) ? stored.model : defaultModelId(kind) } };
+  }
+  if (kind === 'ollama') {
+    return {
+      ...base,
+      kind,
+      settings: {
+        baseUrl: typeof stored.baseUrl === 'string' && stored.baseUrl !== '' ? stored.baseUrl : defaultOllamaServer,
+        model: typeof stored.model === 'string' && stored.model !== '' ? stored.model : null,
+      },
+    };
   }
   if (kind === 'agentmail') {
     const field = (key: string): string | null => (typeof stored[key] === 'string' && stored[key] !== '' ? (stored[key] as string) : null);
     return {
-      ...base,
+      ...withToken,
       kind,
       settings: {
         inboxId: field('inboxId'),
@@ -91,7 +146,7 @@ export function toConnector(row: Row): Connector {
     };
   }
   return {
-    ...base,
+    ...withToken,
     kind: 'apify',
     settings: {
       allowlist: Array.isArray(stored.allowlist) ? stored.allowlist.filter((item): item is string => typeof item === 'string') : [],
@@ -100,15 +155,11 @@ export function toConnector(row: Row): Connector {
   };
 }
 
-export function getConnector(db: Db, workspaceId: string, kind: 'apify'): ApifyConnector | null;
-export function getConnector(db: Db, workspaceId: string, kind: 'anthropic'): AnthropicConnector | null;
-export function getConnector(db: Db, workspaceId: string, kind: 'agentmail'): AgentmailConnector | null;
-export function getConnector(db: Db, workspaceId: string, kind: ConnectorKind): Connector | null;
-export function getConnector(db: Db, workspaceId: string, kind: ConnectorKind): Connector | null {
+export function getConnector<K extends ConnectorKind>(db: Db, workspaceId: string, kind: K): ConnectorByKind[K] | null {
   const row = db.prepare('SELECT * FROM connector WHERE workspace_id = ? AND kind = ?').get(workspaceId, kind) as
     | Row
     | undefined;
-  return row ? toConnector(row) : null;
+  return row ? (toConnector(row) as ConnectorByKind[K]) : null;
 }
 
 export function listConnectors(db: Db, workspaceId: string): Connector[] {
@@ -123,4 +174,8 @@ export function getConnectorSecret(db: Db, workspaceId: string, kind: ConnectorK
     | { secret: string }
     | undefined;
   return row ? row.secret : null;
+}
+
+export function connectorLabel(kind: ModelConnectorKind): string {
+  return providerLabels[kind];
 }

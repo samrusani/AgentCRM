@@ -92,3 +92,14 @@ export const maxIntentsPerApproval = 25;
 
 export const workerTickMilliseconds = 300;
 export const serverVersion = '0.1.0';
+
+// Model providers other than Anthropic. Each base URL can be replaced for tests.
+export const modelKeyCheckTimeoutMilliseconds = 15_000;
+export const modelChatTimeoutMilliseconds = 30_000;
+export const modelDraftTimeoutMilliseconds = 60_000;
+export const defaultOllamaBase = 'http://127.0.0.1:11434';
+
+export function providerBaseUrl(environmentName: string, fallback: string): string {
+  const raw = process.env[environmentName];
+  return (raw && raw.length > 0 ? raw : fallback).replace(/\/+$/, '');
+}

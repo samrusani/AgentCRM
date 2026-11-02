@@ -122,7 +122,7 @@ describe('draft_outreach run', () => {
       drafts: { personId: string; personName: string; subject: string; body: string; factsUsed: { field: string; value: string }[] }[];
       estimatedUsd: number;
     };
-    expect(Object.keys(payload).sort()).toEqual(['count', 'drafts', 'estimatedUsd', 'sample']);
+    expect(Object.keys(payload).sort()).toEqual(['count', 'drafts', 'estimatedUsd', 'provider', 'sample']);
     // The approval holds the full text, so the hash covers what the user reads.
     expect(payload.drafts.map((draft) => draft.personId)).toEqual(people.slice(0, 3));
     expect(payload.drafts[0]).toEqual({

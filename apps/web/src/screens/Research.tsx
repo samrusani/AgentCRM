@@ -17,8 +17,9 @@ import { DraftRunIssuesView } from '../components/draftReview';
 import { batchHref } from '../components/importReview';
 import { CountsList, RunLedger } from '../components/ledger';
 import { PrepareToSend } from '../components/prepareSend';
-import { parseDraftReviewPayload, parseDraftRunIssues } from '../lib/drafts';
+import { parseDraftReviewPayload, parseDraftRunIssues, runProvider } from '../lib/drafts';
 import { formatAgo, formatDateTime, isSimulatedRun } from '../lib/format';
+import { isLocalProvider } from '../lib/models';
 import { DraftOutreachSheet } from './DraftOutreachSheet';
 import { ImportBatchSheet, ImportSetupSheet } from './ImportSheets';
 import { useUI } from '../lib/ui';
@@ -128,7 +129,7 @@ export function Research() {
       <PageHeader title="Research">{startButton}</PageHeader>
       {items.length === 0 && !selectedId ? (
         <EmptyState
-          message="No research runs yet. A demo run is simulated: it shows the ledger, counts, and approval flow with synthetic data. An Apify import is real: it runs an actor on your own Apify account. A CSV import starts from the People tab in Relationships. Draft outreach needs an Anthropic key: it writes drafts for you to review and sends nothing."
+          message="No research runs yet. A demo run is simulated: it shows the ledger, counts, and approval flow with synthetic data. An Apify import is real: it runs an actor on your own Apify account. A CSV import starts from the People tab in Relationships. Draft outreach needs a connected model provider: it writes drafts for you to review and sends nothing."
         />
       ) : (
         <div className="research">
@@ -225,11 +226,12 @@ function RunDetail({ id }: { id: string }) {
         </p>
       ) : null}
 
-      <CountsList counts={run.counts} kind={run.kind} />
+      <CountsList counts={run.counts} kind={run.kind} provider={runProvider(run.scope)} />
       {isDraft ? (
         <p className="muted">
-          Costs are estimates from list prices. Drafts are created for review: approved drafts are saved on each
-          person as drafts that were not sent. Saving drafts never sends anything.
+          {isLocalProvider(runProvider(run.scope)) ? 'This run used a local model, so there is no cost. ' : 'Costs are estimates from list prices. '}
+          Drafts are created for review: approved drafts are saved on each person as drafts that were not sent. Saving
+          drafts never sends anything.
         </p>
       ) : null}
       {savedDrafts > 0 ? (
@@ -275,7 +277,7 @@ function RunDetail({ id }: { id: string }) {
               {isApify
                 ? 'Cancel this run? Cancelling is final. It also asks Apify to stop the actor run. Apify still bills for the time the actor already ran.'
                 : isDraft
-                  ? 'Cancel this run? Cancelling is final and no drafts are saved. Model calls already made are still billed to your Anthropic account.'
+                  ? 'Cancel this run? Cancelling is final and no drafts are saved. Model calls already made are still billed to your own model provider account, unless the provider is a local Ollama server.'
                   : 'Cancel this run? Cancelling is final.'}
               <button type="button" className="btn btn--danger" onClick={() => act('cancel')}>
                 Cancel run

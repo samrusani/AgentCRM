@@ -170,7 +170,7 @@ describe('migration 003', () => {
       expect(batchesBefore).toEqual([...batches].sort((a, b) => a.id.localeCompare(b.id)));
       expect(rowsBefore).toEqual([...rows].sort((a, b) => a.id.localeCompare(b.id)));
 
-      expect(applyMigrations(db)).toEqual(['003_csv_qualify.sql', '004_lookup_indexes.sql', '005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql']);
+      expect(applyMigrations(db)).toEqual(['003_csv_qualify.sql', '004_lookup_indexes.sql', '005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql']);
 
       expect(snapshot(db, 'import_batch')).toEqual(batchesBefore);
       expect(snapshot(db, 'import_row')).toEqual(rowsBefore);
@@ -269,7 +269,7 @@ describe('migration 005', () => {
       insert(db, 'connector', connector);
       expect(() => insert(db, 'connector', { ...connector, id: 'con_x', kind: 'anthropic' })).toThrow(/CHECK/);
 
-      expect(applyMigrations(db)).toEqual(['005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql']);
+      expect(applyMigrations(db)).toEqual(['005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql']);
       expect(snapshot(db, 'connector')).toEqual([connector]);
       expect(db.pragma('foreign_key_check')).toEqual([]);
       expect(tableSql(db, 'connector')).not.toContain('_new');
@@ -349,7 +349,7 @@ describe('migration 007', () => {
       expect(() => insert(db, 'activity', { ...activity, id: 'act_x', kind: 'email_out' })).toThrow(/CHECK/);
       expect(() => insert(db, 'connector', { ...connector, id: 'con_x', kind: 'agentmail' })).toThrow(/CHECK/);
 
-      expect(applyMigrations(db)).toEqual(['007_agentmail.sql', '008_send_intent_guards.sql']);
+      expect(applyMigrations(db)).toEqual(['007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql']);
       expect(snapshot(db, 'connector')).toEqual([connector]);
       expect(snapshot(db, 'activity')).toEqual([activity]);
       expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -471,7 +471,7 @@ describe('migration 008', () => {
       insert(db, 'send_intent', intent('snd_3a', 'act_3', 'cancelled', '2026-01-03T00:00:00.000Z', { error: 'Outcome unknown. Acknowledged by a person. Whether this email was sent was never confirmed.' }));
       insert(db, 'send_intent', intent('snd_3b', 'act_3', 'cancelled', '2026-01-04T00:00:00.000Z', { error: 'The send was rejected.' }));
 
-      expect(applyMigrations(db)).toEqual(['008_send_intent_guards.sql']);
+      expect(applyMigrations(db)).toEqual(['008_send_intent_guards.sql', '009_model_providers.sql']);
       expect(db.pragma('foreign_key_check')).toEqual([]);
 
       const statuses = Object.fromEntries((db.prepare('SELECT id, status FROM send_intent').all() as { id: string; status: string }[]).map((row) => [row.id, row.status]));
@@ -506,6 +506,76 @@ describe('migration 008', () => {
       db.prepare("UPDATE send_intent SET provider_message_id = 'pm_1' WHERE id = 'snd_3a'").run();
       expect(() => db.prepare("UPDATE send_intent SET provider_message_id = 'pm_1' WHERE id = 'snd_3b'").run()).toThrow(/UNIQUE/);
       expect(() => db.prepare("UPDATE send_intent SET provider_message_id = NULL WHERE id = 'snd_3b'").run()).not.toThrow();
+    } finally {
+      db.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('migration 009', () => {
+  it('keeps connector and model_call rows, allows the new provider kinds and an empty secret, and adds the provider column', () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'agentcrm-migration-'));
+    const db = new Database(path.join(directory, 'old.db'));
+    db.pragma('foreign_keys = ON');
+    try {
+      db.exec('CREATE TABLE migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
+      const earlier = [
+        '001_init.sql',
+        '002_apify.sql',
+        '003_csv_qualify.sql',
+        '004_lookup_indexes.sql',
+        '005_anthropic.sql',
+        '006_model_call_markers.sql',
+        '007_agentmail.sql',
+        '008_send_intent_guards.sql',
+      ];
+      for (const file of earlier) {
+        db.exec(readFileSync(path.join(migrationsDirectory, file), 'utf8'));
+        db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, ?)').run(file, '2026-01-01T00:00:00.000Z');
+      }
+      db.prepare('INSERT INTO workspace (id, created_at, name, template) VALUES (?, ?, ?, ?)').run('wsp_1', '2026-01-01', 'Workspace', 't');
+      db.prepare("INSERT INTO run (id, created_at, workspace_id, kind, title, status) VALUES (?, ?, ?, ?, ?, 'queued')").run('run_1', '2026-01-02', 'wsp_1', 'draft_outreach', 'Draft');
+      const connectors = [
+        { id: 'con_a', created_at: '2026-01-02T03:04:05.001Z', workspace_id: 'wsp_1', kind: 'apify', settings: '{"allowlist":["a/b"],"username":"u"}', secret: 'token-value', status: 'error', updated_at: '2026-01-03T03:04:05.001Z' },
+        { id: 'con_b', created_at: '2026-01-02T03:04:06.002Z', workspace_id: 'wsp_1', kind: 'anthropic', settings: '{"model":"claude-sonnet-5-5"}', secret: 'key-value', status: 'connected', updated_at: '2026-01-03T03:04:06.002Z' },
+        { id: 'con_c', created_at: '2026-01-02T03:04:07.003Z', workspace_id: 'wsp_1', kind: 'agentmail', settings: '{"inboxId":"inbox_1"}', secret: 'mail-key', status: 'connected', updated_at: '2026-01-03T03:04:07.003Z' },
+      ];
+      for (const connector of connectors) insert(db, 'connector', connector);
+      const calls = [
+        { id: 'mcl_a', created_at: '2026-01-04T00:00:00.001Z', workspace_id: 'wsp_1', run_id: null, purpose: 'chat', model: 'claude-opus-5-5', input_tokens: 1000, output_tokens: 200, cache_read_tokens: 5, cache_creation_tokens: 7, estimated_usd: 0.008, pending: 0, subject_id: null },
+        { id: 'mcl_b', created_at: '2026-01-04T00:00:00.002Z', workspace_id: 'wsp_1', run_id: 'run_1', purpose: 'draft', model: 'claude-haiku-5-5', input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, estimated_usd: 0, pending: 1, subject_id: 'per_1' },
+      ];
+      for (const call of calls) insert(db, 'model_call', call);
+      expect(() => insert(db, 'connector', { ...connectors[1], id: 'con_x', kind: 'ollama' })).toThrow(/CHECK/);
+
+      expect(applyMigrations(db)).toEqual(['009_model_providers.sql']);
+      expect(snapshot(db, 'connector')).toEqual(connectors);
+      expect(snapshot(db, 'model_call')).toEqual(calls.map((call) => ({ ...call, provider: 'anthropic' })));
+      expect(db.pragma('foreign_key_check')).toEqual([]);
+      expect(tableSql(db, 'connector')).not.toContain('_new');
+
+      const template = { ...connectors[1]!, settings: '{}' };
+      insert(db, 'connector', { ...template, id: 'con_openai', kind: 'openai' });
+      insert(db, 'connector', { ...template, id: 'con_deepseek', kind: 'deepseek' });
+      insert(db, 'connector', { ...template, id: 'con_zai', kind: 'zai' });
+      insert(db, 'connector', { ...template, id: 'con_ollama', kind: 'ollama', settings: '{"baseUrl":"http://127.0.0.1:11434","model":null}', secret: '' });
+      expect(db.prepare("SELECT secret FROM connector WHERE kind = 'ollama'").get()).toEqual({ secret: '' });
+      expect(() => insert(db, 'connector', { ...template, id: 'con_dupe', kind: 'openai' })).toThrow(/UNIQUE/);
+      expect(() => insert(db, 'connector', { ...template, id: 'con_bad', kind: 'gemini' })).toThrow(/CHECK/);
+      expect(() => insert(db, 'connector', { ...template, id: 'con_null', kind: 'zai', secret: null })).toThrow(/NOT NULL|UNIQUE/);
+      expect(() => insert(db, 'connector', { ...template, id: 'con_status', kind: 'zai', status: 'other' })).toThrow(/CHECK|UNIQUE/);
+
+      const call = { id: 'mcl_new', created_at: '2026-01-05', workspace_id: 'wsp_1', run_id: null, purpose: 'chat', model: 'llama-stub:8b' };
+      insert(db, 'model_call', call);
+      expect(db.prepare("SELECT provider FROM model_call WHERE id = 'mcl_new'").get()).toEqual({ provider: 'anthropic' });
+      insert(db, 'model_call', { ...call, id: 'mcl_local', provider: 'ollama' });
+      expect(() => insert(db, 'model_call', { ...call, id: 'mcl_bad', provider: 'gemini' })).toThrow(/CHECK/);
+      const indexed = (name: string) => (db.pragma(`index_info(${name})`) as { name: string }[]).map((column) => column.name);
+      expect(indexed('idx_connector_workspace')).toEqual(['workspace_id', 'kind']);
+      expect(indexed('idx_model_call_workspace')).toEqual(['workspace_id', 'created_at']);
+      expect(indexed('idx_model_call_run')).toEqual(['run_id']);
+      expect(indexed('idx_model_call_subject')).toEqual(['run_id', 'subject_id']);
     } finally {
       db.close();
       rmSync(directory, { recursive: true, force: true });
