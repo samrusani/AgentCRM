@@ -1,10 +1,16 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useControlSendIntent, useMailSummary, useSendIntents } from '../api/hooks';
+import { useControlSendIntent, useMailProvider, useMailSummary, useSendIntents } from '../api/hooks';
 import type { MailSummary, SendIntent } from '../api/types';
 import { formatAgo } from '../lib/format';
 import { recordLink } from '../lib/links';
-import { ACKNOWLEDGEABLE_STATUSES, CANCELLABLE_STATUSES, OUTBOX_GROUPS, reasonSentence } from '../lib/mail';
+import {
+  ACKNOWLEDGEABLE_STATUSES,
+  CANCELLABLE_STATUSES,
+  OUTBOX_GROUPS,
+  mailProviderName,
+  reasonSentence,
+} from '../lib/mail';
 import { EmptyState, ErrorState, Loading, errorMessage } from './common';
 
 const GROUP_ROWS_SHOWN = 10;
@@ -44,6 +50,13 @@ function OutboxRow({ intent }: { intent: SendIntent }) {
         ) : null}
       </div>
       <div className="outbox-row__side">
+        {intent.provider || intent.address ? (
+          <span className="muted">
+            via {intent.provider ? mailProviderName(intent.provider) : null}
+            {intent.provider && intent.address ? ', ' : null}
+            {intent.address}
+          </span>
+        ) : null}
         {when ? <span className="muted num">{formatAgo(when)}</span> : null}
         {canCancel ? (
           <button
@@ -117,6 +130,33 @@ function OutboxGroup({ label, note, items }: { label: string; note?: string; ite
   );
 }
 
+// Names the provider and address new sends go out through. Open intents name the provider that staged them.
+function SendingLine() {
+  const provider = useMailProvider();
+  if (!provider.isSuccess) return null;
+  const active = provider.data;
+  return (
+    <p className="muted">
+      {active ? (
+        <>
+          Sending with {mailProviderName(active.kind)}
+          {active.address ? (
+            <>
+              {' '}
+              from <span className="cell-name">{active.address}</span>
+            </>
+          ) : (
+            ', which has no sending address yet'
+          )}
+          . Messages already queued stay with the provider that staged them.
+        </>
+      ) : (
+        'No sending connector is in use. Connect one in Settings.'
+      )}
+    </p>
+  );
+}
+
 function CapLine({ summary }: { summary: MailSummary | undefined }) {
   if (!summary) return null;
   return (
@@ -175,6 +215,7 @@ export function Outbox() {
       ) : (
         <CapLine summary={summary.data} />
       )}
+      <SendingLine />
     </>
   );
 }

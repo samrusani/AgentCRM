@@ -18,6 +18,7 @@ export const CONNECTOR_MARKS: Record<string, string> = {
   ollama: 'Ol',
   apify: 'Ap',
   agentmail: 'Am',
+  gmail: 'Gm',
 };
 
 // The card header is a disclosure: collapsed it still names the card, a short summary, and its state.
@@ -65,9 +66,9 @@ export function CardToggle({
 }
 
 // Open when the user says so; a card whose connection has an error opens on its own so the problem is not hidden.
-export function useCardOpen(connector: Connector | null): [boolean, () => void] {
+export function useCardOpen(connector: Connector | null, forceOpen = false): [boolean, () => void] {
   const [choice, setChoice] = useState<boolean | null>(null);
-  const open = choice ?? connector?.status === 'error';
+  const open = choice ?? (connector?.status === 'error' || forceOpen);
   return [open, () => setChoice(!open)];
 }
 

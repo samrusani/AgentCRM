@@ -1,4 +1,5 @@
 import { hashPayload } from './demoResearch.js';
+import { enqueueJobIn } from './jobs.js';
 import { emitRecord, type Tx } from './context.js';
 import type { IntentStatus } from '../queries/sendIntents.js';
 import { reasonCodes } from '../mail/rules.js';
@@ -31,6 +32,8 @@ export interface IntentPatch {
   appendError?: string;
   providerMessageId?: string;
   providerThreadId?: string | null;
+  // The self generated Message-ID of a Gmail send, written in the same transaction that marks the intent submitting.
+  messageIdHeader?: string;
   submittedAt?: string;
   // Set when a person acknowledges an intent whose outcome was unknown.
   unknownAcknowledged?: boolean;
@@ -71,6 +74,10 @@ export function transitionIntentIn(
   if (patch.providerThreadId !== undefined) {
     assignments.push('provider_thread_id = ?');
     params.push(patch.providerThreadId);
+  }
+  if (patch.messageIdHeader !== undefined) {
+    assignments.push('message_id_header = ?');
+    params.push(patch.messageIdHeader);
   }
   if (patch.submittedAt !== undefined) {
     assignments.push('submitted_at = ?');
@@ -129,7 +136,11 @@ export function settleSendRunIn(tx: Tx, runId: string): void {
 
 // Moves queued and approved intents to blocked. Intents that are being submitted are left alone, because the
 // request is already on its way and only the provider can say what happened to it.
-export function blockWaitingIntentsIn(tx: Tx, where: { personId?: string; toEmail?: string; inboxId?: string }, reason: string): number {
+export function blockWaitingIntentsIn(
+  tx: Tx,
+  where: { personId?: string; toEmail?: string; inboxId?: string; provider?: string; notProvider?: string },
+  reason: string,
+): number {
   const clauses = ["workspace_id = ?", "status IN ('queued', 'approved')"];
   const params: unknown[] = [tx.workspaceId];
   if (where.personId) {
@@ -143,6 +154,14 @@ export function blockWaitingIntentsIn(tx: Tx, where: { personId?: string; toEmai
   if (where.inboxId) {
     clauses.push('inbox_id = ?');
     params.push(where.inboxId);
+  }
+  if (where.provider) {
+    clauses.push('provider = ?');
+    params.push(where.provider);
+  }
+  if (where.notProvider) {
+    clauses.push('provider != ?');
+    params.push(where.notProvider);
   }
   const rows = tx.db.prepare(`SELECT id FROM send_intent WHERE ${clauses.join(' AND ')}`).all(...params) as { id: string }[];
   let blocked = 0;
@@ -206,4 +225,27 @@ export function createEmailActivityIn(tx: Tx, input: { personId: string; kind: '
   tx.audit('activity.create', 'person', input.personId, { activityId: id, kind: input.kind });
   emitRecord(tx, 'person', input.personId);
   return id;
+}
+
+export const mailReconcileJobKind = 'mail_reconcile';
+
+// The Gmail account is signed in and working again. A message whose outcome was unknown for that same address goes
+// back on the reconcile schedule, so the read only search for its Message-ID starts again on the next tick. Messages
+// a person already acknowledged are cancelled, so they are not unknown any more and are not touched. A message that
+// already has a reconcile job waiting is left alone.
+export function resumeGmailReconcilesIn(tx: Tx, address: string): number {
+  const rows = tx.db
+    .prepare("SELECT id FROM send_intent WHERE workspace_id = ? AND provider = 'gmail' AND status = 'unknown' AND lower(inbox_id) = ?")
+    .all(tx.workspaceId, address.toLowerCase()) as { id: string }[];
+  let resumed = 0;
+  for (const row of rows) {
+    const waiting = tx.db
+      .prepare("SELECT 1 FROM job WHERE kind = ? AND status IN ('queued', 'running') AND json_extract(payload, '$.intentId') = ?")
+      .get(mailReconcileJobKind, row.id);
+    if (waiting) continue;
+    enqueueJobIn(tx, mailReconcileJobKind, { intentId: row.id, attempt: 0, workspaceId: tx.workspaceId }, tx.now());
+    tx.audit('send_intent.reconcile_resumed', 'send_intent', row.id, { address });
+    resumed += 1;
+  }
+  return resumed;
 }

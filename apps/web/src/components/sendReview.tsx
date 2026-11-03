@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
-import { useMailSummary } from '../api/hooks';
+import { useMailProvider, useMailSummary } from '../api/hooks';
 import type { SendExcluded, SendReviewMessage, SendReviewPayload } from '../api/types';
-import { DAILY_SEND_CAP, isMessageComplete, messageCountLabel, reasonSentence } from '../lib/mail';
+import { DAILY_SEND_CAP, isMessageComplete, mailProviderName, messageCountLabel, reasonSentence } from '../lib/mail';
 
 export const SEND_REVIEW_FIXED_LINE = 'Approving sends these exact messages. Nothing can be edited after approval.';
 
@@ -26,6 +26,11 @@ export function ExcludedList({ excluded, heading }: { excluded: SendExcluded[]; 
 }
 
 function MessageBlock({ message, position, total }: { message: SendReviewMessage; position: number; total: number }) {
+  const inUse = useMailProvider().data ?? null;
+  // The frozen payload names the provider when the server records it. Otherwise the in use provider stands in only
+  // when it owns this exact sending address.
+  const providerKind =
+    message.provider ?? (inUse && message.inboxEmail && inUse.address === message.inboxEmail ? inUse.kind : null);
   return (
     <li className="send-message">
       <p className="send-message__position muted num">
@@ -41,7 +46,10 @@ function MessageBlock({ message, position, total }: { message: SendReviewMessage
         </div>
         <div>
           <dt>From</dt>
-          <dd>{message.inboxEmail ?? 'No sending inbox'}</dd>
+          <dd>
+            {message.inboxEmail ?? 'No sending address'}
+            {providerKind ? <span className="muted"> with {mailProviderName(providerKind)}</span> : null}
+          </dd>
         </div>
         <div>
           <dt>Subject</dt>
@@ -101,7 +109,7 @@ export function SendReviewBody({ review }: { review: SendReviewPayload }) {
 
       {incomplete ? (
         <p className="inline-error" role="alert">
-          A message in this approval is missing its recipient, subject, body, or sending inbox, so it cannot be read in
+          A message in this approval is missing its recipient, subject, body, or sending address, so it cannot be read in
           full and cannot be approved. Reject it and prepare the send again.
         </p>
       ) : null}

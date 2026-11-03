@@ -13,7 +13,9 @@ import type {
   ApifyRunInput,
   CsvImportInput,
   DraftOutreachInput,
+  GmailCredentialsInput,
   LeadCaptureInput,
+  MailProviderKind,
   ModelProviderInput,
   ModelProviderKind,
   Opportunity,
@@ -324,8 +326,8 @@ export function useAgentMessage() {
   return useMutation({ mutationFn: (input: AgentMessageInput) => api.agentMessage(input) });
 }
 
-export function useConnectors() {
-  return useQuery({ queryKey: ['connectors'], queryFn: api.connectors.list });
+export function useConnectors(options: { refetchInterval?: number | false } = {}) {
+  return useQuery({ queryKey: ['connectors'], queryFn: api.connectors.list, refetchInterval: options.refetchInterval ?? false });
 }
 
 export function useApifyConnector() {
@@ -548,6 +550,7 @@ export function useSaveAgentMailConnector() {
       void queryClient.invalidateQueries({ queryKey: ['connectors'] });
       void queryClient.invalidateQueries({ queryKey: ['mail-inboxes'] });
       void queryClient.invalidateQueries({ queryKey: ['mail-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['mail-provider'] });
     },
   });
 }
@@ -561,6 +564,62 @@ export function useRemoveAgentMailConnector() {
       void queryClient.removeQueries({ queryKey: ['mail-inboxes'] });
       void queryClient.invalidateQueries({ queryKey: ['send-intents'] });
       void queryClient.invalidateQueries({ queryKey: ['mail-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['approvals'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+      void queryClient.invalidateQueries({ queryKey: ['mail-provider'] });
+    },
+  });
+}
+
+// Which mail connector sending and inbound sync use. Null when none is configured.
+export function useMailProvider() {
+  return useQuery({ queryKey: ['mail-provider'], queryFn: api.mailProvider.get });
+}
+
+export function useSetMailProvider() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (kind: MailProviderKind) => api.mailProvider.set(kind),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['mail-provider'] });
+      void queryClient.invalidateQueries({ queryKey: ['connectors'] });
+      void queryClient.invalidateQueries({ queryKey: ['mail-summary'] });
+    },
+  });
+}
+
+// While `waiting`, the connector list refetches every few seconds so the card notices the sign in finishing in another tab.
+export function useGmailConnector(waiting = false) {
+  const query = useConnectors({ refetchInterval: waiting ? 3000 : false });
+  const connector = query.data?.find((entry) => entry.kind === 'gmail') ?? null;
+  return { query, connector };
+}
+
+function invalidateGmail(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: ['connectors'] });
+  void queryClient.invalidateQueries({ queryKey: ['mail-provider'] });
+  void queryClient.invalidateQueries({ queryKey: ['mail-summary'] });
+}
+
+export function useSaveGmailConnector() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: GmailCredentialsInput) => api.connectors.saveGmail(input),
+    onSettled: () => invalidateGmail(queryClient),
+  });
+}
+
+export function useStartGmailOAuth() {
+  return useMutation({ mutationFn: () => api.connectors.startGmailOAuth() });
+}
+
+export function useRemoveGmailConnector() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.connectors.removeGmail(),
+    onSettled: () => {
+      invalidateGmail(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ['send-intents'] });
       void queryClient.invalidateQueries({ queryKey: ['approvals'] });
       void queryClient.invalidateQueries({ queryKey: ['today'] });
     },
@@ -589,30 +648,28 @@ export function useCreateMailInbox() {
 
 export type MailReadiness =
   | { state: 'loading' }
-  | { state: 'ready'; inboxEmail: string | null }
+  | { state: 'ready'; inboxEmail: string | null; provider: string }
   | { state: 'blocked'; message: string; settingsLink: boolean };
 
-// Whether a send can be prepared: AgentMail connected, healthy, with a sending inbox chosen.
+// Whether a send can be prepared: a mail connector is in use, healthy, and has a sending address.
 export function useMailReadiness(): MailReadiness {
-  const { query, connector } = useAgentMailConnector();
+  const query = useMailProvider();
   if (query.isPending) return { state: 'loading' };
   if (query.isError) {
-    return { state: 'blocked', message: 'Could not check the AgentMail connection, so sending cannot be prepared.', settingsLink: false };
+    return { state: 'blocked', message: 'Could not check the sending connection, so sending cannot be prepared.', settingsLink: false };
   }
-  if (!connector) {
-    return { state: 'blocked', message: 'AgentMail is not connected, so nothing can be prepared for sending.', settingsLink: true };
+  const provider = query.data;
+  if (!provider) {
+    return { state: 'blocked', message: 'No sending connector is in use. Connect one in Settings.', settingsLink: true };
   }
-  if (connector.status === 'error') {
+  if (!provider.ready) {
     return {
       state: 'blocked',
-      message: 'The AgentMail connection has an error, so nothing can be prepared for sending.',
+      message: 'The sending connector in use is not ready, so nothing can be prepared for sending.',
       settingsLink: true,
     };
   }
-  if (!connector.inboxId) {
-    return { state: 'blocked', message: 'AgentMail has no sending inbox selected.', settingsLink: true };
-  }
-  return { state: 'ready', inboxEmail: connector.inboxEmail };
+  return { state: 'ready', inboxEmail: provider.address, provider: provider.kind };
 }
 
 export function useSendIntents() {

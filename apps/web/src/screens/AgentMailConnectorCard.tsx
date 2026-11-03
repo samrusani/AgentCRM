@@ -2,12 +2,14 @@ import { useEffect, useState, type FormEvent } from 'react';
 import {
   useCreateMailInbox,
   useMailInboxes,
+  useMailProvider,
   useRemoveAgentMailConnector,
   useSaveAgentMailConnector,
 } from '../api/hooks';
 import type { Connector } from '../api/types';
 import { errorMessage } from '../components/common';
 import { CONNECTOR_MARKS, CardToggle, RemoveControl, TokenForm, TokenLine, useCardOpen } from '../components/connector';
+import { UseMailProvider, mailCardState } from '../components/mailProvider';
 import { DAILY_SEND_CAP } from '../lib/mail';
 
 function InboxSection({ connector }: { connector: Connector }) {
@@ -174,6 +176,7 @@ export function AgentMailConnectorCard({ connector }: { connector: Connector | n
   const connect = useSaveAgentMailConnector();
   const remove = useRemoveAgentMailConnector();
   const hasError = connector?.status === 'error';
+  const active = useMailProvider().data ?? null;
 
   const submitToken = async (token: string): Promise<boolean> => {
     try {
@@ -193,14 +196,9 @@ export function AgentMailConnectorCard({ connector }: { connector: Connector | n
       <CardToggle
         name="AgentMail"
         mark={CONNECTOR_MARKS.agentmail}
+        markActive={active?.kind === 'agentmail'}
         summary={summary}
-        state={
-          hasError
-            ? { tone: 'danger', label: 'Error' }
-            : connector
-              ? { tone: 'neutral', label: 'Connected' }
-              : { tone: 'off', label: 'Not connected' }
-        }
+        state={mailCardState('agentmail', connector, active)}
         open={open}
         onToggle={toggle}
         bodyId="agentmail-card-body"
@@ -235,6 +233,8 @@ export function AgentMailConnectorCard({ connector }: { connector: Connector | n
       />
 
       {connector ? <InboxSection connector={connector} /> : null}
+
+      <UseMailProvider kind="agentmail" name="AgentMail" connector={connector} active={active} />
 
       <p className="muted">
         AgentMail applies its own daily sending limits to your account. This app also stops at{' '}

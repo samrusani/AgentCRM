@@ -1,39 +1,28 @@
 import { agentmailBaseUrl, agentmailRequestTimeoutMilliseconds } from '../config.js';
+import {
+  clearFetchFailure,
+  type InboundBatch,
+  type ListInboundOptions,
+  type MailErrorKind,
+  type MailEventBatch,
+  type MailIntent,
+  type MailProvider,
+  MailProviderError,
+  type NormalizedInbound,
+  noteFetchFailure,
+  type ReconcileResult,
+} from './mailTypes.js';
+import { parseAddress } from '../mail/rules.js';
 
-export type AgentmailErrorKind =
-  | 'unauthorized'
-  | 'not_found'
-  | 'conflict'
-  | 'rate_limited'
-  | 'rejected'
-  | 'unavailable'
-  | 'timeout'
-  | 'network'
-  | 'bad_response'
-  | 'unexpected_status';
+export type AgentmailErrorKind = MailErrorKind;
 
 // Messages are written in this file. Text that comes from AgentMail is scrubbed of the API key first.
-export class AgentmailError extends Error {
-  readonly kind: AgentmailErrorKind;
-  readonly status: number | null;
-
+// A 400, 401, 403, 404, or 422 is a definitive refusal (see MailProviderError.definitive), so the request did not
+// produce an email. Any other status that is not a success leaves the outcome unknown.
+export class AgentmailError extends MailProviderError {
   constructor(kind: AgentmailErrorKind, message: string, status: number | null = null) {
-    super(message);
+    super(kind, message, status);
     this.name = 'AgentmailError';
-    this.kind = kind;
-    this.status = status;
-  }
-
-  // AgentMail answered with a definitive refusal (HTTP 400, 401, 403, 404, or 422), so the request did not
-  // produce an email. Any other status that is not a success leaves the outcome unknown.
-  get definitive(): boolean {
-    return this.kind === 'unauthorized' || this.kind === 'rejected' || this.kind === 'not_found';
-  }
-
-  // The request may have been processed even though the answer was lost, late, or unreadable.
-  // A send that fails this way has an unknown outcome and is never resolved by guessing.
-  get outcomeUnknown(): boolean {
-    return !this.definitive;
   }
 }
 
@@ -347,4 +336,184 @@ export async function listEvents(
     return event ? [event] : [];
   });
   return { events, nextPageToken: pageToken(body) };
+}
+
+// The adapter behind the mail provider interface. Everything above this line is the AgentMail wire protocol, unchanged.
+// AgentMail remembers an idempotency key for about a day, so a retry of the same request with the same key cannot send
+// a second email. That is how reconcileUnknown works for this provider.
+
+const messagePageSize = 25;
+const overlapMilliseconds = 1000;
+const maxEventPages = 5;
+
+function later(left: string | null, right: string): string {
+  if (!left) return right;
+  return Date.parse(right) > Date.parse(left) ? right : left;
+}
+
+// The cursor never moves past the current time. A message dated in the future would otherwise hide every later
+// message from the sync.
+function notAfter(timestamp: string, limit: string): string {
+  return Date.parse(timestamp) > Date.parse(limit) ? limit : timestamp;
+}
+
+function directionOf(summary: MailMessageSummary, inboxEmail: string): 'in' | 'out' | null {
+  const labels = summary.labels.map((label) => label.toLowerCase());
+  if (labels.includes('draft')) return null;
+  if (labels.includes('received')) return 'in';
+  if (labels.includes('sent')) return 'out';
+  return parseAddress(summary.from) === inboxEmail ? 'out' : 'in';
+}
+
+export interface AgentmailAdapterOptions {
+  apiKey: string;
+  inboxId: string;
+  inboxEmail: string;
+  workspaceId: string;
+  now: () => string;
+}
+
+export function createAgentmailMailProvider(options: AgentmailAdapterOptions): MailProvider {
+  const { apiKey, inboxId, inboxEmail, workspaceId, now } = options;
+  // Paging state for one poll. The query stays the same across pages, because a page token belongs to the query
+  // that produced it.
+  let started = false;
+  let after: string | undefined;
+  let pageToken: string | undefined;
+  let current: string | null = null;
+
+  const sendRequest = (intent: MailIntent) => ({
+    inboxId: intent.accountId,
+    idempotencyKey: intent.intentId,
+    to: intent.to,
+    subject: intent.subject,
+    text: intent.body,
+  });
+
+  // Full text is fetched once, only for inbound messages that are new. A busy or slow provider stops the poll and
+  // leaves the cursor where it was, so the same messages are tried again next time. A message AgentMail cannot
+  // return (for example one that was deleted) is stored with its preview only.
+  // Messages fetched before a failure are left in `fetched`, so the caller can still store them.
+  async function fetchNew(page: MailMessageSummary[], known: (id: string) => boolean, fetched: NormalizedInbound[]): Promise<void> {
+    for (const summary of page) {
+      const direction = directionOf(summary, inboxEmail);
+      if (!direction) continue;
+      if (known(summary.messageId)) continue;
+      let detail: MailMessageDetail | null = null;
+      let unreadable = false;
+      if (direction === 'in') {
+        const failureKey = `${workspaceId}:${summary.messageId}`;
+        try {
+          detail = await getMessage(apiKey, inboxId, summary.messageId);
+          clearFetchFailure(failureKey);
+        } catch (error) {
+          const permanent = error instanceof AgentmailError && (error.kind === 'not_found' || error.kind === 'rejected' || error.kind === 'bad_response');
+          if (!permanent) {
+            if (noteFetchFailure(failureKey)) throw error;
+            unreadable = true;
+          }
+        }
+      }
+      fetched.push({
+        providerMessageId: summary.messageId,
+        threadId: summary.threadId,
+        direction,
+        from: summary.from,
+        to: summary.to,
+        subject: summary.subject,
+        preview: summary.preview,
+        labels: summary.labels,
+        text: direction === 'in' ? (detail?.text ?? detail?.extractedText ?? null) : null,
+        replyText: detail?.extractedText ?? detail?.text ?? summary.preview,
+        messageIdHeader: null,
+        inReplyTo: summary.inReplyTo,
+        references: [],
+        evidenceText: '',
+        deliveryAction: null,
+        receivedAt: summary.timestamp,
+        unreadable,
+      });
+    }
+  }
+
+  return {
+    kind: 'agentmail',
+    label: 'AgentMail',
+    duplicateProtection: 'idempotency_key',
+
+    async submit(intent) {
+      return sendMessage(apiKey, sendRequest(intent));
+    },
+
+    // Retries the same request with the same key. The provider's duplicate protection makes that safe inside its
+    // window, and the caller never calls this outside it.
+    async reconcileUnknown(intent): Promise<ReconcileResult> {
+      try {
+        const result = await sendMessage(apiKey, sendRequest(intent));
+        return { outcome: 'accepted', messageId: result.messageId, threadId: result.threadId };
+      } catch (error) {
+        if (error instanceof MailProviderError) return { outcome: 'unavailable', error };
+        return { outcome: 'unavailable', error: new MailProviderError('unavailable', 'The request failed in an unexpected way.') };
+      }
+    },
+
+    async listInbound(cursor: string | null, listOptions: ListInboundOptions): Promise<InboundBatch> {
+      if (!started) {
+        started = true;
+        current = cursor ? notAfter(cursor, now()) : null;
+        after = current ? new Date(Date.parse(current) - overlapMilliseconds).toISOString() : undefined;
+      }
+      const page = await listMessages(apiKey, inboxId, {
+        ...(after ? { after } : {}),
+        ascending: true,
+        limit: messagePageSize,
+        ...(pageToken ? { pageToken } : {}),
+      });
+      const fetched: NormalizedInbound[] = [];
+      try {
+        await fetchNew(page.messages, listOptions.isKnown, fetched);
+      } catch (error) {
+        // What was fetched before the failure is kept, but the cursor stays where it was, so the failing message
+        // and everything after it are tried again on the next poll.
+        return { messages: fetched, nextCursor: null, more: false, failure: error };
+      }
+      const pageEnd = page.messages.reduce<string | null>((latest, message) => later(latest, message.timestamp), null);
+      if (pageEnd) current = later(current, notAfter(pageEnd, now()));
+      pageToken = page.nextPageToken ?? undefined;
+      return { messages: fetched, nextCursor: current, more: Boolean(page.nextPageToken) };
+    },
+
+    async checkAccount() {
+      const found = (await listInboxes(apiKey, { limit: 100 })).inboxes.find((inbox) => inbox.inboxId === inboxId);
+      if (!found) throw new AgentmailError('not_found', 'AgentMail could not find that inbox.');
+      return { address: found.email };
+    },
+
+    // Pages the newest-first feed until it meets an event it has already seen. Only a label.added event for the
+    // bounced label is evidence of a failed delivery. Opened labels and everything else are ignored.
+    async pollEvents(seenEventId: string | null): Promise<MailEventBatch> {
+      const collected: MailEvent[] = [];
+      let newest: string | null = null;
+      let token: string | undefined;
+      for (let pages = 0; pages < maxEventPages; pages += 1) {
+        const page = await listEvents(apiKey, inboxId, { limit: 100, ...(token ? { pageToken: token } : {}) });
+        if (pages === 0) newest = page.events[0]?.eventId ?? null;
+        let metSeen = false;
+        for (const event of page.events) {
+          if (event.eventId === seenEventId) {
+            metSeen = true;
+            break;
+          }
+          collected.push(event);
+        }
+        if (metSeen || !page.nextPageToken) break;
+        token = page.nextPageToken;
+      }
+      const bounces = collected
+        .reverse()
+        .filter((event) => event.eventType.toLowerCase() === 'label.added' && event.label?.toLowerCase() === 'bounced' && event.messageId)
+        .map((event) => ({ eventId: event.eventId, providerMessageId: event.messageId! }));
+      return { bounces, newestEventId: newest };
+    },
+  };
 }

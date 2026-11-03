@@ -22,6 +22,13 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+const PROVIDER_NAMES: Record<string, string> = { agentmail: 'AgentMail', gmail: 'Gmail' };
+
+export function mailProviderName(kind: string | null | undefined): string {
+  if (!kind) return 'the mail provider';
+  return PROVIDER_NAMES[kind] ?? kind;
+}
+
 const REASON_TEXT: Record<string, string> = {
   suppressed: 'This address is suppressed and is never emailed.',
   demo_address: 'This is a demo address (example.com, example.org, or example.net), so no real mail is sent to it.',
@@ -32,15 +39,15 @@ const REASON_TEXT: Record<string, string> = {
   duplicate_open_intent: 'A send for this draft, or one with this subject for this person, is already open.',
   open_intent: 'A send for this draft, or one with this subject for this person, is already open.',
   already_open: 'A send for this draft, or one with this subject for this person, is already open.',
-  no_inbox: 'No AgentMail inbox is connected.',
-  no_connector: 'AgentMail is not connected.',
+  no_inbox: 'No sending address is connected.',
+  no_connector: 'No sending connector is connected.',
   daily_cap: 'The daily sending cap leaves no room for this message.',
   cap_reached: 'The daily sending cap leaves no room for this message.',
   daily_cap_reached: 'The daily sending cap leaves no room for this message.',
   reply_received: 'This person replied after the send was approved.',
   replied: 'This person replied after the send was approved.',
-  connector_removed: 'AgentMail was removed after the send was approved.',
-  connector_missing: 'AgentMail was removed after the send was approved.',
+  connector_removed: 'The sending connector was removed or switched after the send was approved.',
+  connector_missing: 'The sending connector was removed or switched after the send was approved.',
   payload_mismatch: 'The message no longer matches what was approved.',
   hash_mismatch: 'The message no longer matches what was approved.',
   opt_out: 'This address opted out.',
@@ -95,6 +102,7 @@ export function parseSendReviewPayload(payload: unknown): SendReviewPayload {
   const source = record(payload);
   const list = Array.isArray(source.messages) ? source.messages : Array.isArray(source.intents) ? source.intents : [];
   const topInbox = text(source.inboxEmail ?? source.inbox ?? source.from);
+  const topProvider = text(source.provider ?? source.mailProvider);
   const messages: SendReviewMessage[] = list.map((entry) => {
     const row = record(entry);
     return {
@@ -104,6 +112,7 @@ export function parseSendReviewPayload(payload: unknown): SendReviewPayload {
       subject: text(row.subject),
       body: typeof row.body === 'string' && row.body.trim() !== '' ? row.body : text(row.text),
       inboxEmail: text(row.inboxEmail ?? row.inbox ?? row.from ?? row.fromEmail) ?? topInbox,
+      provider: text(row.provider ?? row.mailProvider) ?? topProvider,
     };
   });
   return {

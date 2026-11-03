@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { dailySendCap, mailReconcileDelays, maxIntentsPerApproval, agentmailRequestTimeoutMilliseconds } from '../config.js';
+import {
+  agentmailRequestTimeoutMilliseconds,
+  dailySendCap,
+  gmailRequestTimeoutMilliseconds,
+  mailReconcileDelays,
+  maxIntentsPerApproval,
+} from '../config.js';
 import { conflict, notFound, validationError } from '../errors.js';
 import {
   acknowledgedUnknownSentence,
@@ -7,6 +13,7 @@ import {
   approvalTooOldSentence,
   bodyMaxLength,
   duplicateProtectionExpiredSentence,
+  gmailSearchWindowEndedSentence,
   idempotencyWindowMilliseconds,
   isDemoAddress,
   isValidEmail,
@@ -16,8 +23,9 @@ import {
   subjectMaxLength,
   unknownSendTaskTitle,
 } from '../mail/rules.js';
-import { AgentmailError, sendMessage } from '../providers/agentmail.js';
-import { getConnector, getConnectorSecret } from '../queries/connectors.js';
+import { generateMessageIdHeader } from '../providers/gmail.js';
+import { type MailIntent, MailProviderError, mailProviderLabels, type MailProviderKind } from '../providers/mailTypes.js';
+import { getActiveMailAccount, getMailAccount } from '../queries/mailProvider.js';
 import { getRun } from '../queries/runs.js';
 import {
   countReserved,
@@ -31,21 +39,22 @@ import {
 } from '../queries/sendIntents.js';
 import { requireApproval } from '../queries/runs.js';
 import type { Approval, Row } from '../records.js';
-import { markAgentmailError } from './agentmailConnector.js';
 import { type ActionContext, emitRecord, mutate, parseInput, type Tx } from './context.js';
 import { hashPayload } from './demoResearch.js';
 import { enqueueJobIn } from './jobs.js';
+import { createMailAdapter, type MailAdapter, markMailProviderRejected } from './mailProviders.js';
 import {
   createEmailActivityIn,
   ensureTaskIn,
   type FrozenMessage,
+  mailReconcileJobKind,
   messageHash,
   sendOutreachStepTitles,
   settleSendRunIn,
   transitionIntentIn,
 } from './sendIntentState.js';
 
-export const mailReconcileJobKind = 'mail_reconcile';
+export { mailReconcileJobKind };
 export const sendOutreachKind = 'send_outreach';
 export const sendReviewKind = 'send_review';
 export { sendOutreachStepTitles };
@@ -161,9 +170,11 @@ export function prepareSendIntents(ctx: ActionContext, input: unknown): PrepareR
   }
   const created = mutate(ctx, (tx) => {
     const { candidates, sourceRunId } = resolveCandidates(tx, data);
-    const connector = getConnector(tx.db, tx.workspaceId, 'agentmail');
-    const inboxId = connector?.status === 'connected' ? connector.settings.inboxId : null;
-    const inboxEmail = connector?.status === 'connected' ? connector.settings.inboxEmail : null;
+    // Messages are staged for the mail provider in use, and carry it, so only that provider ever submits them.
+    const account = getActiveMailAccount(tx.db, tx.workspaceId);
+    const provider: MailProviderKind = account?.kind ?? 'agentmail';
+    const inboxId = account?.ready ? account.accountId : null;
+    const inboxEmail = account?.ready ? account.address : null;
     const now = tx.now();
     let room = inboxId
       ? dailySendCap - countSentToday(tx.db, tx.workspaceId, inboxId, dayStartFor(now)) - countReserved(tx.db, tx.workspaceId, inboxId)
@@ -293,10 +304,12 @@ export function prepareSendIntents(ctx: ActionContext, input: unknown): PrepareR
       subject: item.subject,
       body: item.body,
       inboxEmail,
+      provider,
     }));
     const payload = {
       ...(sourceRunId ? { runId: sourceRunId } : {}),
       count: messages.length,
+      mailProvider: provider,
       inboxEmail,
       messages,
       excluded: excluded.map((item) => ({ personName: item.personName, toEmail: item.toEmail, reason: item.reason })),
@@ -349,10 +362,10 @@ export function prepareSendIntents(ctx: ActionContext, input: unknown): PrepareR
       const message: FrozenMessage = { intentId: item.id, to: item.to, subject: item.subject, body: item.body, inboxEmail };
       tx.db
         .prepare(
-          `INSERT INTO send_intent (id, created_at, workspace_id, person_id, draft_activity_id, inbox_id, to_email, subject, body, payload_hash, status, approval_id, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_approval', ?, ?)`,
+          `INSERT INTO send_intent (id, created_at, workspace_id, person_id, draft_activity_id, inbox_id, to_email, subject, body, payload_hash, status, approval_id, updated_at, provider)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_approval', ?, ?, ?)`,
         )
-        .run(item.id, now, tx.workspaceId, item.personId, item.draftActivityId, inboxId, item.to, item.subject, item.body, messageHash(message), approvalId, now);
+        .run(item.id, now, tx.workspaceId, item.personId, item.draftActivityId, inboxId, item.to, item.subject, item.body, messageHash(message), approvalId, now, provider);
       tx.audit('send_intent.create', 'send_intent', item.id, { approvalId, draftActivityId: item.draftActivityId });
       emitRecord(tx, 'send_intent', item.id);
     }
@@ -380,6 +393,8 @@ const reviewPayloadSchema = z.object({
       subject: z.string(),
       body: z.string(),
       inboxEmail: z.string(),
+      // Payloads prepared before the provider was recorded do not carry it. Those were all AgentMail.
+      provider: z.enum(['agentmail', 'gmail']).optional(),
     }),
   ),
 });
@@ -406,6 +421,8 @@ interface IntentRow {
   error: string | null;
   provider_message_id: string | null;
   submitted_at: string | null;
+  provider: MailProviderKind;
+  message_id_header: string | null;
 }
 
 // Both hashes must agree: the approved text and the row's current text. A row edited after review fails this.
@@ -450,7 +467,6 @@ export interface ApprovalOutcome {
 // was approved. A cancelled intent is skipped. An intent whose text differs refuses the whole decision.
 export function approveSendReview(tx: Tx, approval: Approval): ApprovalOutcome {
   const messages = readReviewMessages(approval.payload);
-  const connector = getConnector(tx.db, tx.workspaceId, 'agentmail');
   const ready: { row: IntentRow; message: ReviewMessage }[] = [];
   const skipped: ApprovalOutcome['skipped'] = [];
 
@@ -474,11 +490,16 @@ export function approveSendReview(tx: Tx, approval: Approval): ApprovalOutcome {
 
   if (ready.length === 0) return { queued: 0, blocked: 0, skipped, nothingToSend: true };
 
-  if (!connector || connector.status !== 'connected' || !connector.settings.inboxId) {
-    throw conflict('AgentMail is not connected, so nothing was approved. Connect it in Settings, or reject this approval.');
+  const account = getActiveMailAccount(tx.db, tx.workspaceId);
+  const stagedFor = ready[0]!.row.provider;
+  if (!account || !account.ready) {
+    throw conflict(`${mailProviderLabels[account?.kind ?? stagedFor]} is not connected, so nothing was approved. Connect it in Settings, or reject this approval.`);
   }
   for (const { row, message } of ready) {
-    if (row.inbox_id !== connector.settings.inboxId || message.inboxEmail !== connector.settings.inboxEmail) {
+    if (row.provider !== account.kind) {
+      throw conflict('The sending connector changed after these messages were prepared, so nothing was approved. Reject this approval and prepare the send again.');
+    }
+    if (row.inbox_id !== account.accountId || message.inboxEmail !== account.address) {
       throw conflict('The sending inbox changed after these messages were prepared, so nothing was approved. Reject this approval and prepare the send again.');
     }
   }
@@ -593,14 +614,18 @@ export function controlSendIntent(ctx: ActionContext, intentId: string, input: u
 
 // Checks that run immediately before a submit, and again before a reconciliation retry. All of them read the
 // database, so the result is as fresh as the claim that follows it. Returns the reason to block, or null.
-function recheckIntent(tx: Tx, row: IntentRow, options: { checkApprovalAge: boolean }): string | null {
+// `mode` says what the check guards: a first submit, a retry of the same send (AgentMail), or a read only search
+// (Gmail). A read only check cannot send anything, so it asks only whether the account can still be read.
+type RecheckMode = 'submit' | 'retry_send' | 'read_only';
+
+function recheckIntent(tx: Tx, row: IntentRow, options: { mode: RecheckMode }): string | null {
   if (row.provider_message_id) return 'This message already has a provider message id, so it is not submitted again.';
   const approval = row.approval_id
     ? (tx.db.prepare('SELECT * FROM approval WHERE id = ? AND workspace_id = ?').get(row.approval_id, tx.workspaceId) as Row | undefined)
     : undefined;
   if (!approval || approval.status !== 'approved') return 'The approval for this message is not in place.';
   // Only a first submit needs a fresh approval. A retry of an unknown send carries the same message and key.
-  if (options.checkApprovalAge && approval.decided_at && Date.parse(tx.now()) - Date.parse(String(approval.decided_at)) > approvalMaxAgeMilliseconds) {
+  if (options.mode === 'submit' && approval.decided_at && Date.parse(tx.now()) - Date.parse(String(approval.decided_at)) > approvalMaxAgeMilliseconds) {
     return approvalTooOldSentence;
   }
   let message: ReviewMessage | undefined;
@@ -612,12 +637,19 @@ function recheckIntent(tx: Tx, row: IntentRow, options: { checkApprovalAge: bool
   if (hashPayload(String(approval.payload)) !== String(approval.payload_hash) || !message || !intentMatchesMessage(row, message)) {
     return 'The message no longer matches what was approved.';
   }
-  const connector = getConnector(tx.db, tx.workspaceId, 'agentmail');
-  if (!connector) return reasonCodes.connectorRemoved;
-  if (connector.status !== 'connected') return 'AgentMail rejected the saved API key.';
-  if (connector.settings.inboxId !== row.inbox_id || connector.settings.inboxEmail !== message.inboxEmail) {
+  // The approved message names the provider it was staged for. Payloads from before that was recorded were AgentMail.
+  if ((message.provider ?? 'agentmail') !== row.provider) return 'The message no longer matches what was approved.';
+  const account = getMailAccount(tx.db, tx.workspaceId, row.provider);
+  if (!account) return reasonCodes.connectorRemoved;
+  // A first submit leaves only from the provider in use. Switching away blocks it, like removing the connector.
+  if (options.mode === 'submit' && getActiveMailAccount(tx.db, tx.workspaceId)?.kind !== row.provider) return reasonCodes.connectorRemoved;
+  if (account.status !== 'connected') {
+    return row.provider === 'agentmail' ? 'AgentMail rejected the saved API key.' : (account.statusMessage ?? 'Gmail no longer accepts the saved sign in.');
+  }
+  if (account.accountId !== row.inbox_id || account.address !== message.inboxEmail) {
     return 'The sending inbox changed after approval.';
   }
+  if (options.mode === 'read_only') return null;
   if (findSuppression(tx.db, tx.workspaceId, row.to_email)) return reasonCodes.suppressed;
   if (isDemoAddress(row.to_email)) return reasonCodes.demoAddress;
   if (repliedSince(tx, row, String(approval.decided_at ?? row.created_at))) return reasonCodes.replyReceived;
@@ -627,7 +659,20 @@ function recheckIntent(tx: Tx, row: IntentRow, options: { checkApprovalAge: bool
 
 interface Claim {
   intent: IntentRow;
-  apiKey: string;
+  adapter: MailAdapter;
+}
+
+function toMailIntent(row: IntentRow, adapter: MailAdapter): MailIntent {
+  return {
+    intentId: row.id,
+    accountId: row.inbox_id,
+    fromAddress: adapter.account.address ?? row.inbox_id,
+    to: row.to_email,
+    subject: row.subject,
+    body: row.body,
+    messageIdHeader: row.message_id_header,
+    replyTo: null,
+  };
 }
 
 // Takes the oldest queued intent, rechecks it, and marks it submitting, all in one transaction. Only one intent is
@@ -641,18 +686,31 @@ function claimNextQueued(ctx: ActionContext): Claim | null {
         .prepare("SELECT * FROM send_intent WHERE workspace_id = ? AND status = 'queued' ORDER BY created_at, id LIMIT 1")
         .get(tx.workspaceId) as IntentRow | undefined;
       if (!row) return null;
-      const reason = recheckIntent(tx, row, { checkApprovalAge: true });
+      const reason = recheckIntent(tx, row, { mode: 'submit' });
       if (reason) {
         transitionIntentIn(tx, row.id, ['queued'], 'blocked', { error: reason }, 'block', { reason, stage: 'recheck' });
         continue;
       }
-      const apiKey = getConnectorSecret(tx.db, tx.workspaceId, 'agentmail');
-      if (!apiKey) {
+      const adapter = createMailAdapter(ctx, row.provider);
+      if (!adapter) {
         transitionIntentIn(tx, row.id, ['queued'], 'blocked', { error: reasonCodes.connectorRemoved }, 'block', { stage: 'recheck' });
         continue;
       }
-      transitionIntentIn(tx, row.id, ['queued'], 'submitting', { submittedAt: tx.now() }, 'submit_start', {});
-      return { intent: row, apiKey };
+      // Gmail has no idempotency key. The Message-ID is chosen here and committed in the same transaction that marks
+      // the intent submitting, so it is on disk before any request leaves the process. A restart that finds it set
+      // and the intent still submitting treats the outcome as unknown and searches for it; it never sends again.
+      const messageIdHeader =
+        adapter.provider.duplicateProtection === 'message_id_search' ? generateMessageIdHeader(row.id, adapter.account.address ?? row.inbox_id) : null;
+      transitionIntentIn(
+        tx,
+        row.id,
+        ['queued'],
+        'submitting',
+        { submittedAt: tx.now(), ...(messageIdHeader ? { messageIdHeader } : {}) },
+        'submit_start',
+        {},
+      );
+      return { intent: messageIdHeader ? { ...row, message_id_header: messageIdHeader } : row, adapter };
     }
   });
 }
@@ -699,8 +757,8 @@ function recordFailed(ctx: ActionContext, intentId: string, reason: string): voi
   });
 }
 
-function scheduleReconcileIn(tx: Tx, intentId: string, attempt: number): boolean {
-  const delays = mailReconcileDelays();
+function scheduleReconcileIn(tx: Tx, intentId: string, attempt: number, provider: MailProviderKind): boolean {
+  const delays = mailReconcileDelays(provider);
   if (attempt >= delays.length) return false;
   const runAt = new Date(Date.parse(tx.now()) + delays[attempt]!).toISOString();
   enqueueJobIn(tx, mailReconcileJobKind, { intentId, attempt, workspaceId: tx.workspaceId }, runAt);
@@ -709,7 +767,7 @@ function scheduleReconcileIn(tx: Tx, intentId: string, attempt: number): boolean
 
 // The request may or may not have produced an email. The state says so, and the same request is retried later
 // with the same idempotency key. The provider keeps keys for about a day, so retries stop after 23 hours.
-function recordUnknown(ctx: ActionContext, intentId: string, reason: string): void {
+function recordUnknown(ctx: ActionContext, intentId: string, provider: MailProviderKind, reason: string): void {
   mutate(ctx, (tx) => {
     const moved = transitionIntentIn(
       tx,
@@ -720,7 +778,7 @@ function recordUnknown(ctx: ActionContext, intentId: string, reason: string): vo
       'unknown',
       { reason },
     );
-    if (moved) scheduleReconcileIn(tx, intentId, 0);
+    if (moved) scheduleReconcileIn(tx, intentId, 0, provider);
   });
 }
 
@@ -728,32 +786,37 @@ function recordUnknown(ctx: ActionContext, intentId: string, reason: string): vo
 export async function submitNextIntent(ctx: ActionContext): Promise<boolean> {
   const claim = claimNextQueued(ctx);
   if (!claim) return false;
-  const { intent, apiKey } = claim;
+  const { intent, adapter } = claim;
   try {
-    const result = await sendMessage(apiKey, {
-      inboxId: intent.inbox_id,
-      idempotencyKey: intent.id,
-      to: intent.to_email,
-      subject: intent.subject,
-      text: intent.body,
-    });
+    const result = await adapter.provider.submit(toMailIntent(intent, adapter));
     recordAccepted(ctx, intent.id, ['submitting'], result, 'submit');
   } catch (error) {
-    if (error instanceof AgentmailError && error.definitive) {
-      if (error.kind === 'unauthorized') markAgentmailError(ctx, apiKey);
+    if (error instanceof MailProviderError && error.definitive) {
+      if (error.kind === 'unauthorized') markMailProviderRejected(ctx, adapter);
       recordFailed(ctx, intent.id, error.message);
     } else {
-      recordUnknown(ctx, intent.id, error instanceof AgentmailError ? error.message : 'The request failed in an unexpected way.');
+      recordUnknown(ctx, intent.id, intent.provider, error instanceof MailProviderError ? error.message : 'The request failed in an unexpected way.');
     }
   }
   return true;
 }
 
-// True when the provider may already have forgotten the idempotency key. The key is first used when the intent
-// is claimed for submit, so the window starts at submitted_at.
+// True when the checking window has ended. For AgentMail it is the time the provider may already have forgotten the
+// idempotency key; for Gmail it is how long the app keeps searching. The window starts when the intent is claimed
+// for submit, so it starts at submitted_at.
 function duplicateProtectionExpired(row: { submitted_at: string | null; created_at: string }, now: string): boolean {
   const started = Date.parse(row.submitted_at ?? row.created_at);
   return Number.isFinite(started) && Date.parse(now) - started > idempotencyWindowMilliseconds;
+}
+
+function windowEndedSentence(provider: MailProviderKind): string {
+  return provider === 'gmail' ? gmailSearchWindowEndedSentence : duplicateProtectionExpiredSentence;
+}
+
+function stillUnknownSentence(provider: MailProviderKind, checks: number): string {
+  return provider === 'gmail'
+    ? `Still unknown after ${checks} checks. Look in the sent mail of the Gmail account before sending again.`
+    : `Still unknown after ${checks} checks. Look in the sent folder of the AgentMail inbox before sending again.`;
 }
 
 function endSentence(value: string): string {
@@ -770,9 +833,11 @@ function stopCheckingIn(tx: Tx, row: IntentRow, sentence: string, reason: string
   ensureTaskIn(tx, { title: unknownSendTaskTitle(personNameOf(tx, row.person_id)), personId: row.person_id });
 }
 
-// Retries the same request with the same key for an intent whose outcome is unknown. The full recheck applies, so a
-// suppression or a reply that arrived since stops the retry instead of risking a first send. A key older than
-// 23 hours is never reused, because the provider forgets keys after a day and the retry could send a second email.
+// Checks an intent whose outcome is unknown, through the provider that staged it.
+// AgentMail: retries the same request with the same key. The full recheck applies, so a suppression or a reply that
+// arrived since stops the retry instead of risking a first send. A key older than 23 hours is never reused, because
+// the provider forgets keys after a day and the retry could send a second email.
+// Gmail: a read only search for the saved Message-ID. Nothing is ever sent from here, so only the account is rechecked.
 export async function reconcileIntent(ctx: ActionContext, payload: Record<string, unknown>): Promise<void> {
   const intentId = String(payload.intentId);
   const attempt = Number(payload.attempt ?? 0);
@@ -780,10 +845,16 @@ export async function reconcileIntent(ctx: ActionContext, payload: Record<string
     const row = tx.db.prepare('SELECT * FROM send_intent WHERE id = ? AND workspace_id = ?').get(intentId, tx.workspaceId) as IntentRow | undefined;
     if (!row || row.status !== 'unknown') return null;
     if (duplicateProtectionExpired(row, tx.now())) {
-      stopCheckingIn(tx, row, duplicateProtectionExpiredSentence, 'idempotency_expired');
+      stopCheckingIn(tx, row, windowEndedSentence(row.provider), row.provider === 'gmail' ? 'search_window_ended' : 'idempotency_expired');
       return null;
     }
-    const reason = recheckIntent(tx, row, { checkApprovalAge: false });
+    const reason = recheckIntent(tx, row, { mode: row.provider === 'gmail' ? 'read_only' : 'retry_send' });
+    if (reason && row.provider === 'gmail') {
+      // The read only search cannot run (the sign in failed, was removed, or is for a different account). Say so now,
+      // once, with a task for a person, instead of waiting quietly. The search resumes when the same account is ready.
+      stopCheckingIn(tx, row, `Checking again stopped: ${endSentence(reason === reasonCodes.connectorRemoved ? 'The Gmail connector was removed' : reason)} It stays unknown until the same Gmail account is signed in again or a person acknowledges it.`, 'cannot_check');
+      return null;
+    }
     if (reason) {
       transitionIntentIn(
         tx,
@@ -796,56 +867,51 @@ export async function reconcileIntent(ctx: ActionContext, payload: Record<string
       );
       return null;
     }
-    const apiKey = getConnectorSecret(tx.db, tx.workspaceId, 'agentmail');
-    return apiKey ? { intent: row, apiKey } : null;
+    const adapter = createMailAdapter(ctx, row.provider);
+    return adapter ? { intent: row, adapter } : null;
   });
   if (!claim) return;
-  const { intent, apiKey } = claim;
-  try {
-    const result = await sendMessage(apiKey, {
-      inboxId: intent.inbox_id,
-      idempotencyKey: intent.id,
-      to: intent.to_email,
-      subject: intent.subject,
-      text: intent.body,
+  const { intent, adapter } = claim;
+  const result = await adapter.provider.reconcileUnknown(toMailIntent(intent, adapter));
+  if (result.outcome === 'accepted') {
+    recordAccepted(ctx, intent.id, ['unknown', 'cancelled'], { messageId: result.messageId, threadId: result.threadId }, 'reconcile');
+    return;
+  }
+  if (result.outcome === 'unavailable' && result.error.definitive) {
+    const error = result.error;
+    // A refusal on a retry does not prove the first request failed: the key may have been rotated or the inbox
+    // deleted after the email went out. The intent stays unknown so the draft cannot be staged again by mistake.
+    if (error.kind === 'unauthorized') markMailProviderRejected(ctx, adapter);
+    mutate(ctx, (tx) => {
+      const row = tx.db.prepare('SELECT * FROM send_intent WHERE id = ? AND workspace_id = ?').get(intent.id, tx.workspaceId) as IntentRow | undefined;
+      if (!row || row.status !== 'unknown') return;
+      stopCheckingIn(
+        tx,
+        row,
+        `Checking again stopped: ${endSentence(error.message)} This does not show the email was not sent. It stays unknown until a person acknowledges it.`,
+        'refused_on_retry',
+      );
     });
-    recordAccepted(ctx, intent.id, ['unknown', 'cancelled'], result, 'reconcile');
-  } catch (error) {
-    if (error instanceof AgentmailError && error.definitive) {
-      // A refusal on a retry does not prove the first request failed: the key may have been rotated or the inbox
-      // deleted after the email went out. The intent stays unknown so the draft cannot be staged again by mistake.
-      if (error.kind === 'unauthorized') markAgentmailError(ctx, apiKey);
-      mutate(ctx, (tx) => {
-        const row = tx.db.prepare('SELECT * FROM send_intent WHERE id = ? AND workspace_id = ?').get(intent.id, tx.workspaceId) as IntentRow | undefined;
-        if (!row || row.status !== 'unknown') return;
-        stopCheckingIn(
-          tx,
-          row,
-          `Checking again stopped: ${endSentence(error.message)} This does not show the email was not sent. It stays unknown until a person acknowledges it.`,
-          'refused_on_retry',
-        );
-      });
+    return;
+  }
+  mutate(ctx, (tx) => {
+    const next = attempt + 1;
+    const reason = result.outcome === 'unavailable' ? result.error.message : 'The message was not found yet.';
+    if (scheduleReconcileIn(tx, intent.id, next, intent.provider)) {
+      transitionIntentIn(tx, intent.id, ['unknown'], 'unknown', {}, 'reconcile_retry', { attempt: next, reason });
       return;
     }
-    mutate(ctx, (tx) => {
-      const next = attempt + 1;
-      const reason = error instanceof AgentmailError ? error.message : 'The request failed in an unexpected way.';
-      if (scheduleReconcileIn(tx, intent.id, next)) {
-        transitionIntentIn(tx, intent.id, ['unknown'], 'unknown', {}, 'reconcile_retry', { attempt: next, reason });
-        return;
-      }
-      const moved = transitionIntentIn(
-        tx,
-        intent.id,
-        ['unknown'],
-        'unknown',
-        { appendError: `Still unknown after ${next} checks. Look in the sent folder of the AgentMail inbox before sending again.` },
-        'reconcile_exhausted',
-        { reason },
-      );
-      if (moved) ensureTaskIn(tx, { title: unknownSendTaskTitle(personNameOf(tx, intent.person_id)), personId: intent.person_id });
-    });
-  }
+    const moved = transitionIntentIn(
+      tx,
+      intent.id,
+      ['unknown'],
+      'unknown',
+      { appendError: stillUnknownSentence(intent.provider, next) },
+      'reconcile_exhausted',
+      { reason },
+    );
+    if (moved) ensureTaskIn(tx, { title: unknownSendTaskTitle(personNameOf(tx, intent.person_id)), personId: intent.person_id });
+  });
 }
 
 // A process that stopped while a request was on the wire leaves an intent in submitting. Nobody knows what the
@@ -855,8 +921,8 @@ export function recoverSubmittingIntents(ctx: ActionContext, olderThanMillisecon
     const now = tx.now();
     const cutoff = new Date(Date.parse(now) - olderThanMilliseconds).toISOString();
     const rows = tx.db
-      .prepare("SELECT id, person_id, created_at, submitted_at FROM send_intent WHERE workspace_id = ? AND status = 'submitting' AND updated_at <= ?")
-      .all(tx.workspaceId, cutoff) as { id: string; person_id: string; created_at: string; submitted_at: string | null }[];
+      .prepare("SELECT id, person_id, created_at, submitted_at, provider FROM send_intent WHERE workspace_id = ? AND status = 'submitting' AND updated_at <= ?")
+      .all(tx.workspaceId, cutoff) as { id: string; person_id: string; created_at: string; submitted_at: string | null; provider: MailProviderKind }[];
     let moved = 0;
     for (const row of rows) {
       // Past the idempotency window the same key could send a second email, so no retry is scheduled.
@@ -868,13 +934,13 @@ export function recoverSubmittingIntents(ctx: ActionContext, olderThanMillisecon
           row.id,
           ['submitting'],
           'unknown',
-          { error: expired ? `${base} ${duplicateProtectionExpiredSentence}` : base },
+          { error: expired ? `${base} ${windowEndedSentence(row.provider)}` : base },
           'unknown',
           { reason: 'interrupted', ...(expired ? { idempotencyExpired: true } : {}) },
         )
       ) {
         if (expired) ensureTaskIn(tx, { title: unknownSendTaskTitle(personNameOf(tx, row.person_id)), personId: row.person_id });
-        else scheduleReconcileIn(tx, row.id, 0);
+        else scheduleReconcileIn(tx, row.id, 0, row.provider);
         moved += 1;
       }
     }
@@ -882,8 +948,15 @@ export function recoverSubmittingIntents(ctx: ActionContext, olderThanMillisecon
   });
 }
 
+// A submit that has been "submitting" longer than this is treated as interrupted. It must outlast a live submit, or a
+// second process could mark a request that is still on the wire as unknown. The worst case is a Gmail send that needs
+// a token refresh, is refused with a 401, refreshes again, and sends again: four requests, each allowed the full
+// request timeout. The margin covers the database writes around them. With the default timeouts this is 90 seconds.
+const worstCaseSubmitRequests = 4;
+const staleSubmitMarginMilliseconds = 30_000;
+
 export function staleSubmittingMilliseconds(): number {
-  return agentmailRequestTimeoutMilliseconds() * 2 + 30_000;
+  return Math.max(agentmailRequestTimeoutMilliseconds(), gmailRequestTimeoutMilliseconds()) * worstCaseSubmitRequests + staleSubmitMarginMilliseconds;
 }
 
 // Submits queued intents one at a time, oldest first, up to `limit` per call.

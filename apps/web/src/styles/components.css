@@ -1143,6 +1143,50 @@ textarea.input {
   font-size: 13px;
   font-weight: 500;
 }
+/* Gmail card: setup steps, honest consequences, and the sign in wait */
+.connector__howto {
+  font-size: 13px;
+}
+.connector__howto > summary {
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--accent);
+}
+.connector__howto > summary:hover {
+  text-decoration: underline;
+}
+.connector__howto-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+  padding-left: 20px;
+}
+.connector__notice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+.connector__notice--waiting {
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: var(--accent-tint);
+}
+.connector__notice--error {
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+.connector__scopes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding-left: 20px;
+}
 .connector__remove {
   display: flex;
   flex-direction: column;

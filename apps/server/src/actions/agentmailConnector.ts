@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AppError, conflict, notFound, validationError } from '../errors.js';
 import { reasonCodes } from '../mail/rules.js';
+import { MailProviderError } from '../providers/mailTypes.js';
 import {
   AgentmailError,
   createInbox,
@@ -10,6 +11,8 @@ import {
 } from '../providers/agentmail.js';
 import { type AgentmailConnector, getConnector, getConnectorSecret } from '../queries/connectors.js';
 import { type ActionContext, mutate, parseInput, type Tx } from './context.js';
+import { getActiveMailConnector } from '../queries/mailProvider.js';
+import { activateMailProviderIfUnsetIn, reassignMailProviderAfterRemovalIn } from './mailProvider.js';
 import { blockWaitingIntentsIn, transitionIntentIn } from './sendIntentState.js';
 
 export const agentmailKeyRejectedMessage = 'AgentMail rejected the saved API key. Enter a new one to reconnect.';
@@ -21,7 +24,7 @@ const maxInboxPages = 10;
 
 // Turns a provider failure into the standard error envelope. The message never carries the key.
 export function mapAgentmailError(error: unknown): AppError {
-  if (!(error instanceof AgentmailError)) return new AppError('internal', 'Something went wrong while talking to AgentMail.');
+  if (!(error instanceof MailProviderError)) return new AppError('internal', 'Something went wrong while talking to AgentMail.');
   switch (error.kind) {
     case 'unauthorized':
       return new AppError('conflict', 'AgentMail did not accept the saved API key. Update it in Settings.');
@@ -166,6 +169,7 @@ export async function configureAgentmailConnector(
           inboxSelected: Boolean(chosen),
           inboxChanged,
         });
+        if (inboxId) activateMailProviderIfUnsetIn(tx, 'agentmail');
         return false;
       }
       const created = tx.newId('con');
@@ -180,6 +184,7 @@ export async function configureAgentmailConnector(
         inboxSelected: Boolean(chosen),
         inboxChanged,
       });
+      if (inboxId) activateMailProviderIfUnsetIn(tx, 'agentmail');
       return true;
     });
   let created: boolean;
@@ -201,9 +206,10 @@ export function disconnectAgentmailConnector(ctx: ActionContext): void {
       | { id: string }
       | undefined;
     if (!row) throw notFound('AgentMail connector');
-    const blocked = blockWaitingIntentsIn(tx, {}, reasonCodes.connectorRemoved);
+    const wasActive = getActiveMailConnector(tx.db, tx.workspaceId)?.kind === 'agentmail';
+    const blocked = blockWaitingIntentsIn(tx, { provider: 'agentmail' }, reasonCodes.connectorRemoved);
     const inFlight = tx.db
-      .prepare("SELECT id, status FROM send_intent WHERE workspace_id = ? AND status IN ('submitting', 'unknown')")
+      .prepare("SELECT id, status FROM send_intent WHERE workspace_id = ? AND provider = 'agentmail' AND status IN ('submitting', 'unknown')")
       .all(tx.workspaceId) as { id: string; status: 'submitting' | 'unknown' }[];
     for (const intent of inFlight) {
       transitionIntentIn(
@@ -217,6 +223,7 @@ export function disconnectAgentmailConnector(ctx: ActionContext): void {
       );
     }
     tx.db.prepare('DELETE FROM connector WHERE id = ?').run(row.id);
+    reassignMailProviderAfterRemovalIn(tx, wasActive);
     tx.audit('connector.disconnect', 'connector', row.id, { kind: 'agentmail', intentsBlocked: blocked, intentsInFlight: inFlight.length });
   });
 }

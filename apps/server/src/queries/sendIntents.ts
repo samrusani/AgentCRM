@@ -2,7 +2,8 @@ import type { Db } from '../db.js';
 import { dailySendCap } from '../config.js';
 import { notFound, validationError } from '../errors.js';
 import type { Row } from '../records.js';
-import { getConnector } from './connectors.js';
+import type { MailProviderKind } from '../providers/mailTypes.js';
+import { getActiveMailConnector, mailAccountOf } from './mailProvider.js';
 import { optOutTaskTitle, readOptOutSource, replyTaskTitle } from '../mail/rules.js';
 import { paginate, type Page } from './pagination.js';
 import { dayBounds } from './tasks.js';
@@ -36,7 +37,12 @@ export interface SendIntent {
   personId: string;
   personName: string;
   draftActivityId: string | null;
+  // The mail provider that staged the message. It alone submits and checks it.
+  provider: MailProviderKind;
   inboxId: string;
+  // The sending address this message was approved to leave from: the inbox email in the approval, or null when the
+  // approval does not carry it.
+  address: string | null;
   to: string;
   subject: string;
   body: string;
@@ -54,6 +60,17 @@ function text(value: unknown): string | null {
   return value === null || value === undefined ? null : String(value);
 }
 
+// The approval holds the full messages, each with the address it was approved to leave from.
+function addressFromApproval(payload: unknown, intentId: string): string | null {
+  try {
+    const parsed = JSON.parse(String(payload)) as { messages?: { intentId?: unknown; inboxEmail?: unknown }[] };
+    const message = Array.isArray(parsed.messages) ? parsed.messages.find((item) => item?.intentId === intentId) : undefined;
+    return typeof message?.inboxEmail === 'string' && message.inboxEmail !== '' ? message.inboxEmail : null;
+  } catch {
+    return null;
+  }
+}
+
 export function toSendIntent(row: Row): SendIntent {
   return {
     id: String(row.id),
@@ -61,7 +78,9 @@ export function toSendIntent(row: Row): SendIntent {
     personId: String(row.person_id),
     personName: String(row.person_name ?? ''),
     draftActivityId: text(row.draft_activity_id),
+    provider: (row.provider === 'gmail' ? 'gmail' : 'agentmail') as MailProviderKind,
     inboxId: String(row.inbox_id),
+    address: addressFromApproval(row.approval_payload, String(row.id)),
     to: String(row.to_email),
     subject: String(row.subject),
     body: String(row.body),
@@ -77,7 +96,7 @@ export function toSendIntent(row: Row): SendIntent {
 }
 
 export const intentSelect =
-  "SELECT s.*, TRIM(p.first_name || ' ' || p.last_name) AS person_name FROM send_intent s JOIN person p ON p.id = s.person_id";
+  "SELECT s.*, TRIM(p.first_name || ' ' || p.last_name) AS person_name, a.payload AS approval_payload FROM send_intent s JOIN person p ON p.id = s.person_id LEFT JOIN approval a ON a.id = s.approval_id";
 
 export function getSendIntent(db: Db, workspaceId: string, id: string): SendIntent | null {
   const row = db.prepare(`${intentSelect} WHERE s.workspace_id = ? AND s.id = ?`).get(workspaceId, id) as Row | undefined;
@@ -322,9 +341,10 @@ export function getMailSummary(db: Db, workspaceId: string, now: string) {
     .prepare('SELECT status, COUNT(*) AS n FROM send_intent WHERE workspace_id = ? GROUP BY status')
     .all(workspaceId) as { status: IntentStatus; n: number }[];
   for (const row of rows) counts[row.status] = row.n;
-  const connector = getConnector(db, workspaceId, 'agentmail');
+  const connector = getActiveMailConnector(db, workspaceId);
+  const account = connector ? mailAccountOf(connector) : null;
   const suppressed = db.prepare('SELECT COUNT(*) AS n FROM suppression WHERE workspace_id = ?').get(workspaceId) as { n: number };
-  const cap = dailyCapState(db, workspaceId, connector?.settings.inboxId ?? null, now);
+  const cap = dailyCapState(db, workspaceId, account?.accountId ?? null, now);
   const items = listRepliesNeedingAttention(db, workspaceId);
   return {
     counts,
@@ -335,11 +355,12 @@ export function getMailSummary(db: Db, workspaceId: string, now: string) {
     lastSyncAt: connector?.settings.lastSyncAt ?? null,
     lastSyncError: connector?.settings.lastSyncError ?? null,
     repliesNeedingAttention: { count: items.length, items },
+    provider: account?.kind ?? null,
     inbox: {
-      connected: Boolean(connector) && connector?.status === 'connected',
-      status: connector?.status ?? null,
-      inboxId: connector?.settings.inboxId ?? null,
-      inboxEmail: connector?.settings.inboxEmail ?? null,
+      connected: Boolean(account) && account?.status === 'connected',
+      status: account?.status ?? null,
+      inboxId: account?.accountId ?? null,
+      inboxEmail: account?.address ?? null,
     },
     suppressionCount: suppressed.n,
   };

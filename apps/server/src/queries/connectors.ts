@@ -6,7 +6,7 @@ import { type Row } from '../records.js';
 
 export type ModelConnectorKind = ModelProviderKind;
 export type KeyedModelKind = 'anthropic' | 'openai' | 'deepseek' | 'zai';
-export type ConnectorKind = 'apify' | 'agentmail' | ModelConnectorKind;
+export type ConnectorKind = 'apify' | 'agentmail' | 'gmail' | ModelConnectorKind;
 
 // Actor ids for the LinkedIn lead capture run. Settings hold only the ids a person changed; reads fill in the defaults.
 export interface LeadCaptureActors {
@@ -56,6 +56,31 @@ export interface AgentmailConnectorSettings {
   lastSyncError: string | null;
 }
 
+// What the sign in with Google flow keeps in settings between start and callback. Never sent to the browser.
+export interface GmailPendingAuth {
+  state: string;
+  verifier: string;
+  createdAt: string;
+  // Where the browser goes after the callback: a loopback origin that started the flow, or null for a relative redirect.
+  returnOrigin: string | null;
+}
+
+// Safe to send to the browser: no secret, no token, no verifier.
+export interface GmailConnectorSettings {
+  clientId: string | null;
+  // The signed in account. Null until the sign in finishes.
+  emailAddress: string | null;
+  // The same value, under the name the mail provider uses for it.
+  address: string | null;
+  signedIn: boolean;
+  oauthPending: boolean;
+  // When a sign in last finished successfully. The card waits for this to change, so a failed attempt is not
+  // mistaken for a success.
+  oauthCompletedAt: string | null;
+  lastSyncAt: string | null;
+  lastSyncError: string | null;
+}
+
 // Settings hold the allowlist, the account name, the model choice, and the last error sentence. They never hold the secret.
 // The secret never leaves this module through a response. Only getConnectorSecret reads it.
 export function maskToken(token: string): string {
@@ -79,6 +104,7 @@ const errorMessages: Record<ConnectorKind, string> = {
   zai: 'Z.ai rejected the saved API key.',
   ollama: 'The Ollama server rejected the request.',
   agentmail: 'AgentMail rejected the saved API key.',
+  gmail: 'Google no longer accepts the saved sign in.',
 };
 
 interface ConnectorBase {
@@ -100,6 +126,8 @@ export type ZaiConnector = WithToken & { kind: 'zai'; settings: KeyedModelConnec
 // Ollama has no key, so its shape has no tokenMasked.
 export type OllamaConnector = ConnectorBase & { kind: 'ollama'; settings: OllamaConnectorSettings };
 export type AgentmailConnector = WithToken & { kind: 'agentmail'; settings: AgentmailConnectorSettings };
+// Gmail keeps a client secret and tokens as one JSON secret. Only the masked client secret is ever shown.
+export type GmailConnector = ConnectorBase & { kind: 'gmail'; clientSecretMasked: string | null; settings: GmailConnectorSettings };
 
 export interface ConnectorByKind {
   apify: ApifyConnector;
@@ -109,6 +137,7 @@ export interface ConnectorByKind {
   zai: ZaiConnector;
   ollama: OllamaConnector;
   agentmail: AgentmailConnector;
+  gmail: GmailConnector;
 }
 
 export type Connector = ConnectorByKind[ConnectorKind];
@@ -119,6 +148,50 @@ export function isModelConnectorKind(value: unknown): value is ModelConnectorKin
 }
 
 export const defaultOllamaServer = 'http://127.0.0.1:11434';
+
+export interface GmailSecret {
+  clientSecret: string;
+  accessToken: string | null;
+  refreshToken: string | null;
+  expiresAt: string | null;
+}
+
+export function parseGmailSecret(value: unknown): GmailSecret | null {
+  const parsed = parseObject(value);
+  const string = (key: string): string | null => (typeof parsed[key] === 'string' && parsed[key] !== '' ? (parsed[key] as string) : null);
+  const clientSecret = string('clientSecret');
+  if (!clientSecret) return null;
+  return { clientSecret, accessToken: string('accessToken'), refreshToken: string('refreshToken'), expiresAt: string('expiresAt') };
+}
+
+function isPendingAuth(value: unknown): value is GmailPendingAuth {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as Record<string, unknown>).state === 'string' &&
+    typeof (value as Record<string, unknown>).verifier === 'string' &&
+    typeof (value as Record<string, unknown>).createdAt === 'string'
+  );
+}
+
+export function readGmailPending(settings: Record<string, unknown>): GmailPendingAuth | null {
+  const pending = settings.pending;
+  if (!isPendingAuth(pending)) return null;
+  const origin = (pending as unknown as Record<string, unknown>).returnOrigin;
+  return { state: pending.state, verifier: pending.verifier, createdAt: pending.createdAt, returnOrigin: typeof origin === 'string' ? origin : null };
+}
+
+// The stored settings and secret of the Gmail connector, for the code that runs the sign in and the sync. Never send
+// the result to a client.
+export function getGmailInternals(
+  db: Db,
+  workspaceId: string,
+): { id: string; status: 'connected' | 'error'; settings: Record<string, unknown>; secret: GmailSecret | null } | null {
+  const row = db.prepare("SELECT id, status, settings, secret FROM connector WHERE workspace_id = ? AND kind = 'gmail'").get(workspaceId) as
+    | { id: string; status: 'connected' | 'error'; settings: string; secret: string }
+    | undefined;
+  return row ? { id: row.id, status: row.status, settings: parseObject(row.settings), secret: parseGmailSecret(row.secret) } : null;
+}
 
 export function toConnector(row: Row): Connector {
   const kind = String(row.kind) as ConnectorKind;
@@ -146,6 +219,28 @@ export function toConnector(row: Row): Connector {
       settings: {
         baseUrl: typeof stored.baseUrl === 'string' && stored.baseUrl !== '' ? stored.baseUrl : defaultOllamaServer,
         model: typeof stored.model === 'string' && stored.model !== '' ? stored.model : null,
+      },
+    };
+  }
+  if (kind === 'gmail') {
+    const field = (key: string): string | null => (typeof stored[key] === 'string' && stored[key] !== '' ? (stored[key] as string) : null);
+    const secret = parseGmailSecret(row.secret);
+    const emailAddress = field('emailAddress');
+    return {
+      ...base,
+      kind,
+      // A note about a possible sync gap is shown on a connected account too, so the message is not limited to errors.
+      statusMessage: field('statusMessage') ?? (status === 'error' ? errorMessages.gmail : null),
+      clientSecretMasked: secret?.clientSecret ? maskToken(secret.clientSecret) : null,
+      settings: {
+        clientId: field('clientId'),
+        emailAddress,
+        address: emailAddress,
+        signedIn: Boolean(emailAddress && secret?.refreshToken),
+        oauthPending: isPendingAuth(stored.pending),
+        oauthCompletedAt: field('oauthCompletedAt'),
+        lastSyncAt: field('lastSyncAt'),
+        lastSyncError: field('lastSyncError'),
       },
     };
   }

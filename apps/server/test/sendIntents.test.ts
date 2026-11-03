@@ -89,8 +89,11 @@ describe('preflight and the send_review approval', () => {
         subject: 'Seed round intro',
         body: 'Hello Maren,\n\nA short note.\n\nThanks',
         inboxEmail: stubInboxId,
+        provider: 'agentmail',
       },
     ]);
+    expect(payload.mailProvider).toBe('agentmail');
+    expect(staged.intents[0]!.provider).toBe('agentmail');
     expect(payload.excluded).toEqual([]);
     expect(payload.remainingDailyCap).toBe(49);
     expect(payload.runId).toBeUndefined();

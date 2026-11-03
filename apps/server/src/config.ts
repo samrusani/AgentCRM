@@ -67,6 +67,33 @@ export function agentmailRequestTimeoutMilliseconds(): number {
   return positiveIntegerFromEnvironment('AGENTCRM_AGENTMAIL_TIMEOUT_MS', 15_000);
 }
 
+// Google endpoints for the Gmail connector. Each base URL can be replaced for tests and for a manual browser check.
+export const defaultGoogleAuthBase = 'https://accounts.google.com';
+export const defaultGoogleTokenBase = 'https://oauth2.googleapis.com';
+export const defaultGmailBase = 'https://gmail.googleapis.com';
+
+function trimmedBase(name: string, fallback: string): string {
+  const raw = process.env[name];
+  return (raw && raw.length > 0 ? raw : fallback).replace(/\/+$/, '');
+}
+
+export function googleAuthBaseUrl(): string {
+  return trimmedBase('AGENTCRM_GOOGLE_AUTH_BASE', defaultGoogleAuthBase);
+}
+
+export function googleTokenBaseUrl(): string {
+  return trimmedBase('AGENTCRM_GOOGLE_TOKEN_BASE', defaultGoogleTokenBase);
+}
+
+export function gmailBaseUrl(): string {
+  return trimmedBase('AGENTCRM_GMAIL_BASE', defaultGmailBase);
+}
+
+// Every Google request gives up after this long. Tests shorten it to exercise the unknown outcome path.
+export function gmailRequestTimeoutMilliseconds(): number {
+  return positiveIntegerFromEnvironment('AGENTCRM_GMAIL_TIMEOUT_MS', 15_000);
+}
+
 export const minimumMailPollMilliseconds = 5000;
 
 // How often the inbox is polled. Default 60 seconds, never faster than every 5 seconds.
@@ -76,15 +103,21 @@ export function mailPollMilliseconds(): number {
 
 export const defaultMailReconcileDelays: readonly number[] = [30_000, 120_000, 600_000];
 
-// Waits before each reconciliation attempt for a send whose outcome is unknown: 30 seconds, 2 minutes, 10 minutes.
+// Gmail's check is read only and costs nothing to repeat, so it keeps looking for roughly a day before it stops and
+// asks a person to check the sent mail: 30 seconds, 2 minutes, 10 minutes, 1 hour, 6 hours, 22 hours.
+export const defaultGmailReconcileDelays: readonly number[] = [30_000, 120_000, 600_000, 3_600_000, 21_600_000, 79_200_000];
+
+// Waits before each reconciliation attempt for a send whose outcome is unknown. AgentMail: 30 seconds, 2 minutes,
+// 10 minutes. Gmail has the longer schedule above.
 // AGENTCRM_MAIL_RECONCILE_MS replaces them with one number (used for every attempt) or a comma list.
-export function mailReconcileDelays(): readonly number[] {
+export function mailReconcileDelays(provider: 'agentmail' | 'gmail' = 'agentmail'): readonly number[] {
+  const defaults = provider === 'gmail' ? defaultGmailReconcileDelays : defaultMailReconcileDelays;
   const raw = process.env.AGENTCRM_MAIL_RECONCILE_MS;
-  if (raw === undefined || raw.trim() === '') return defaultMailReconcileDelays;
+  if (raw === undefined || raw.trim() === '') return defaults;
   const parsed = raw.split(',').map((part) => Number(part.trim()));
-  if (parsed.some((value) => !Number.isFinite(value) || value < 0)) return defaultMailReconcileDelays;
+  if (parsed.some((value) => !Number.isFinite(value) || value < 0)) return defaults;
   const delays = parsed.map((value) => Math.trunc(value));
-  return delays.length === 1 ? [delays[0]!, delays[0]!, delays[0]!] : delays;
+  return delays.length === 1 ? defaults.map(() => delays[0]!) : delays;
 }
 
 export const dailySendCap = 50;

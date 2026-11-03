@@ -5,7 +5,9 @@ import {
   addSuppression,
   configureAgentmailConnector,
   configureAnthropicConnector,
+  completeGmailOAuth,
   configureApifyConnector,
+  configureGmailConnector,
   configureModelConnector,
   configureOllamaConnector,
   controlRun,
@@ -21,8 +23,10 @@ import {
   disconnectAgentmailConnector,
   disconnectAnthropicConnector,
   disconnectApifyConnector,
+  disconnectGmailConnector,
   disconnectModelConnector,
   getApifyActor,
+  getMailProvider,
   getModelProvider,
   liftSuppression,
   listTemplates,
@@ -34,7 +38,9 @@ import {
   previewCsvFile,
   saveQualificationConfig,
   searchApifyActors,
+  setMailProvider,
   setModelProvider,
+  startGmailOAuth,
   stageCsvImport,
   startRun,
   switchTemplate,
@@ -296,6 +302,32 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
     reply.status(201);
     return inbox;
   });
+
+  app.put('/api/connectors/gmail', async (request, reply) => {
+    const { connector, created } = configureGmailConnector(context(), request.body);
+    reply.status(created ? 201 : 200);
+    return connector;
+  });
+  app.delete('/api/connectors/gmail', async (_request, reply) => {
+    disconnectGmailConnector(context());
+    return reply.status(204).send();
+  });
+  // Returns the Google consent URL. The browser opens it; Google sends it back to the callback below.
+  app.post('/api/connectors/gmail/oauth/start', async (request) => {
+    const origin = request.headers.origin;
+    return startGmailOAuth(context(), { returnOrigin: typeof origin === 'string' ? origin : null });
+  });
+  app.get('/api/connectors/gmail/oauth/callback', async (request, reply) => {
+    const query = parseInput(
+      z.object({ code: z.string().optional(), state: z.string().optional(), error: z.string().optional() }).passthrough(),
+      request.query,
+    );
+    const outcome = await completeGmailOAuth(context(), { code: query.code, state: query.state, error: query.error });
+    return reply.redirect(outcome.redirect, 303);
+  });
+  app.get('/api/mail-provider', async (_request, reply) => reply.send(getMailProvider(context()) ?? null));
+  app.post('/api/mail-provider', async (request) => setMailProvider(context(), request.body));
+  app.put('/api/mail-provider', async (request) => setMailProvider(context(), request.body));
 
   app.post('/api/send-intents', async (request, reply) => {
     const result = prepareSendIntents(context(), request.body);

@@ -170,7 +170,7 @@ describe('migration 003', () => {
       expect(batchesBefore).toEqual([...batches].sort((a, b) => a.id.localeCompare(b.id)));
       expect(rowsBefore).toEqual([...rows].sort((a, b) => a.id.localeCompare(b.id)));
 
-      expect(applyMigrations(db)).toEqual(['003_csv_qualify.sql', '004_lookup_indexes.sql', '005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql']);
+      expect(applyMigrations(db)).toEqual(['003_csv_qualify.sql', '004_lookup_indexes.sql', '005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql']);
 
       expect(snapshot(db, 'import_batch')).toEqual(batchesBefore);
       expect(snapshot(db, 'import_row')).toEqual(rowsBefore);
@@ -269,7 +269,7 @@ describe('migration 005', () => {
       insert(db, 'connector', connector);
       expect(() => insert(db, 'connector', { ...connector, id: 'con_x', kind: 'anthropic' })).toThrow(/CHECK/);
 
-      expect(applyMigrations(db)).toEqual(['005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql']);
+      expect(applyMigrations(db)).toEqual(['005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql']);
       expect(snapshot(db, 'connector')).toEqual([connector]);
       expect(db.pragma('foreign_key_check')).toEqual([]);
       expect(tableSql(db, 'connector')).not.toContain('_new');
@@ -349,7 +349,7 @@ describe('migration 007', () => {
       expect(() => insert(db, 'activity', { ...activity, id: 'act_x', kind: 'email_out' })).toThrow(/CHECK/);
       expect(() => insert(db, 'connector', { ...connector, id: 'con_x', kind: 'agentmail' })).toThrow(/CHECK/);
 
-      expect(applyMigrations(db)).toEqual(['007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql']);
+      expect(applyMigrations(db)).toEqual(['007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql']);
       expect(snapshot(db, 'connector')).toEqual([connector]);
       expect(snapshot(db, 'activity')).toEqual([activity]);
       expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -471,7 +471,7 @@ describe('migration 008', () => {
       insert(db, 'send_intent', intent('snd_3a', 'act_3', 'cancelled', '2026-01-03T00:00:00.000Z', { error: 'Outcome unknown. Acknowledged by a person. Whether this email was sent was never confirmed.' }));
       insert(db, 'send_intent', intent('snd_3b', 'act_3', 'cancelled', '2026-01-04T00:00:00.000Z', { error: 'The send was rejected.' }));
 
-      expect(applyMigrations(db)).toEqual(['008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql']);
+      expect(applyMigrations(db)).toEqual(['008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql']);
       expect(db.pragma('foreign_key_check')).toEqual([]);
 
       const statuses = Object.fromEntries((db.prepare('SELECT id, status FROM send_intent').all() as { id: string; status: string }[]).map((row) => [row.id, row.status]));
@@ -549,7 +549,7 @@ describe('migration 009', () => {
       for (const call of calls) insert(db, 'model_call', call);
       expect(() => insert(db, 'connector', { ...connectors[1], id: 'con_x', kind: 'ollama' })).toThrow(/CHECK/);
 
-      expect(applyMigrations(db)).toEqual(['009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql']);
+      expect(applyMigrations(db)).toEqual(['009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql']);
       expect(snapshot(db, 'connector')).toEqual(connectors);
       expect(snapshot(db, 'model_call')).toEqual(calls.map((call) => ({ ...call, provider: 'anthropic' })));
       expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -630,6 +630,57 @@ describe('migration 010', () => {
       expect(() => insert(db, 'import_batch', { ...leadBatch, id: 'imp_other', source_kind: 'other' })).toThrow(/CHECK/);
       expect(() => insert(db, 'import_batch', { ...leadBatch, id: 'imp_status', status: 'unknown' })).toThrow(/CHECK/);
       expect(() => insert(db, 'import_row', { ...rows[0], id: 'row_orphan', batch_id: 'imp_missing', seq: 1 })).toThrow(/FOREIGN KEY/);
+    } finally {
+      db.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('migration 012', () => {
+  it('keeps connectors and send intents, defaults old intents to agentmail, and allows gmail', () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'agentcrm-migration-'));
+    const db = new Database(path.join(directory, 'old.db'));
+    db.pragma('foreign_keys = ON');
+    try {
+      db.exec('CREATE TABLE migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
+      const files = ['001_init.sql', '002_apify.sql', '003_csv_qualify.sql', '004_lookup_indexes.sql', '005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql'];
+      for (const file of files) {
+        db.exec(readFileSync(path.join(migrationsDirectory, file), 'utf8'));
+        db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, ?)').run(file, '2026-01-01T00:00:00.000Z');
+      }
+      db.prepare('INSERT INTO workspace (id, created_at, name, template) VALUES (?, ?, ?, ?)').run('wsp_1', '2026-01-01', 'One', 't');
+      db.prepare("INSERT INTO connector (id, created_at, workspace_id, kind, settings, secret, status, updated_at) VALUES ('con_1', '2026-01-01', 'wsp_1', 'agentmail', '{\"inboxId\":\"a@b.invalid\"}', 'am_secret', 'connected', '2026-01-01')").run();
+      db.prepare("INSERT INTO person (id, created_at, workspace_id, version, first_name, last_name, updated_at) VALUES ('per_1', '2026-01-01', 'wsp_1', 1, 'A', 'B', '2026-01-01')").run();
+      db.prepare(
+        `INSERT INTO send_intent (id, created_at, workspace_id, person_id, inbox_id, to_email, subject, body, payload_hash, status, updated_at)
+         VALUES ('snd_1', '2026-01-01', 'wsp_1', 'per_1', 'a@b.invalid', 'x@y.invalid', 's', 'b', 'h', 'accepted', '2026-01-01')`,
+      ).run();
+      const connectorsBefore = db.prepare('SELECT * FROM connector').all();
+
+      expect(applyMigrations(db)).toEqual(['012_mail_providers.sql']);
+      expect(db.prepare('SELECT * FROM connector').all()).toEqual(connectorsBefore);
+      expect(db.prepare('SELECT provider, message_id_header FROM send_intent').get()).toEqual({ provider: 'agentmail', message_id_header: null });
+      expect(db.pragma('foreign_key_check')).toEqual([]);
+      expect(db.prepare("SELECT name FROM sqlite_master WHERE name LIKE '%\\_new' ESCAPE '\\'").all()).toEqual([]);
+      expect((db.pragma('index_info(idx_connector_workspace)') as { name: string }[]).map((column) => column.name)).toEqual(['workspace_id', 'kind']);
+
+      db.prepare("INSERT INTO connector (id, created_at, workspace_id, kind, settings, secret, status, updated_at) VALUES ('con_2', '2026-01-02', 'wsp_1', 'gmail', '{}', '{}', 'connected', '2026-01-02')").run();
+      expect(() =>
+        db.prepare("INSERT INTO connector (id, created_at, workspace_id, kind, settings, secret, status, updated_at) VALUES ('con_3', '2026-01-02', 'wsp_1', 'carrier_pigeon', '{}', '{}', 'connected', '2026-01-02')").run(),
+      ).toThrow(/CHECK/);
+      expect(() => db.prepare("UPDATE send_intent SET provider = 'carrier_pigeon'").run()).toThrow(/CHECK/);
+
+      // A Message-ID header identifies one intent per workspace.
+      db.prepare("UPDATE send_intent SET message_id_header = '<ac-1@x.invalid>' WHERE id = 'snd_1'").run();
+      expect(() =>
+        db
+          .prepare(
+            `INSERT INTO send_intent (id, created_at, workspace_id, person_id, inbox_id, to_email, subject, body, payload_hash, status, updated_at, message_id_header)
+             VALUES ('snd_2', '2026-01-01', 'wsp_1', 'per_1', 'a@b.invalid', 'x@y.invalid', 's2', 'b', 'h', 'queued', '2026-01-01', '<ac-1@x.invalid>')`,
+          )
+          .run(),
+      ).toThrow(/UNIQUE/);
     } finally {
       db.close();
       rmSync(directory, { recursive: true, force: true });

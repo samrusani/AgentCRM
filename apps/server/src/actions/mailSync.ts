@@ -11,18 +11,12 @@ import {
   unreadMessageTaskTitle,
   unreadSenderLabel,
 } from '../mail/rules.js';
-import {
-  AgentmailError,
-  getMessage,
-  listEvents,
-  listMessages,
-  type MailEvent,
-  type MailMessageDetail,
-  type MailMessageSummary,
-} from '../providers/agentmail.js';
-import { getConnector } from '../queries/connectors.js';
-import { markAgentmailError } from './agentmailConnector.js';
+import { messageIdTokens } from '../providers/gmail.js';
+import { MailProviderError, type MailProviderKind, type NormalizedInbound } from '../providers/mailTypes.js';
+import { getGmailInternals } from '../queries/connectors.js';
+import { getActiveMailConnector, mailAccountOf } from '../queries/mailProvider.js';
 import { type ActionContext, mutate, type Tx } from './context.js';
+import { createMailAdapter, type MailAdapter, markMailProviderRejected } from './mailProviders.js';
 import {
   blockWaitingIntentsIn,
   createEmailActivityIn,
@@ -33,15 +27,8 @@ import {
 } from './sendIntentState.js';
 
 // Small pages keep the number of full message fetches per poll low. A backlog drains over several polls.
-const messagePageSize = 25;
 const maxMessagePages = 4;
-const maxEventPages = 5;
-const overlapMilliseconds = 1000;
 const activitySnippetLength = 500;
-// A message whose full text cannot be fetched is tried on this many polls in a row. After that it is stored with its
-// preview only and a task names it, so one stubborn message cannot stall the sync for good.
-const maxTransientFailures = 3;
-const transientFailures = new Map<string, number>();
 
 export interface SyncResult {
   skipped: boolean;
@@ -51,68 +38,48 @@ export interface SyncResult {
 }
 
 interface SyncTarget {
-  apiKey: string;
-  inboxId: string;
-  inboxEmail: string;
+  adapter: MailAdapter;
+  kind: MailProviderKind;
+  accountId: string;
+  address: string;
   cursor: string | null;
   seenEventId: string | null;
 }
 
-type SettingsPatch = Partial<{
-  lastMessageTimestamp: string | null;
-  seenEventId: string | null;
-  lastSyncAt: string | null;
-  lastSyncError: string | null;
-}>;
+type SettingsPatch = Record<string, string | null>;
+
+function cursorKeyOf(kind: MailProviderKind): string {
+  return kind === 'agentmail' ? 'lastMessageTimestamp' : 'historyId';
+}
 
 // Cursor and status writes do not touch the connector's updated_at and are not audited: they happen on every poll
-// and carry no decision. The records the poll creates are audited as usual.
-function patchSettingsIn(tx: Tx, inboxId: string, patch: SettingsPatch): boolean {
-  const row = tx.db.prepare("SELECT id, settings FROM connector WHERE workspace_id = ? AND kind = 'agentmail'").get(tx.workspaceId) as
+// and carry no decision. The records the poll creates are audited as usual. A write is refused when the connector
+// now points at a different account than the one this poll started with.
+function patchSettingsIn(tx: Tx, target: Pick<SyncTarget, 'kind' | 'accountId'>, patch: SettingsPatch): boolean {
+  const row = tx.db.prepare('SELECT id, settings FROM connector WHERE workspace_id = ? AND kind = ?').get(tx.workspaceId, target.kind) as
     | { id: string; settings: string }
     | undefined;
   if (!row) return false;
   const settings = JSON.parse(row.settings) as Record<string, unknown>;
-  if (settings.inboxId !== inboxId) return false;
+  const current = target.kind === 'agentmail' ? settings.inboxId : typeof settings.emailAddress === 'string' ? settings.emailAddress.toLowerCase() : null;
+  if (current !== target.accountId) return false;
   tx.db.prepare('UPDATE connector SET settings = ? WHERE id = ?').run(JSON.stringify({ ...settings, ...patch }), row.id);
   return true;
 }
 
-function later(left: string | null, right: string): string {
-  if (!left) return right;
-  return Date.parse(right) > Date.parse(left) ? right : left;
-}
-
-// The cursor never moves past the current time. A message dated in the future would otherwise hide every later
-// message from the sync.
-function notAfter(timestamp: string, limit: string): string {
-  return Date.parse(timestamp) > Date.parse(limit) ? limit : timestamp;
-}
-
-function errorSentence(error: unknown): string {
-  if (error instanceof AgentmailError) {
-    if (error.kind === 'unauthorized') return 'AgentMail rejected the saved API key.';
-    if (error.kind === 'rate_limited') return 'AgentMail is rate limiting requests. The next poll will try again.';
-    if (error.kind === 'timeout') return 'AgentMail did not answer in time. The next poll will try again.';
+function errorSentence(error: unknown, adapter: MailAdapter): string {
+  const label = adapter.provider.label;
+  if (error instanceof MailProviderError) {
+    if (error.kind === 'unauthorized') return adapter.account.kind === 'agentmail' ? 'AgentMail rejected the saved API key.' : 'Gmail no longer accepts the saved sign in.';
+    if (error.kind === 'rate_limited') return `${label} is rate limiting requests. The next poll will try again.`;
+    if (error.kind === 'timeout') return `${label} did not answer in time. The next poll will try again.`;
   }
-  return 'The last poll could not read from AgentMail. The next poll will try again.';
-}
-
-function textFor(summary: MailMessageSummary, detail: MailMessageDetail | null): string {
-  return detail?.extractedText ?? detail?.text ?? summary.preview;
+  return `The last poll could not read from ${label}. The next poll will try again.`;
 }
 
 function snippet(value: string): string {
   const flat = value.replace(/\s+/g, ' ').trim();
   return flat.length > activitySnippetLength ? `${flat.slice(0, activitySnippetLength - 3)}...` : flat;
-}
-
-function directionOf(summary: MailMessageSummary, inboxEmail: string): 'in' | 'out' | null {
-  const labels = summary.labels.map((label) => label.toLowerCase());
-  if (labels.includes('draft')) return null;
-  if (labels.includes('received')) return 'in';
-  if (labels.includes('sent')) return 'out';
-  return parseAddress(summary.from) === inboxEmail ? 'out' : 'in';
 }
 
 function personByEmail(tx: Tx, email: string): { id: string; name: string } | null {
@@ -187,22 +154,15 @@ function markReplied(tx: Tx, person: { id: string; name: string }, threadId: str
 }
 
 // Everything one inbound message can cause. All of it happens in the transaction that stores the message.
-function handleInbound(
-  tx: Tx,
-  summary: MailMessageSummary,
-  detail: MailMessageDetail | null,
-  fromEmail: string,
-  link: InboundLink,
-  inboxEmail: string,
-): boolean {
-  const body = textFor(summary, detail);
+function handleInbound(tx: Tx, message: NormalizedInbound, fromEmail: string, link: InboundLink, inboxEmail: string): boolean {
+  const body = message.replyText;
   let changed = false;
 
   if (link.person) {
     createEmailActivityIn(tx, {
       personId: link.person.id,
       kind: 'email_in',
-      body: `Reply received\n\nFrom: ${fromEmail}\nSubject: ${summary.subject}\n\n${snippet(body)}`,
+      body: `Reply received\n\nFrom: ${fromEmail}\nSubject: ${message.subject}\n\n${snippet(body)}`,
     });
     changed = true;
   }
@@ -212,7 +172,7 @@ function handleInbound(
     Boolean(person) && all.findIndex((other) => other?.id === person?.id) === index,
   );
   for (const person of people) {
-    if (markReplied(tx, person, summary.threadId, summary.messageId)) changed = true;
+    if (markReplied(tx, person, message.threadId, message.providerMessageId)) changed = true;
   }
   if (link.senderAddress && blockWaitingIntentsIn(tx, { toEmail: link.senderAddress }, reasonCodes.replyReceived) > 0) changed = true;
   if (link.threadIntent && blockWaitingIntentsIn(tx, { toEmail: link.threadIntent.to_email }, reasonCodes.replyReceived) > 0) changed = true;
@@ -230,7 +190,7 @@ function handleInbound(
     } else {
       let created = false;
       for (const address of addresses) {
-        if (insertSuppressionIn(tx, { email: address, reason: 'opt_out', source: optOutSource(summary.messageId, wording) })) created = true;
+        if (insertSuppressionIn(tx, { email: address, reason: 'opt_out', source: optOutSource(message.providerMessageId, wording) })) created = true;
       }
       if (created) {
         createTaskIn(tx, { title: optOutTaskTitle(link.person?.name ?? link.senderAddress ?? unreadSenderLabel, wording), personId: link.person?.id ?? null });
@@ -241,62 +201,93 @@ function handleInbound(
   return changed;
 }
 
-interface FetchedMessage {
-  summary: MailMessageSummary;
-  detail: MailMessageDetail | null;
-  direction: 'in' | 'out';
-  // True when the full text could not be fetched on several polls in a row and the message is stored without it.
-  unreadable: boolean;
+interface BouncedIntent {
+  id: string;
+  person_id: string;
+  to_email: string;
+  status: 'accepted' | 'replied' | 'unknown';
 }
 
-// Full text is fetched once, only for inbound messages that are new. A busy or slow provider stops the poll and
-// leaves the cursor where it was, so the same messages are tried again next time. A message AgentMail cannot
-// return (for example one that was deleted) is stored with its preview only.
-// Messages fetched before a failure are left in `fetched`, so the caller can still store them.
-async function fetchNewMessages(ctx: ActionContext, target: SyncTarget, page: MailMessageSummary[], fetched: FetchedMessage[]): Promise<void> {
-  for (const summary of page) {
-    const direction = directionOf(summary, target.inboxEmail);
-    if (!direction) continue;
-    const known = ctx.db
-      .prepare('SELECT 1 FROM email_message WHERE workspace_id = ? AND provider_message_id = ?')
-      .get(ctx.workspaceId, summary.messageId);
-    if (known) continue;
-    let detail: MailMessageDetail | null = null;
-    let unreadable = false;
-    if (direction === 'in') {
-      const failureKey = `${ctx.workspaceId}:${summary.messageId}`;
-      try {
-        detail = await getMessage(target.apiKey, target.inboxId, summary.messageId);
-        transientFailures.delete(failureKey);
-      } catch (error) {
-        const permanent = error instanceof AgentmailError && (error.kind === 'not_found' || error.kind === 'rejected' || error.kind === 'bad_response');
-        if (!permanent) {
-          const failures = (transientFailures.get(failureKey) ?? 0) + 1;
-          if (failures < maxTransientFailures) {
-            transientFailures.set(failureKey, failures);
-            throw error;
-          }
-          transientFailures.delete(failureKey);
-          unreadable = true;
-        }
-      }
-    }
-    fetched.push({ summary, detail, direction, unreadable });
-  }
+const maxBounceTokens = 100;
+
+// Words in a subject or the first lines of a report that say the message could not be delivered at all.
+const failureWording =
+  /delivery status notification \(failure\)|undeliverable|could not be delivered|couldn'?t be delivered|wasn'?t delivered|was not delivered|not delivered|address not found|address couldn'?t be found|delivery (has )?failed|delivery incomplete|failed permanently|mail delivery (failed|subsystem)|returned (to sender|mail)|message blocked/i;
+// Words that say the provider is still trying, or that the message arrived. These win over failure wording because a
+// delay notice often opens with "Delivery incomplete".
+const progressWording =
+  /\((delay|delayed|delivered|relayed|success)\)|delivery (has been )?delayed|delayed delivery|delivery (status )?notification \((delay|delayed)\)|temporary problem|temporarily|will (keep|continue) (trying|to try)|will retry|still trying|warning: (message|delivery)|successfully delivered|has been delivered/i;
+const reportOpeningLines = 12;
+const reportOpeningCharacters = 1200;
+
+// True when a report from an automated sender says delivery failed for good. An attached delivery status report
+// decides by its Action: only "failed" is a bounce, and delayed, delivered, relayed, and expanded notices are not.
+// Without a report, the subject and the opening lines must say so in words, and a notice that says the provider is
+// still trying is not a failure.
+function reportsFailure(message: NormalizedInbound): boolean {
+  if (message.deliveryAction) return message.deliveryAction === 'failed';
+  const opening = (message.text ?? message.replyText)
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== '')
+    .slice(0, reportOpeningLines)
+    .join('\n')
+    .slice(0, reportOpeningCharacters);
+  const words = `${message.subject}\n${opening}`;
+  if (progressWording.test(words)) return false;
+  return failureWording.test(words);
 }
 
-function storeMessages(ctx: ActionContext, target: SyncTarget, fetched: FetchedMessage[], pageEnd: string | null): { stored: number; cursor: string | null } {
+// Gmail has no bounce API. A message from a mailer daemon counts as a bounce only when all three hold: it comes from
+// an automated sender, it says delivery failed (see reportsFailure), and it carries the Message-ID the app saved for
+// one of its own sends, in the references, the reply header, the text, or the attached original. Anything less
+// certain is an ordinary inbound message, which includes delay notices that quote our Message-ID. A bounce that names
+// an intent whose outcome was unknown also proves that the email went out.
+function findBouncedIntent(tx: Tx, message: NormalizedInbound, senderAddress: string | null): BouncedIntent | null {
+  if (!senderAddress || !automatedSender.test(senderAddress)) return null;
+  if (!reportsFailure(message)) return null;
+  const haystack = [message.references.join(' '), message.inReplyTo ?? '', message.text ?? '', message.evidenceText].join('\n');
+  const tokens = [...new Set(messageIdTokens(haystack).map((token) => token.toLowerCase()))].slice(0, maxBounceTokens);
+  if (tokens.length === 0) return null;
+  const row = tx.db
+    .prepare(
+      `SELECT id, person_id, to_email, status FROM send_intent WHERE workspace_id = ? AND message_id_header IS NOT NULL
+         AND lower(message_id_header) IN (${tokens.map(() => '?').join(', ')}) AND status IN ('accepted', 'replied', 'unknown')
+         ORDER BY submitted_at DESC, id DESC LIMIT 1`,
+    )
+    .get(tx.workspaceId, ...tokens) as BouncedIntent | undefined;
+  return row ?? null;
+}
+
+// The shared bounce path: the intent becomes bounced, the address is suppressed, and a person gets a task. AgentMail
+// reaches it from a bounced label event, Gmail from a delivery report that carries our Message-ID.
+function applyBounceIn(tx: Tx, intent: BouncedIntent, evidence: string): void {
+  transitionIntentIn(tx, intent.id, [intent.status], 'bounced', {}, 'bounced', { eventId: evidence });
+  insertSuppressionIn(tx, { email: intent.to_email, reason: 'bounce', source: `bounce|${evidence}` });
+  const person = tx.db.prepare("SELECT TRIM(first_name || ' ' || last_name) AS name FROM person WHERE id = ?").get(intent.person_id) as
+    | { name: string }
+    | undefined;
+  createTaskIn(tx, { title: bounceTaskTitle(person?.name ?? intent.to_email), personId: intent.person_id });
+}
+
+function storeMessages(
+  ctx: ActionContext,
+  target: SyncTarget,
+  messages: NormalizedInbound[],
+  nextCursor: string | null,
+  resetNote: string | null,
+): { stored: number; cursor: string | null } {
   return mutate(ctx, (tx) => {
     let stored = 0;
     let changed = false;
-    const now = tx.now();
-    for (const { summary, detail, direction, unreadable } of fetched) {
+    for (const message of messages) {
+      const direction = message.direction;
       // A header that cannot be read as one address is kept as written for display. It is never used as an address.
-      const senderAddress = parseAddress(summary.from);
-      const fromEmail = senderAddress ?? normalizeEmail(summary.from);
-      const recipients = summary.to.map((address) => parseAddress(address) ?? normalizeEmail(address));
-      const link = direction === 'in' ? linkInbound(tx, senderAddress, summary.threadId, target.inboxEmail) : null;
-      const person = link ? link.person : (recipients.map((address) => personByEmail(tx, address)).find(Boolean) ?? null);
+      const senderAddress = parseAddress(message.from);
+      const fromEmail = senderAddress ?? normalizeEmail(message.from);
+      const recipients = message.to.map((address) => parseAddress(address) ?? normalizeEmail(address));
+      const bounced = direction === 'in' ? findBouncedIntent(tx, message, senderAddress) : null;
+      const link = direction === 'in' && !bounced ? linkInbound(tx, senderAddress, message.threadId, target.address) : null;
+      const person = bounced ? null : link ? link.person : (recipients.map((address) => personByEmail(tx, address)).find(Boolean) ?? null);
       const result = tx.db
         .prepare(
           `INSERT INTO email_message (id, created_at, workspace_id, provider_message_id, provider_thread_id, direction, person_id, from_email, "to", subject, preview, body_text, labels, provider_timestamp)
@@ -306,128 +297,95 @@ function storeMessages(ctx: ActionContext, target: SyncTarget, fetched: FetchedM
           tx.newId('msg'),
           tx.now(),
           tx.workspaceId,
-          summary.messageId,
-          summary.threadId,
+          message.providerMessageId,
+          message.threadId,
           direction,
           person?.id ?? null,
           fromEmail,
           JSON.stringify(recipients),
-          summary.subject,
-          summary.preview,
-          direction === 'in' ? (detail?.text ?? detail?.extractedText ?? null) : null,
-          JSON.stringify(summary.labels),
-          summary.timestamp,
+          message.subject,
+          message.preview,
+          message.text,
+          JSON.stringify(message.labels),
+          message.receivedAt,
         );
       if (result.changes === 0) continue;
       stored += 1;
       changed = true;
-      if (link) handleInbound(tx, summary, detail, fromEmail, link, target.inboxEmail);
-      if (unreadable) {
-        ensureTaskIn(tx, { title: unreadMessageTaskTitle(senderAddress, summary.timestamp), personId: person?.id ?? null });
+      if (bounced) applyBounceIn(tx, bounced, message.providerMessageId);
+      else if (link) handleInbound(tx, message, fromEmail, link, target.address);
+      if (message.unreadable) {
+        ensureTaskIn(tx, { title: unreadMessageTaskTitle(senderAddress, message.receivedAt), personId: person?.id ?? null });
       }
     }
-    let cursor = target.cursor;
-    if (pageEnd) cursor = later(cursor, notAfter(pageEnd, now));
-    patchSettingsIn(tx, target.inboxId, { lastMessageTimestamp: cursor });
+    const patch: SettingsPatch = {};
+    if (nextCursor) patch[cursorKeyOf(target.kind)] = nextCursor;
+    // A reset cursor means replies in between may have been skipped. Say so on the connector, which stays connected.
+    if (resetNote) patch.statusMessage = resetNote;
+    if (Object.keys(patch).length > 0) patchSettingsIn(tx, target, patch);
     if (changed) tx.emit({ type: 'record_updated', entityType: 'send_intent', entityId: 'mail_sync' });
-    return { stored, cursor };
+    return { stored, cursor: nextCursor ?? target.cursor };
   });
+}
+
+function isStored(ctx: ActionContext, providerMessageId: string): boolean {
+  return Boolean(ctx.db.prepare('SELECT 1 FROM email_message WHERE workspace_id = ? AND provider_message_id = ?').get(ctx.workspaceId, providerMessageId));
 }
 
 async function pollMessages(ctx: ActionContext, target: SyncTarget): Promise<number> {
   let stored = 0;
-  let pageToken: string | undefined;
-  // The query stays the same across pages, because a page token belongs to the query that produced it.
-  const after = target.cursor ? new Date(Date.parse(target.cursor) - overlapMilliseconds).toISOString() : undefined;
   for (let pages = 0; pages < maxMessagePages; pages += 1) {
-    const page = await listMessages(target.apiKey, target.inboxId, {
-      ...(after ? { after } : {}),
-      ascending: true,
-      limit: messagePageSize,
-      ...(pageToken ? { pageToken } : {}),
-    });
-    const fetched: FetchedMessage[] = [];
-    try {
-      await fetchNewMessages(ctx, target, page.messages, fetched);
-    } catch (error) {
+    const batch = await target.adapter.provider.listInbound(target.cursor, { isKnown: (id) => isStored(ctx, id) });
+    if (batch.failure !== undefined) {
       // What was fetched before the failure is kept, but the cursor stays where it was, so the failing message
       // and everything after it are tried again on the next poll.
-      if (fetched.length > 0) storeMessages(ctx, target, fetched, null);
-      throw error;
+      if (batch.messages.length > 0) storeMessages(ctx, target, batch.messages, null, null);
+      throw batch.failure;
     }
-    const pageEnd = page.messages.reduce<string | null>((latest, message) => later(latest, message.timestamp), null);
-    const result = storeMessages(ctx, target, fetched, pageEnd);
+    // The cursor moves only after the batch is stored.
+    const result = storeMessages(ctx, target, batch.messages, batch.nextCursor, batch.reset?.note ?? null);
     stored += result.stored;
     target.cursor = result.cursor;
-    if (!page.nextPageToken) break;
-    pageToken = page.nextPageToken;
+    if (!batch.more) break;
   }
   return stored;
 }
 
-// Pages the newest-first feed until it meets an event it has already seen, then returns the new ones oldest first.
-async function collectNewEvents(target: SyncTarget): Promise<{ events: MailEvent[]; newest: string | null }> {
-  const collected: MailEvent[] = [];
-  let newest: string | null = null;
-  let pageToken: string | undefined;
-  for (let pages = 0; pages < maxEventPages; pages += 1) {
-    const page = await listEvents(target.apiKey, target.inboxId, { limit: 100, ...(pageToken ? { pageToken } : {}) });
-    if (pages === 0) newest = page.events[0]?.eventId ?? null;
-    let metSeen = false;
-    for (const event of page.events) {
-      if (event.eventId === target.seenEventId) {
-        metSeen = true;
-        break;
-      }
-      collected.push(event);
-    }
-    if (metSeen || !page.nextPageToken) break;
-    pageToken = page.nextPageToken;
-  }
-  return { events: collected.reverse(), newest };
-}
-
-function handleBounce(tx: Tx, event: MailEvent): boolean {
-  if (!event.messageId) return false;
+function handleBounceEvent(tx: Tx, event: { eventId: string; providerMessageId: string }): boolean {
   const intent = tx.db
     .prepare("SELECT id, person_id, to_email, status FROM send_intent WHERE workspace_id = ? AND provider_message_id = ? AND status IN ('accepted', 'replied')")
-    .get(tx.workspaceId, event.messageId) as { id: string; person_id: string; to_email: string; status: 'accepted' | 'replied' } | undefined;
-  let email: string | null = null;
-  let personId: string | null = null;
+    .get(tx.workspaceId, event.providerMessageId) as { id: string; person_id: string; to_email: string; status: 'accepted' | 'replied' } | undefined;
   if (intent) {
-    transitionIntentIn(tx, intent.id, [intent.status], 'bounced', {}, 'bounced', { eventId: event.eventId });
-    email = intent.to_email;
-    personId = intent.person_id;
-  } else {
-    const message = tx.db
-      .prepare("SELECT person_id, \"to\" AS recipients FROM email_message WHERE workspace_id = ? AND provider_message_id = ? AND direction = 'out'")
-      .get(tx.workspaceId, event.messageId) as { person_id: string | null; recipients: string } | undefined;
-    if (!message) return false;
-    const recipients = JSON.parse(message.recipients) as string[];
-    email = recipients[0] ?? null;
-    personId = message.person_id;
+    applyBounceIn(tx, intent, event.eventId);
+    return true;
   }
+  const message = tx.db
+    .prepare("SELECT person_id, \"to\" AS recipients FROM email_message WHERE workspace_id = ? AND provider_message_id = ? AND direction = 'out'")
+    .get(tx.workspaceId, event.providerMessageId) as { person_id: string | null; recipients: string } | undefined;
+  if (!message) return false;
+  const recipients = JSON.parse(message.recipients) as string[];
+  const email = recipients[0] ?? null;
   if (!email) return false;
   const suppressionId = insertSuppressionIn(tx, { email, reason: 'bounce', source: `bounce|${event.eventId}` });
-  if (suppressionId || intent) {
-    const person = personId
-      ? (tx.db.prepare("SELECT TRIM(first_name || ' ' || last_name) AS name FROM person WHERE id = ?").get(personId) as { name: string } | undefined)
+  if (suppressionId) {
+    const person = message.person_id
+      ? (tx.db.prepare("SELECT TRIM(first_name || ' ' || last_name) AS name FROM person WHERE id = ?").get(message.person_id) as { name: string } | undefined)
       : undefined;
-    createTaskIn(tx, { title: bounceTaskTitle(person?.name ?? email), personId });
+    createTaskIn(tx, { title: bounceTaskTitle(person?.name ?? email), personId: message.person_id });
   }
   return true;
 }
 
 async function pollEvents(ctx: ActionContext, target: SyncTarget): Promise<number> {
-  const { events, newest } = await collectNewEvents(target);
+  const batch = await target.adapter.provider.pollEvents?.(target.seenEventId);
+  if (!batch) return 0;
+  const { bounces, newestEventId } = batch;
   return mutate(ctx, (tx) => {
     let handled = 0;
-    for (const event of events) {
-      // Only a bounced label is evidence of a failed delivery. Opened labels and everything else are ignored.
-      if (event.eventType.toLowerCase() !== 'label.added' || event.label?.toLowerCase() !== 'bounced') continue;
-      if (handleBounce(tx, event)) handled += 1;
+    for (const event of bounces) {
+      if (handleBounceEvent(tx, event)) handled += 1;
     }
-    if (newest) patchSettingsIn(tx, target.inboxId, { seenEventId: newest });
+    if (newestEventId) patchSettingsIn(tx, target, { seenEventId: newestEventId });
     if (handled > 0) tx.emit({ type: 'record_updated', entityType: 'send_intent', entityId: 'mail_sync' });
     return handled;
   });
@@ -435,35 +393,41 @@ async function pollEvents(ctx: ActionContext, target: SyncTarget): Promise<numbe
 
 const running = new Set<string>();
 
-// One poll: new messages after the cursor, then new events. The cursor moves only after a page is stored.
+// One poll of the mail provider in use: new messages after the cursor, then bounce events for providers that have
+// them. The cursor moves only after a page is stored.
 export async function syncMail(ctx: ActionContext): Promise<SyncResult> {
-  const connector = getConnector(ctx.db, ctx.workspaceId, 'agentmail');
-  const secret = ctx.db.prepare("SELECT secret FROM connector WHERE workspace_id = ? AND kind = 'agentmail'").get(ctx.workspaceId) as
-    | { secret: string }
-    | undefined;
   const skipped: SyncResult = { skipped: true, messagesStored: 0, eventsHandled: 0, error: null };
-  if (!connector || !secret || connector.status !== 'connected' || !connector.settings.inboxId || !connector.settings.inboxEmail) return skipped;
+  const connector = getActiveMailConnector(ctx.db, ctx.workspaceId);
+  if (!connector) return skipped;
+  const account = mailAccountOf(connector);
+  if (!account.ready || !account.accountId || !account.address) return skipped;
   if (running.has(ctx.workspaceId)) return skipped;
+  const adapter = createMailAdapter(ctx, account.kind);
+  if (!adapter) return skipped;
   running.add(ctx.workspaceId);
   const target: SyncTarget = {
-    apiKey: secret.secret,
-    inboxId: connector.settings.inboxId,
-    inboxEmail: normalizeEmail(connector.settings.inboxEmail),
-    cursor: connector.settings.lastMessageTimestamp ? notAfter(connector.settings.lastMessageTimestamp, ctx.now()) : null,
-    seenEventId: connector.settings.seenEventId,
+    adapter,
+    kind: account.kind,
+    accountId: account.accountId,
+    address: normalizeEmail(account.address),
+    cursor:
+      connector.kind === 'agentmail'
+        ? connector.settings.lastMessageTimestamp
+        : ((getGmailInternals(ctx.db, ctx.workspaceId)?.settings.historyId as string | null | undefined) ?? null),
+    seenEventId: connector.kind === 'agentmail' ? connector.settings.seenEventId : null,
   };
   try {
     const messagesStored = await pollMessages(ctx, target);
     const eventsHandled = await pollEvents(ctx, target);
     mutate(ctx, (tx) => {
-      patchSettingsIn(tx, target.inboxId, { lastSyncAt: tx.now(), lastSyncError: null });
+      patchSettingsIn(tx, target, { lastSyncAt: tx.now(), lastSyncError: null });
     });
     return { skipped: false, messagesStored, eventsHandled, error: null };
   } catch (error) {
-    if (error instanceof AgentmailError && error.kind === 'unauthorized') markAgentmailError(ctx, target.apiKey);
-    const sentence = errorSentence(error);
+    if (error instanceof MailProviderError && error.kind === 'unauthorized') markMailProviderRejected(ctx, adapter);
+    const sentence = errorSentence(error, adapter);
     mutate(ctx, (tx) => {
-      patchSettingsIn(tx, target.inboxId, { lastSyncError: sentence });
+      patchSettingsIn(tx, target, { lastSyncError: sentence });
     });
     return { skipped: false, messagesStored: 0, eventsHandled: 0, error: sentence };
   } finally {

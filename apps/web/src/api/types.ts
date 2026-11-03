@@ -291,7 +291,23 @@ export interface ApiErrorEnvelope {
 export type ConnectorStatus = 'connected' | 'error' | string;
 
 export type ModelProviderKind = 'anthropic' | 'openai' | 'deepseek' | 'zai' | 'ollama';
-export type ConnectorKind = 'apify' | 'agentmail' | ModelProviderKind;
+export type MailProviderKind = 'agentmail' | 'gmail';
+export type ConnectorKind = 'apify' | MailProviderKind | ModelProviderKind;
+
+// The one mail connector sending and inbound sync use. The server answers null when none is configured.
+export interface MailProviderSelection {
+  kind: MailProviderKind | string;
+  // The sending address, null until the connector has one.
+  address: string | null;
+  // Connected, healthy, and with a sending address. Only a ready provider can send.
+  ready: boolean;
+  lastSyncAt: string | null;
+}
+
+export interface GmailCredentialsInput {
+  clientId: string;
+  clientSecret: string;
+}
 
 // The one provider chat and drafting use. The server answers null when none is configured.
 export interface ModelProviderSelection {
@@ -357,6 +373,13 @@ export interface Connector {
   // AgentMail only: the selected sending inbox from settings.
   inboxId: string | null;
   inboxEmail: string | null;
+  // Gmail only: the OAuth client id (masked or whole, as the server sends it), the signed in account, and the last inbound sync.
+  clientId: string | null;
+  emailAddress: string | null;
+  // Gmail only: when a Google sign in last finished. It changes only on success, so the card can tell a failed
+  // attempt from a finished one.
+  oauthCompletedAt: string | null;
+  lastSyncAt: string | null;
   tokenMasked: string | null;
   updatedAt: string | null;
 }
@@ -603,6 +626,10 @@ export interface SendIntent {
   status: SendIntentStatus | string;
   error: string | null;
   providerMessageId: string | null;
+  // The mail provider that staged the intent. Null when the server does not say.
+  provider: string | null;
+  // The sending address the message was approved to leave from. Null when the server does not say.
+  address: string | null;
   submittedAt: string | null;
   updatedAt: string | null;
 }
@@ -621,6 +648,8 @@ export interface SendReviewMessage {
   subject: string | null;
   body: string | null;
   inboxEmail: string | null;
+  // The provider that will send this message, when the frozen payload names it.
+  provider: string | null;
 }
 
 export interface SendReviewPayload {

@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   useApifyConnector,
   useRemoveApifyConnector,
@@ -11,6 +12,7 @@ import { Icon } from '../components/Icons';
 import { normalizeActorId } from '../lib/imports';
 import { DEFAULT_LEAD_ACTORS } from '../lib/leads';
 import { AgentMailConnectorCard } from './AgentMailConnectorCard';
+import { GmailConnectorCard } from './GmailConnectorCard';
 
 function ApifyRemoveControl() {
   const remove = useRemoveApifyConnector();
@@ -307,6 +309,15 @@ function ApifyCard({ connector }: { connector: Connector | null }) {
 export function ConnectorSettings() {
   const { query, connector } = useApifyConnector();
   const agentmail = query.data?.find((entry) => entry.kind === 'agentmail') ?? null;
+  // Google's callback sends the browser back here, with gmail_error=<code> when sign in did not finish.
+  const [params, setParams] = useSearchParams();
+  const gmailError = params.get('gmail_error');
+  const dismissGmailError = () => {
+    if (!params.has('gmail_error')) return;
+    const next = new URLSearchParams(params);
+    next.delete('gmail_error');
+    setParams(next, { replace: true });
+  };
 
   return (
     <section className="section" aria-labelledby="settings-connectors">
@@ -319,6 +330,7 @@ export function ConnectorSettings() {
         <div className="connector-list">
           <ApifyCard connector={connector} />
           <AgentMailConnectorCard connector={agentmail} />
+          <GmailConnectorCard oauthError={gmailError} onDismissOauthError={dismissGmailError} />
         </div>
       ) : null}
     </section>

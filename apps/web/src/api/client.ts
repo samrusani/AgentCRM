@@ -25,7 +25,10 @@ import type {
   Health,
   LeadCaptureInput,
   LeadCaptureSettings,
+  GmailCredentialsInput,
   MailInbox,
+  MailProviderKind,
+  MailProviderSelection,
   MailReply,
   ModelProviderInput,
   ModelProviderKind,
@@ -319,6 +322,10 @@ function normalizeConnector(raw: unknown): Connector {
     baseUrl: textOrNull(settings.baseUrl ?? record.baseUrl),
     inboxId: textOrNull(settings.inboxId ?? record.inboxId),
     inboxEmail: textOrNull(settings.inboxEmail ?? settings.email ?? record.inboxEmail),
+    clientId: textOrNull(settings.clientId ?? settings.clientIdMasked ?? record.clientId ?? record.clientIdMasked),
+    emailAddress: textOrNull(settings.emailAddress ?? settings.address ?? record.emailAddress),
+    oauthCompletedAt: textOrNull(settings.oauthCompletedAt),
+    lastSyncAt: textOrNull(settings.lastSyncAt ?? record.lastSyncAt),
     tokenMasked: textOrNull(record.tokenMasked ?? settings.tokenMasked),
     updatedAt: textOrNull(record.updatedAt),
   };
@@ -351,6 +358,20 @@ function normalizeModelProvider(data: unknown): ModelProviderSelection | null {
   return { kind, model, status, statusMessage: textOrNull(source.statusMessage), ready };
 }
 
+// Null when no mail connector is in use.
+function normalizeMailProvider(data: unknown): MailProviderSelection | null {
+  const record = objectOrEmpty(data);
+  const kind = textOrNull(record.kind);
+  if (!kind) return null;
+  const address = textOrNull(record.address);
+  return {
+    kind,
+    address,
+    ready: typeof record.ready === 'boolean' ? record.ready : address !== null,
+    lastSyncAt: textOrNull(record.lastSyncAt),
+  };
+}
+
 function normalizeInbox(raw: unknown): MailInbox | null {
   const record = objectOrEmpty(raw);
   const id = textOrNull(record.id ?? record.inboxId);
@@ -379,6 +400,8 @@ function normalizeIntent(raw: unknown): SendIntent {
     status: textOrNull(record.status) ?? 'unknown',
     error: messageFrom(record.error, record.reason, record.statusMessage),
     providerMessageId: textOrNull(record.providerMessageId),
+    provider: textOrNull(record.provider),
+    address: textOrNull(record.address),
     submittedAt: textOrNull(record.submittedAt),
     updatedAt: textOrNull(record.updatedAt),
   };
@@ -846,6 +869,19 @@ export const api = {
     saveAgentMail: async (input: { token?: string; inboxId?: string; inboxEmail?: string }) =>
       normalizeConnector(await request<unknown>('PUT', '/connectors/agentmail', { body: input })),
     removeAgentMail: () => request<unknown>('DELETE', '/connectors/agentmail'),
+    // Saving credentials does no network check. Signing in is a separate step.
+    saveGmail: async (input: GmailCredentialsInput) =>
+      normalizeConnector(await request<unknown>('PUT', '/connectors/gmail', { body: input })),
+    // Returns the Google authorization address. The browser opens it in a new tab.
+    startGmailOAuth: async (): Promise<string> => {
+      const data = objectOrEmpty(await request<unknown>('POST', '/connectors/gmail/oauth/start'));
+      const url = textOrNull(data.url);
+      if (!url || !/^https?:\/\//i.test(url)) {
+        throw new ApiError(500, 'internal', 'The server did not return a Google sign in address. Nothing was opened.');
+      }
+      return url;
+    },
+    removeGmail: () => request<unknown>('DELETE', '/connectors/gmail'),
   },
 
   mail: {
@@ -936,6 +972,12 @@ export const api = {
     };
   },
 
+  mailProvider: {
+    get: async (): Promise<MailProviderSelection | null> =>
+      normalizeMailProvider(await request<unknown>('GET', '/mail-provider')),
+    set: async (kind: MailProviderKind): Promise<MailProviderSelection | null> =>
+      normalizeMailProvider(await request<unknown>('POST', '/mail-provider', { body: { kind } })),
+  },
   modelProvider: {
     get: async (): Promise<ModelProviderSelection | null> =>
       normalizeModelProvider(await request<unknown>('GET', '/model-provider')),

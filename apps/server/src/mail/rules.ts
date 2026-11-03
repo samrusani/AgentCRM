@@ -111,6 +111,10 @@ export const idempotencyWindowMilliseconds = 23 * 60 * 60 * 1000;
 export const duplicateProtectionExpiredSentence =
   "The provider's duplicate protection has expired, so this cannot be retried safely. Check the provider's sent mail.";
 
+// Gmail has no idempotency key, so nothing is ever retried. After the same window the app stops searching.
+export const gmailSearchWindowEndedSentence =
+  "This message was not found in Gmail within a day, so the app stopped checking. Check Gmail's sent mail.";
+
 // An approval older than this is not trusted to start a send.
 export const approvalMaxAgeMilliseconds = 24 * 60 * 60 * 1000;
 export const approvalTooOldSentence = 'Approved more than a day ago. Review and approve again.';
