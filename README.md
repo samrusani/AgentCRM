@@ -20,7 +20,7 @@ Compared with hosted tools such as Attio, Clay, and folk, this project is built 
 Requires Node.js 22 or newer. No Docker, no accounts, no external services.
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/samrusani/AgentCRM.git
 cd AgentCRM
 npm run setup
 npm run seed
