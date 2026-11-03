@@ -13,6 +13,7 @@ import {
   readActiveMailProvider,
 } from '../queries/mailProvider.js';
 import { type ActionContext, mutate, parseInput, type Tx } from './context.js';
+import { stopRulesForProviderIn } from './followupRules.js';
 import { blockWaitingIntentsIn } from './sendIntentState.js';
 
 function writeChoiceIn(tx: Tx, kind: MailProviderKind | null): void {
@@ -83,6 +84,8 @@ export function setMailProvider(ctx: ActionContext, input: unknown): ActiveMailP
     writeChoiceIn(tx, kind);
     const blocked = blockWaitingIntentsIn(tx, { notProvider: kind }, reasonCodes.connectorRemoved);
     if (blocked > 0) tx.audit('mail_provider.intents_blocked', 'workspace', tx.workspaceId, { kind, blocked });
+    // A follow-up rule belongs to the provider that sent its first message. It does not move to another one.
+    stopRulesForProviderIn(tx, { notProvider: kind }, 'connector_changed');
   });
   return getMailProvider(ctx)!;
 }

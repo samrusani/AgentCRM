@@ -2,6 +2,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useStartRun, useToday } from '../api/hooks';
 import { ApprovalCard, useSettledApprovals } from '../components/approvals';
 import { EmptyState, ErrorState, Loading, PageHeader, errorMessage } from '../components/common';
+import { Followups } from '../components/followups';
 import { LiveRun } from '../components/ledger';
 import { Outbox } from '../components/outbox';
 import { StagedBanner, type StagedNotice } from '../components/prepareSend';
@@ -87,6 +88,13 @@ export function Today() {
             Outbox
           </h2>
           <Outbox />
+        </section>
+
+        <section className="section" aria-labelledby="today-followups">
+          <h2 className="section__title" id="today-followups">
+            Follow-ups
+          </h2>
+          <Followups />
         </section>
 
         <section className="section" aria-labelledby="today-replies">

@@ -26,6 +26,7 @@ import { getActiveMailConnector } from '../queries/mailProvider.js';
 import { type ActionContext, mutate, parseInput, type Tx } from './context.js';
 import { type OAuthCallbackQuery, type OAuthOutcome, oauthPendingMaxAgeMilliseconds } from './gmailConnector.js';
 import { activateMailProviderIfUnsetIn, reassignMailProviderAfterRemovalIn } from './mailProvider.js';
+import { stopRulesForProviderIn } from './followupRules.js';
 import { blockWaitingIntentsIn, resumeReconcilesIn, transitionIntentIn } from './sendIntentState.js';
 
 export const microsoftNotSignedInMessage = 'Microsoft is not signed in. Sign in with Microsoft in Settings first.';
@@ -313,6 +314,7 @@ export function disconnectMicrosoftConnector(ctx: ActionContext): void {
     if (!row) throw notFound('Microsoft connector');
     const wasActive = getActiveMailConnector(tx.db, tx.workspaceId)?.kind === 'microsoft';
     const blocked = blockWaitingIntentsIn(tx, { provider: 'microsoft' }, reasonCodes.connectorRemoved);
+    stopRulesForProviderIn(tx, { provider: 'microsoft' }, 'connector_changed');
     const inFlight = tx.db
       .prepare("SELECT id, status FROM send_intent WHERE workspace_id = ? AND provider = 'microsoft' AND status IN ('submitting', 'unknown')")
       .all(tx.workspaceId) as { id: string; status: 'submitting' | 'unknown' }[];

@@ -13,6 +13,7 @@ import { type AgentmailConnector, getConnector, getConnectorSecret } from '../qu
 import { type ActionContext, mutate, parseInput, type Tx } from './context.js';
 import { getActiveMailConnector } from '../queries/mailProvider.js';
 import { activateMailProviderIfUnsetIn, reassignMailProviderAfterRemovalIn } from './mailProvider.js';
+import { stopRulesForProviderIn } from './followupRules.js';
 import { blockWaitingIntentsIn, transitionIntentIn } from './sendIntentState.js';
 
 export const agentmailKeyRejectedMessage = 'AgentMail rejected the saved API key. Enter a new one to reconnect.';
@@ -209,6 +210,7 @@ export function disconnectAgentmailConnector(ctx: ActionContext): void {
     if (!row) throw notFound('AgentMail connector');
     const wasActive = getActiveMailConnector(tx.db, tx.workspaceId)?.kind === 'agentmail';
     const blocked = blockWaitingIntentsIn(tx, { provider: 'agentmail' }, reasonCodes.connectorRemoved);
+    stopRulesForProviderIn(tx, { provider: 'agentmail' }, 'connector_changed');
     const inFlight = tx.db
       .prepare("SELECT id, status FROM send_intent WHERE workspace_id = ? AND provider = 'agentmail' AND status IN ('submitting', 'unknown')")
       .all(tx.workspaceId) as { id: string; status: 'submitting' | 'unknown' }[];

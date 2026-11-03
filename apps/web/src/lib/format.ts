@@ -50,6 +50,17 @@ export function formatDateTime(iso: string | null | undefined): string {
   });
 }
 
+// "Mon 10 Nov": weekday, day, month, in that order whatever the locale, because the follow-up copy reads that way.
+export function formatDueDay(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const time = Date.parse(iso);
+  if (Number.isNaN(time)) return '';
+  const date = new Date(time);
+  const weekday = date.toLocaleDateString('en-US', { weekday: 'short' });
+  const month = date.toLocaleDateString('en-US', { month: 'short' });
+  return `${weekday} ${date.getDate()} ${month}`;
+}
+
 export function formatTime(iso: string | null | undefined): string {
   if (!iso) return '';
   const time = Date.parse(iso);

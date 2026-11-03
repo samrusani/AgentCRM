@@ -54,6 +54,9 @@ export interface SendIntent {
   submittedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  // The follow-up rule that created this message, and its 1 based step, or null for a first message.
+  followupRuleId: string | null;
+  followupStep: number | null;
 }
 
 function text(value: unknown): string | null {
@@ -61,11 +64,13 @@ function text(value: unknown): string | null {
 }
 
 // The approval holds the full messages, each with the address it was approved to leave from.
-function addressFromApproval(payload: unknown, intentId: string): string | null {
+// A follow-up step is not in the approval's message list, so it leaves from the approval's own sending address.
+function addressFromApproval(payload: unknown, intentId: string, isFollowupStep = false): string | null {
   try {
-    const parsed = JSON.parse(String(payload)) as { messages?: { intentId?: unknown; inboxEmail?: unknown }[] };
+    const parsed = JSON.parse(String(payload)) as { inboxEmail?: unknown; messages?: { intentId?: unknown; inboxEmail?: unknown }[] };
     const message = Array.isArray(parsed.messages) ? parsed.messages.find((item) => item?.intentId === intentId) : undefined;
-    return typeof message?.inboxEmail === 'string' && message.inboxEmail !== '' ? message.inboxEmail : null;
+    const address = message?.inboxEmail ?? (isFollowupStep ? parsed.inboxEmail : undefined);
+    return typeof address === 'string' && address !== '' ? address : null;
   } catch {
     return null;
   }
@@ -80,7 +85,7 @@ export function toSendIntent(row: Row): SendIntent {
     draftActivityId: text(row.draft_activity_id),
     provider: (isMailProviderKind(row.provider) ? row.provider : 'agentmail') as MailProviderKind,
     inboxId: String(row.inbox_id),
-    address: addressFromApproval(row.approval_payload, String(row.id)),
+    address: addressFromApproval(row.approval_payload, String(row.id), row.followup_rule_id !== null && row.followup_rule_id !== undefined),
     to: String(row.to_email),
     subject: String(row.subject),
     body: String(row.body),
@@ -92,6 +97,8 @@ export function toSendIntent(row: Row): SendIntent {
     submittedAt: text(row.submitted_at),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
+    followupRuleId: text(row.followup_rule_id),
+    followupStep: row.followup_step === null || row.followup_step === undefined ? null : Number(row.followup_step),
   };
 }
 

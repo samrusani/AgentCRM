@@ -638,7 +638,7 @@ export interface QualificationResult extends QualificationSummary {
   criteria: CriterionResult[];
 }
 
-export type ServerEventName = 'run_updated' | 'approval_updated' | 'record_updated';
+export type ServerEventName = 'run_updated' | 'approval_updated' | 'record_updated' | 'followup_updated';
 
 export interface MailInbox {
   id: string;
@@ -673,6 +673,9 @@ export interface SendIntent {
   address: string | null;
   submittedAt: string | null;
   updatedAt: string | null;
+  // Set on an intent a follow-up rule created: the rule and the 1 based step it sends. Null on first messages.
+  followupRuleId: string | null;
+  followupStep: number | null;
 }
 
 export interface SendExcluded {
@@ -693,15 +696,62 @@ export interface SendReviewMessage {
   provider: string | null;
 }
 
+// One pre-approved follow-up. The same text goes to every recipient, word for word.
+export interface FollowupStep {
+  waitDays: number;
+  body: string;
+}
+
+export interface FollowupPlan {
+  steps: FollowupStep[];
+}
+
 export interface SendReviewPayload {
   messages: SendReviewMessage[];
   excluded: SendExcluded[];
   remainingDailyCap: number | null;
+  // The provider the send goes out through, when the frozen payload names it. Decides the thread wording.
+  mailProvider: string | null;
+  // Present only when a follow-up plan was attached. Older payloads lack it.
+  followups: FollowupPlan | null;
 }
 
 export interface StageSendInput {
   draftActivityIds?: string[];
   runId?: string;
+  followups?: FollowupPlan;
+}
+
+export type FollowupRuleStatus = 'waiting' | 'armed' | 'sending' | 'done' | 'stopped' | 'expired';
+
+export type FollowupStoppedReason =
+  | 'not_sent'
+  | 'replied'
+  | 'suppressed'
+  | 'bounced'
+  | 'connector_changed'
+  | 'stopped_by_user'
+  | 'step_not_sent'
+  // On an expired rule: more than 7 days past a due step, or 90 days past the approval.
+  | 'overdue'
+  | 'ceiling';
+
+export interface FollowupRule {
+  id: string;
+  personId: string | null;
+  personName: string | null;
+  status: FollowupRuleStatus | string;
+  steps: FollowupStep[];
+  // The 1 based number of the follow-up that goes out next.
+  nextStep: number;
+  nextDueAt: string | null;
+  stoppedReason: FollowupStoppedReason | string | null;
+  provider: string | null;
+  anchorIntentId: string | null;
+  anchorSubject: string | null;
+  lastIntentId: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
 }
 
 export interface StageSendResult {

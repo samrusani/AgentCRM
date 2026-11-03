@@ -14,6 +14,9 @@ import {
   approvalMaxAgeMilliseconds,
   approvalTooOldSentence,
   bodyMaxLength,
+  followupStaleSentence,
+  followupStoppedUnknownSentence,
+  followupSubject,
   duplicateProtectionExpiredSentence,
   gmailSearchWindowEndedSentence,
   microsoftCheckWindowEndedSentence,
@@ -32,6 +35,7 @@ import {
 import { generateMessageIdHeader } from '../providers/gmail.js';
 import { type MailIntent, MailProviderError, mailProviderKinds, mailProviderLabels, type MailProviderKind, type SubmitHooks } from '../providers/mailTypes.js';
 import { getActiveMailAccount, getMailAccount } from '../queries/mailProvider.js';
+import { personHasActiveRule } from '../queries/followupRules.js';
 import { getRun } from '../queries/runs.js';
 import {
   countReserved,
@@ -47,6 +51,7 @@ import { requireApproval } from '../queries/runs.js';
 import type { Approval, Row } from '../records.js';
 import { type ActionContext, emitRecord, mutate, parseInput, type Tx } from './context.js';
 import { hashPayload } from './demoResearch.js';
+import { createFollowupRuleIn, followupsInputSchema, readFrozenFollowups } from './followupRules.js';
 import { enqueueJobIn } from './jobs.js';
 import { createMailAdapter, type MailAdapter, markMailProviderRejected } from './mailProviders.js';
 import {
@@ -69,6 +74,7 @@ const prepareSchema = z
   .object({
     draftActivityIds: z.array(z.string().trim().min(1).max(64)).max(200).optional(),
     runId: z.string().trim().min(1).max(64).optional(),
+    followups: followupsInputSchema.optional(),
   })
   .strict();
 
@@ -228,6 +234,11 @@ export function prepareSendIntents(ctx: ActionContext, input: unknown): PrepareR
         exclude(reasonCodes.suppressed);
         continue;
       }
+      // A person whose follow-up rule can still send is not staged again. Stop the rule first.
+      if (personHasActiveRule(tx.db, tx.workspaceId, person.id)) {
+        exclude(reasonCodes.followupArmed);
+        continue;
+      }
       if (candidate.missing || !candidate.activityBody || !candidate.activityId) {
         exclude(candidate.missing ?? 'The saved draft for this person could not be found.');
         continue;
@@ -320,6 +331,7 @@ export function prepareSendIntents(ctx: ActionContext, input: unknown): PrepareR
       messages,
       excluded: excluded.map((item) => ({ personName: item.personName, toEmail: item.toEmail, reason: item.reason })),
       remainingDailyCap,
+      ...(data.followups ? { followups: { steps: data.followups.steps.map((step) => ({ waitDays: step.waitDays, body: step.body })) } } : {}),
     };
     const serialized = JSON.stringify(payload);
 
@@ -434,6 +446,11 @@ interface IntentRow {
   send_attempted_at: string | null;
   // 1 when the Microsoft connector was removed while the outcome was unknown: from then on the draft is only read.
   no_resend: number;
+  // Set on a step that a follow-up rule created.
+  followup_rule_id: string | null;
+  followup_step: number | null;
+  // JSON { threadId, inReplyTo, references } saved when the step was created, or null.
+  followup_reply_to: string | null;
 }
 
 // Both hashes must agree: the approved text and the row's current text. A row edited after review fails this.
@@ -455,6 +472,20 @@ function intentMatchesMessage(row: IntentRow, message: ReviewMessage): boolean {
   return messageHash(approved) === row.payload_hash && messageHash(current) === row.payload_hash;
 }
 
+// The message a person approved for a follow-up step: the first message's recipient, sending address, and provider, the
+// subject derived from the first message's subject, and the step text from the approved plan.
+function frozenStepMessage(tx: Tx, row: IntentRow, payload: unknown): ReviewMessage | undefined {
+  const rule = tx.db.prepare('SELECT intent_id, approval_id FROM followup_rule WHERE id = ? AND workspace_id = ?').get(row.followup_rule_id, tx.workspaceId) as
+    | { intent_id: string; approval_id: string }
+    | undefined;
+  if (!rule || rule.approval_id !== row.approval_id) return undefined;
+  const anchor = readReviewMessages(payload).find((item) => item.intentId === rule.intent_id);
+  const steps = readFrozenFollowups(payload);
+  const step = steps && row.followup_step ? steps[row.followup_step - 1] : undefined;
+  if (!anchor || !step) return undefined;
+  return { ...anchor, intentId: row.id, subject: followupSubject(anchor.subject), body: step.body };
+}
+
 function repliedSince(tx: Tx, row: Pick<IntentRow, 'person_id' | 'to_email'>, since: string): boolean {
   return Boolean(
     tx.db
@@ -470,6 +501,8 @@ export interface ApprovalOutcome {
   queued: number;
   blocked: number;
   skipped: { intentId: string; personName: string; reason: string }[];
+  // People whose first message was queued but who got no follow-up rule, because one person has at most one active rule.
+  followupSkipped: { intentId: string; personId: string; personName: string; reason: 'same_approval' | 'active_rule' }[];
   // True when every message was cancelled, so there was nothing to approve.
   nothingToSend: boolean;
 }
@@ -499,7 +532,7 @@ export function approveSendReview(tx: Tx, approval: Approval): ApprovalOutcome {
     ready.push({ row, message });
   }
 
-  if (ready.length === 0) return { queued: 0, blocked: 0, skipped, nothingToSend: true };
+  if (ready.length === 0) return { queued: 0, blocked: 0, skipped, followupSkipped: [], nothingToSend: true };
 
   const account = getActiveMailAccount(tx.db, tx.workspaceId);
   const stagedFor = ready[0]!.row.provider;
@@ -515,9 +548,13 @@ export function approveSendReview(tx: Tx, approval: Approval): ApprovalOutcome {
     }
   }
 
+  // The plan comes from the approved payload, which the decision already verified. Not from the request that staged it.
+  const followups = readFrozenFollowups(approval.payload);
+  const followupSkipped: ApprovalOutcome['followupSkipped'] = [];
+  const ruledThisApproval = new Set<string>();
   let queued = 0;
   let blocked = 0;
-  for (const { row } of ready) {
+  for (const { row, message } of ready) {
     let reason: string | null = null;
     if (findSuppression(tx.db, tx.workspaceId, row.to_email)) reason = reasonCodes.suppressed;
     else if (repliedSince(tx, row, row.created_at)) reason = reasonCodes.replyReceived;
@@ -527,9 +564,21 @@ export function approveSendReview(tx: Tx, approval: Approval): ApprovalOutcome {
     } else {
       transitionIntentIn(tx, row.id, ['awaiting_approval'], 'queued', {}, 'queue', { approvalId: approval.id });
       queued += 1;
+      if (followups) {
+        // One active rule per person, enforced here where rules are made: only the first queued message of a person in
+        // this approval gets one, and none for a person who already has a rule that can still send.
+        const reason = ruledThisApproval.has(row.person_id) ? 'same_approval' : personHasActiveRule(tx.db, tx.workspaceId, row.person_id) ? 'active_rule' : null;
+        if (reason) {
+          followupSkipped.push({ intentId: row.id, personId: row.person_id, personName: message.personName, reason });
+          tx.audit('followup_rule.skip', 'person', row.person_id, { personName: message.personName, intentId: row.id, approvalId: approval.id, reason });
+        } else {
+          createFollowupRuleIn(tx, { personId: row.person_id, intentId: row.id, approvalId: approval.id, provider: row.provider, steps: followups });
+          ruledThisApproval.add(row.person_id);
+        }
+      }
     }
   }
-  return { queued, blocked, skipped, nothingToSend: false };
+  return { queued, blocked, skipped, followupSkipped, nothingToSend: false };
 }
 
 export function rejectSendReview(tx: Tx, approvalId: string): number {
@@ -630,8 +679,18 @@ export function controlSendIntent(ctx: ActionContext, intentId: string, input: u
 // `resend` guards Microsoft sending its own unsent draft again: it asks everything a first submit asks.
 type RecheckMode = 'submit' | 'resend' | 'retry_send' | 'read_only';
 
+function followupRuleStatus(tx: Tx, ruleId: string): string | null {
+  const rule = tx.db.prepare('SELECT status FROM followup_rule WHERE id = ? AND workspace_id = ?').get(ruleId, tx.workspaceId) as { status: string } | undefined;
+  return rule?.status ?? null;
+}
+
 function recheckIntent(tx: Tx, row: IntentRow, options: { mode: RecheckMode }): string | null {
   if (row.provider_message_id) return 'This message already has a provider message id, so it is not submitted again.';
+  // A step that a follow-up rule created leaves only while that rule is still sending. A stop between the tick and the
+  // submit holds here, whatever the step's own state. Reads that cannot send anything are not held back.
+  if ((options.mode === 'submit' || options.mode === 'resend') && row.followup_rule_id && followupRuleStatus(tx, row.followup_rule_id) !== 'sending') {
+    return reasonCodes.followupStopped;
+  }
   const approval = row.approval_id
     ? (tx.db.prepare('SELECT * FROM approval WHERE id = ? AND workspace_id = ?').get(row.approval_id, tx.workspaceId) as Row | undefined)
     : undefined;
@@ -639,12 +698,17 @@ function recheckIntent(tx: Tx, row: IntentRow, options: { mode: RecheckMode }): 
   // Only a first submit, or a draft sent again, needs a fresh approval. A retry of an unknown send carries the same
   // message and key.
   const startsASend = options.mode === 'submit' || options.mode === 'resend';
-  if (startsASend && approval.decided_at && Date.parse(tx.now()) - Date.parse(String(approval.decided_at)) > approvalMaxAgeMilliseconds) {
-    return approvalTooOldSentence;
+  if (startsASend) {
+    // A step that a follow-up rule created is judged by its own creation time, because its approval may be weeks old.
+    const since = row.followup_rule_id ? row.created_at : approval.decided_at ? String(approval.decided_at) : null;
+    if (since && Date.parse(tx.now()) - Date.parse(since) > approvalMaxAgeMilliseconds) {
+      return row.followup_rule_id ? followupStaleSentence : approvalTooOldSentence;
+    }
   }
   let message: ReviewMessage | undefined;
   try {
-    message = readReviewMessages(JSON.parse(String(approval.payload))).find((item) => item.intentId === row.id);
+    const payload = JSON.parse(String(approval.payload)) as unknown;
+    message = row.followup_rule_id ? frozenStepMessage(tx, row, payload) : readReviewMessages(payload).find((item) => item.intentId === row.id);
   } catch {
     message = undefined;
   }
@@ -679,6 +743,17 @@ interface Claim {
   mayResend?: boolean;
 }
 
+function readReplyTo(value: string | null): MailIntent['replyTo'] {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as { threadId?: unknown; inReplyTo?: unknown; references?: unknown };
+    if (typeof parsed.threadId !== 'string' || typeof parsed.inReplyTo !== 'string' || !Array.isArray(parsed.references)) return null;
+    return { threadId: parsed.threadId, inReplyTo: parsed.inReplyTo, references: parsed.references.filter((item): item is string => typeof item === 'string') };
+  } catch {
+    return null;
+  }
+}
+
 function toMailIntent(row: IntentRow, adapter: MailAdapter): MailIntent {
   return {
     intentId: row.id,
@@ -689,7 +764,7 @@ function toMailIntent(row: IntentRow, adapter: MailAdapter): MailIntent {
     body: row.body,
     messageIdHeader: row.message_id_header,
     providerDraftId: row.provider_draft_id,
-    replyTo: null,
+    replyTo: readReplyTo(row.followup_reply_to),
   };
 }
 
@@ -999,6 +1074,12 @@ async function reconcileIntentOnce(ctx: ActionContext, payload: Record<string, u
     if (!row || row.status !== 'unknown') return null;
     if (duplicateProtectionExpired(row, tx.now())) {
       stopCheckingIn(tx, row, windowEndedSentence(row.provider), checksAreReadOnly(row.provider) ? 'search_window_ended' : 'idempotency_expired');
+      return null;
+    }
+    // A step whose rule has stopped or expired is never sent again, not even by the provider's idempotent retry: the
+    // attempt before the stop may or may not have gone out. Reads that only search for it may still settle the truth.
+    if (!checksAreReadOnly(row.provider) && row.followup_rule_id && followupRuleStatus(tx, row.followup_rule_id) !== 'sending') {
+      stopCheckingIn(tx, row, followupStoppedUnknownSentence, 'followup_stopped');
       return null;
     }
     const reason = recheckIntent(tx, row, { mode: checksAreReadOnly(row.provider) ? 'read_only' : 'retry_send' });

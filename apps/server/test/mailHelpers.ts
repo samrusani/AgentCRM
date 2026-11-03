@@ -108,3 +108,13 @@ export async function connectImap(env: TestEnvironment, input: Record<string, un
   if (result.connector.status !== 'connected') throw new Error(`The stub connect failed: ${result.connector.statusMessage}`);
   return result;
 }
+
+// Records a finished, error free poll on every mail connector, as the sync does. Follow-up steps are created only after
+// such a poll that completed after the step became due, so tests that move the clock call this (or pass `at`).
+export function markMailSynced(env: TestEnvironment, at: string = env.ctx.now()): void {
+  const rows = env.db.prepare("SELECT id, settings FROM connector WHERE kind IN ('agentmail', 'gmail', 'microsoft', 'imap')").all() as { id: string; settings: string }[];
+  for (const row of rows) {
+    const settings = { ...(JSON.parse(row.settings) as Record<string, unknown>), lastSyncAt: at, lastSyncError: null };
+    env.db.prepare('UPDATE connector SET settings = ? WHERE id = ?').run(JSON.stringify(settings), row.id);
+  }
+}

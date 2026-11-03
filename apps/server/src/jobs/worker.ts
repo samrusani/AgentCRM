@@ -25,6 +25,7 @@ import {
   recoverSubmittingIntents,
   rescheduleJob,
   syncMailIfDue,
+  tickFollowupRulesIfDue,
 } from '../actions/index.js';
 import { workerTickMilliseconds } from '../config.js';
 
@@ -202,6 +203,14 @@ export function startWorker(
         .finally(() => {
           mailBusy = false;
         });
+    }
+    // The follow-up lane is plain database work, so it runs inline. It keeps its own pace, which follows the mail poll.
+    if (mail) {
+      try {
+        tickFollowupRulesIfDue({ ...ctx, actor: 'system' }, onError);
+      } catch (error) {
+        onError(error);
+      }
     }
     if (mail && !syncBusy) {
       syncBusy = true;

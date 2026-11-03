@@ -787,6 +787,32 @@ export function useControlSendIntent() {
   });
 }
 
+// Follow-up rules, newest first. Omit status for every rule, pass "active" for waiting, armed, and sending.
+export function useFollowupRules(params: { status?: string; personId?: string | null } = {}, enabled = true) {
+  const connection = useEventConnection();
+  const status = params.status;
+  const personId = params.personId ?? undefined;
+  return useQuery({
+    queryKey: ['followup-rules', status ?? 'all', personId ?? 'any'],
+    queryFn: () => api.followups.list({ status, personId }),
+    enabled,
+    refetchInterval: connection === 'open' ? false : 5000,
+  });
+}
+
+export function useStopFollowupRule() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.followups.stop(id),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['followup-rules'] });
+      void queryClient.invalidateQueries({ queryKey: ['send-intents'] });
+      void queryClient.invalidateQueries({ queryKey: ['mail-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+    },
+  });
+}
+
 export function useSuppressions() {
   return useQuery({ queryKey: ['suppressions'], queryFn: api.mail.suppressions });
 }

@@ -31,6 +31,7 @@ import type {
   ImapPreset,
   ImapSettings,
   MailInbox,
+  FollowupRule,
   MailProviderKind,
   MailProviderSelection,
   MailReply,
@@ -430,6 +431,38 @@ function normalizeIntent(raw: unknown): SendIntent {
     provider: textOrNull(record.provider),
     address: textOrNull(record.address),
     submittedAt: textOrNull(record.submittedAt),
+    updatedAt: textOrNull(record.updatedAt),
+    followupRuleId: textOrNull(record.followupRuleId),
+    followupStep: positiveIntOrNull(record.followupStep),
+  };
+}
+
+function positiveIntOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : null;
+}
+
+function normalizeFollowupRule(raw: unknown): FollowupRule {
+  const record = objectOrEmpty(raw);
+  const steps = toArray<unknown>(record.steps).map((entry) => {
+    const step = objectOrEmpty(entry);
+    return { waitDays: Number(step.waitDays) || 0, body: typeof step.body === 'string' ? step.body : '' };
+  });
+  return {
+    id: textOrNull(record.id) ?? '',
+    personId: textOrNull(record.personId),
+    personName: textOrNull(record.personName),
+    status: textOrNull(record.status) ?? 'waiting',
+    steps,
+    nextStep: positiveIntOrNull(record.nextStep) ?? 1,
+    nextDueAt: textOrNull(record.nextDueAt),
+    stoppedReason: textOrNull(record.stoppedReason),
+    provider: textOrNull(record.provider),
+    anchorIntentId: textOrNull(record.anchorIntentId),
+    anchorSubject: textOrNull(record.anchorSubject),
+    lastIntentId: textOrNull(record.lastIntentId),
+    createdAt: textOrNull(record.createdAt),
     updatedAt: textOrNull(record.updatedAt),
   };
 }
@@ -958,6 +991,18 @@ export const api = {
       request<unknown>('POST', '/suppressions', { body: { email, reason: 'manual' } }),
     liftSuppression: (id: string) => request<unknown>('DELETE', `/suppressions/${encodeURIComponent(id)}`),
     summary: async (): Promise<MailSummary> => normalizeMailSummary(await request<unknown>('GET', '/mail/summary', { preserve: ['counts'] })),
+  },
+
+  followups: {
+    // status is "active" (waiting, armed, sending) or one status. Omitted, every rule comes back, newest first.
+    list: async (params: { status?: string; personId?: string } = {}): Promise<FollowupRule[]> =>
+      asPage<unknown>(
+        await request<unknown>('GET', '/followup-rules', { query: { ...params, limit: 200 } }),
+      ).items.map(normalizeFollowupRule),
+    stop: async (id: string): Promise<FollowupRule> => {
+      const data = objectOrEmpty(await request<unknown>('POST', `/followup-rules/${encodeURIComponent(id)}/stop`));
+      return normalizeFollowupRule(data.rule ?? data);
+    },
   },
 
   apify: {

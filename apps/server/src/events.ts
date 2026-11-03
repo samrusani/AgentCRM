@@ -5,7 +5,8 @@ export type EntityType = 'person' | 'organization' | 'opportunity';
 export type DomainEvent =
   | { type: 'run_updated'; runId: string }
   | { type: 'approval_updated'; approvalId: string; runId: string }
-  | { type: 'record_updated'; entityType: string; entityId: string };
+  | { type: 'record_updated'; entityType: string; entityId: string }
+  | { type: 'followup_updated'; ruleId: string; personId: string };
 
 export class EventBus {
   private readonly emitter = new EventEmitter();

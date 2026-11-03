@@ -129,6 +129,12 @@ export function mailPollMilliseconds(): number {
   return Math.max(minimumMailPollMilliseconds, positiveIntegerFromEnvironment('AGENTCRM_MAIL_POLL_MS', 60_000));
 }
 
+// How often the follow-up lane walks its rules. It follows the mail poll cadence unless AGENTCRM_FOLLOWUP_TICK_MS
+// says otherwise (tests use a small number, and 0 means every worker tick).
+export function followupTickMilliseconds(): number {
+  return positiveIntegerFromEnvironment('AGENTCRM_FOLLOWUP_TICK_MS', mailPollMilliseconds(), true);
+}
+
 export const defaultMailReconcileDelays: readonly number[] = [30_000, 120_000, 600_000];
 
 // Gmail's check is read only and costs nothing to repeat, so it keeps looking for roughly a day before it stops and

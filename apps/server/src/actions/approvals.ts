@@ -120,7 +120,13 @@ export function decideApproval(ctx: ActionContext, approvalId: string, input: un
       run: getRun(tx.db, tx.workspaceId, run.id)!,
       alreadyDecided: false,
       ...(sendReview
-        ? { queued: sendReview.queued, blocked: sendReview.blocked, skipped: sendReview.skipped, nothingToSend: sendReview.nothingToSend }
+        ? {
+            queued: sendReview.queued,
+            blocked: sendReview.blocked,
+            skipped: sendReview.skipped,
+            followupSkipped: sendReview.followupSkipped,
+            nothingToSend: sendReview.nothingToSend,
+          }
         : {}),
     };
   });

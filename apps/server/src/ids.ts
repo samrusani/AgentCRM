@@ -23,7 +23,8 @@ export type IdPrefix =
   | 'mcl'
   | 'msg'
   | 'snd'
-  | 'sup';
+  | 'sup'
+  | 'fur';
 
 export function randomId(prefix: IdPrefix): string {
   return `${prefix}_${randomBytes(6).toString('hex')}`;

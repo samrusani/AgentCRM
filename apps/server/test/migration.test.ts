@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -170,7 +170,7 @@ describe('migration 003', () => {
       expect(batchesBefore).toEqual([...batches].sort((a, b) => a.id.localeCompare(b.id)));
       expect(rowsBefore).toEqual([...rows].sort((a, b) => a.id.localeCompare(b.id)));
 
-      expect(applyMigrations(db)).toEqual(['003_csv_qualify.sql', '004_lookup_indexes.sql', '005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql']);
+      expect(applyMigrations(db)).toEqual(['003_csv_qualify.sql', '004_lookup_indexes.sql', '005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql']);
 
       expect(snapshot(db, 'import_batch')).toEqual(batchesBefore);
       expect(snapshot(db, 'import_row')).toEqual(rowsBefore);
@@ -269,7 +269,7 @@ describe('migration 005', () => {
       insert(db, 'connector', connector);
       expect(() => insert(db, 'connector', { ...connector, id: 'con_x', kind: 'anthropic' })).toThrow(/CHECK/);
 
-      expect(applyMigrations(db)).toEqual(['005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql']);
+      expect(applyMigrations(db)).toEqual(['005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql']);
       expect(snapshot(db, 'connector')).toEqual([connector]);
       expect(db.pragma('foreign_key_check')).toEqual([]);
       expect(tableSql(db, 'connector')).not.toContain('_new');
@@ -349,7 +349,7 @@ describe('migration 007', () => {
       expect(() => insert(db, 'activity', { ...activity, id: 'act_x', kind: 'email_out' })).toThrow(/CHECK/);
       expect(() => insert(db, 'connector', { ...connector, id: 'con_x', kind: 'agentmail' })).toThrow(/CHECK/);
 
-      expect(applyMigrations(db)).toEqual(['007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql']);
+      expect(applyMigrations(db)).toEqual(['007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql']);
       expect(snapshot(db, 'connector')).toEqual([connector]);
       expect(snapshot(db, 'activity')).toEqual([activity]);
       expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -471,7 +471,7 @@ describe('migration 008', () => {
       insert(db, 'send_intent', intent('snd_3a', 'act_3', 'cancelled', '2026-01-03T00:00:00.000Z', { error: 'Outcome unknown. Acknowledged by a person. Whether this email was sent was never confirmed.' }));
       insert(db, 'send_intent', intent('snd_3b', 'act_3', 'cancelled', '2026-01-04T00:00:00.000Z', { error: 'The send was rejected.' }));
 
-      expect(applyMigrations(db)).toEqual(['008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql']);
+      expect(applyMigrations(db)).toEqual(['008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql']);
       expect(db.pragma('foreign_key_check')).toEqual([]);
 
       const statuses = Object.fromEntries((db.prepare('SELECT id, status FROM send_intent').all() as { id: string; status: string }[]).map((row) => [row.id, row.status]));
@@ -549,7 +549,7 @@ describe('migration 009', () => {
       for (const call of calls) insert(db, 'model_call', call);
       expect(() => insert(db, 'connector', { ...connectors[1], id: 'con_x', kind: 'ollama' })).toThrow(/CHECK/);
 
-      expect(applyMigrations(db)).toEqual(['009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql']);
+      expect(applyMigrations(db)).toEqual(['009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql']);
       expect(snapshot(db, 'connector')).toEqual(connectors);
       expect(snapshot(db, 'model_call')).toEqual(calls.map((call) => ({ ...call, provider: 'anthropic' })));
       expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -658,7 +658,7 @@ describe('migration 012', () => {
       ).run();
       const connectorsBefore = db.prepare('SELECT * FROM connector').all();
 
-      expect(applyMigrations(db)).toEqual(['012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql']);
+      expect(applyMigrations(db)).toEqual(['012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql']);
       expect(db.prepare('SELECT * FROM connector').all()).toEqual(connectorsBefore);
       expect(db.prepare('SELECT provider, message_id_header FROM send_intent').get()).toEqual({ provider: 'agentmail', message_id_header: null });
       expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -710,9 +710,9 @@ describe('migration 013', () => {
       const connectorsBefore = db.prepare('SELECT * FROM connector').all();
       const intentBefore = db.prepare('SELECT * FROM send_intent').get() as Record<string, unknown>;
 
-      expect(applyMigrations(db)).toEqual(['013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql']);
+      expect(applyMigrations(db)).toEqual(['013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql']);
       expect(db.prepare('SELECT * FROM connector').all()).toEqual(connectorsBefore);
-      expect(db.prepare('SELECT * FROM send_intent').get()).toEqual({ ...intentBefore, provider_draft_id: null, send_attempted_at: null, no_resend: 0 });
+      expect(db.prepare('SELECT * FROM send_intent').get()).toEqual({ ...intentBefore, provider_draft_id: null, send_attempted_at: null, no_resend: 0, followup_rule_id: null, followup_step: null, followup_reply_to: null });
       expect(db.pragma('foreign_key_check')).toEqual([]);
       expect(db.prepare("SELECT name FROM sqlite_master WHERE name LIKE '%\\_new' ESCAPE '\\'").all()).toEqual([]);
       const indexes = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'send_intent' AND name LIKE 'idx_%' ORDER BY name").all() as { name: string }[]).map((row) => row.name);
@@ -779,13 +779,15 @@ describe('migration 014', () => {
       const intentBefore = db.prepare('SELECT * FROM send_intent').get();
       const indexesBefore = db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%' ORDER BY name").all();
 
-      expect(applyMigrations(db)).toEqual(['014_imap.sql', '015_people_order_index.sql']);
+      expect(applyMigrations(db)).toEqual(['014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql']);
       expect(db.prepare('SELECT * FROM connector').all()).toEqual(connectorsBefore);
-      expect(db.prepare('SELECT * FROM send_intent').get()).toEqual(intentBefore);
-      // 015 adds exactly one index on top of what 014 preserves.
+      // 016 adds three empty follow-up columns to the send intent.
+      expect(db.prepare('SELECT * FROM send_intent').get()).toEqual({ ...(intentBefore as Record<string, unknown>), followup_rule_id: null, followup_step: null, followup_reply_to: null });
+      // 015 and 016 add exactly one index each on top of what 014 preserves.
       const indexesAfter = [
         ...indexesBefore,
         { name: 'idx_person_order_name', sql: 'CREATE INDEX idx_person_order_name ON person (workspace_id, lower(last_name), lower(first_name), id)' },
+        { name: 'idx_followup_rule_status', sql: 'CREATE INDEX idx_followup_rule_status ON followup_rule(workspace_id, status, next_due_at)' },
       ].sort((left, right) => ((left as { name: string }).name < (right as { name: string }).name ? -1 : 1));
       expect(db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%' ORDER BY name").all()).toEqual(indexesAfter);
       expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -808,6 +810,60 @@ describe('migration 014', () => {
           )
           .run(),
       ).toThrow(/UNIQUE/);
+    } finally {
+      db.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('migration 016', () => {
+  it('keeps send intents, adds the follow-up columns and the rule table, and guards the rule status', () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'agentcrm-migration-'));
+    const db = new Database(path.join(directory, 'old.db'));
+    db.pragma('foreign_keys = ON');
+    try {
+      db.exec('CREATE TABLE migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
+      const files = readdirSync(migrationsDirectory).filter((name) => /^\d+_.+\.sql$/.test(name) && name < '016').sort();
+      expect(files.at(-1)).toBe('015_people_order_index.sql');
+      for (const file of files) {
+        db.exec(readFileSync(path.join(migrationsDirectory, file), 'utf8'));
+        db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, ?)').run(file, '2026-01-01T00:00:00.000Z');
+      }
+      db.prepare('INSERT INTO workspace (id, created_at, name, template) VALUES (?, ?, ?, ?)').run('wsp_1', '2026-01-01', 'One', 't');
+      db.prepare("INSERT INTO person (id, created_at, workspace_id, version, first_name, last_name, updated_at) VALUES ('per_1', '2026-01-01', 'wsp_1', 1, 'A', 'B', '2026-01-01')").run();
+      db.prepare("INSERT INTO run (id, created_at, workspace_id, kind, title, status, scope, counts) VALUES ('run_1', '2026-01-01', 'wsp_1', 'send_outreach', 't', 'running', '{}', '{}')").run();
+      db.prepare("INSERT INTO approval (id, created_at, workspace_id, run_id, kind, title, payload, payload_hash, status) VALUES ('apr_1', '2026-01-01', 'wsp_1', 'run_1', 'send_review', 't', '{}', 'h', 'approved')").run();
+      db.prepare(
+        `INSERT INTO send_intent (id, created_at, workspace_id, person_id, inbox_id, to_email, subject, body, payload_hash, status, approval_id, updated_at)
+         VALUES ('snd_1', '2026-01-01', 'wsp_1', 'per_1', 'a@b.invalid', 'x@y.invalid', 's', 'b', 'h', 'accepted', 'apr_1', '2026-01-02')`,
+      ).run();
+      const intentBefore = db.prepare('SELECT * FROM send_intent').get() as Record<string, unknown>;
+
+      expect(applyMigrations(db)).toEqual(['016_followup_rules.sql']);
+      expect(db.prepare('SELECT * FROM send_intent').get()).toEqual({ ...intentBefore, followup_rule_id: null, followup_step: null, followup_reply_to: null });
+      expect(db.pragma('foreign_key_check')).toEqual([]);
+      expect((db.pragma('index_info(idx_followup_rule_status)') as { name: string }[]).map((column) => column.name)).toEqual(['workspace_id', 'status', 'next_due_at']);
+
+      const insertRule = (id: string, status: string, provider = 'gmail') =>
+        db
+          .prepare(
+            `INSERT INTO followup_rule (id, created_at, workspace_id, person_id, intent_id, approval_id, provider, status, steps, updated_at)
+             VALUES (?, '2026-01-02', 'wsp_1', 'per_1', 'snd_1', 'apr_1', ?, ?, '[]', '2026-01-02')`,
+          )
+          .run(id, provider, status);
+      insertRule('fur_1', 'waiting');
+      for (const status of ['armed', 'sending', 'done', 'stopped', 'expired']) insertRule(`fur_${status}`, status);
+      expect(() => insertRule('fur_bad', 'paused')).toThrow(/CHECK/);
+      expect(() => insertRule('fur_bad', 'waiting', 'carrier_pigeon')).toThrow(/CHECK/);
+      expect(db.prepare("SELECT next_step, next_due_at, last_intent_id, stopped_reason FROM followup_rule WHERE id = 'fur_1'").get()).toEqual({
+        next_step: 1,
+        next_due_at: null,
+        last_intent_id: null,
+        stopped_reason: null,
+      });
+      db.prepare("UPDATE send_intent SET followup_rule_id = 'fur_1', followup_step = 1 WHERE id = 'snd_1'").run();
+      expect(() => db.prepare("UPDATE send_intent SET followup_rule_id = 'fur_missing' WHERE id = 'snd_1'").run()).toThrow(/FOREIGN KEY/);
     } finally {
       db.close();
       rmSync(directory, { recursive: true, force: true });

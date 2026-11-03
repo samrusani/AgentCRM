@@ -15,6 +15,7 @@ import {
   EvidenceChips,
 } from '../components/record';
 import { Chip } from '../components/common';
+import { PersonFollowupLine } from '../components/followups';
 import { QualificationSection } from '../components/qualification';
 import { describeDue, formatAgo, humanize, personName } from '../lib/format';
 import { useUI, type SelectedRecord } from '../lib/ui';
@@ -169,6 +170,7 @@ export function PersonSheet({
           </SheetSection>
 
           <SheetSection title="Activity">
+            <PersonFollowupLine personId={id} />
             <NoteForm entityType="person" entityId={id} />
             <Timeline activities={person.activities} prepareSend />
           </SheetSection>

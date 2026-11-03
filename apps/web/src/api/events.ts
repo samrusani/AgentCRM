@@ -45,6 +45,8 @@ const KEYS_BY_EVENT: Record<ServerEventName, string[]> = {
     'qualification',
     ...MAIL_KEYS,
   ],
+  // Rule changes show in the Follow-ups section, the Outbox markers, and a person sheet that shows that person's rule.
+  followup_updated: ['followup-rules', 'person', 'send-intents', 'mail-summary'],
 };
 
 function invalidateFor(queryClient: QueryClient, name: ServerEventName) {

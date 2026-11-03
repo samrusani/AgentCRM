@@ -1,4 +1,5 @@
-import type { SendExcluded, SendReviewMessage, SendReviewPayload } from '../api/types';
+import type { FollowupPlan, FollowupRule, SendExcluded, SendReviewMessage, SendReviewPayload } from '../api/types';
+import { formatDueDay } from './format';
 
 // The app stops at this many accepted sends per inbox per day. The provider has its own limits too.
 export const DAILY_SEND_CAP = 50;
@@ -63,6 +64,8 @@ const REASON_TEXT: Record<string, string> = {
   bounce: 'Mail to this address bounced.',
   bounced: 'Mail to this address bounced.',
   manual: 'This address was suppressed by hand.',
+  followup_armed: 'This person already has active follow-ups. Stop them to stage again.',
+  followup_stopped: 'Follow-ups to this person were stopped after this message was staged.',
 };
 
 // The server sends a stable code or a sentence. Known codes get a sentence, anything else is shown as sent.
@@ -128,7 +131,24 @@ export function parseSendReviewPayload(payload: unknown): SendReviewPayload {
     messages,
     excluded: parseExcluded(source.excluded),
     remainingDailyCap: finiteOrNull(source.remainingDailyCap ?? source.remainingCap ?? source.dailyCapRemaining),
+    mailProvider: topProvider ?? messages.find((message) => message.provider)?.provider ?? null,
+    followups: parseFollowupPlan(source.followups),
   };
+}
+
+// Older payloads have no follow-up plan. A plan with no readable step is treated as absent.
+function parseFollowupPlan(value: unknown): FollowupPlan | null {
+  const source = record(value);
+  const list = Array.isArray(source.steps) ? source.steps : [];
+  const steps = list.map((entry) => {
+    const row = record(entry);
+    const days = Number(row.waitDays ?? row.wait_days);
+    return {
+      waitDays: Number.isFinite(days) ? Math.floor(days) : 0,
+      body: typeof row.body === 'string' ? row.body : '',
+    };
+  });
+  return steps.length > 0 ? { steps } : null;
 }
 
 // Every message must show its recipient, subject, and body in full, or the approval cannot be read in full.
@@ -180,4 +200,70 @@ export function suppressionReasonLabel(reason: string): string {
 
 export function isValidEmailAddress(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+// Follow-ups. Limits mirror the server: one or two steps, 1 to 30 days, 10 to 2000 characters after trimming.
+export const FOLLOWUP_MAX_STEPS = 2;
+export const FOLLOWUP_DEFAULT_WAIT_DAYS = 5;
+export const FOLLOWUP_MIN_WAIT_DAYS = 1;
+export const FOLLOWUP_MAX_WAIT_DAYS = 30;
+export const FOLLOWUP_MIN_BODY = 10;
+export const FOLLOWUP_MAX_BODY = 2000;
+
+export const FOLLOWUP_STOP_SENTENCE =
+  'Follow-ups stop on any reply, bounce, opt out, or suppression, and you can stop them at any time. The same text goes to every recipient.';
+
+export const FOLLOWUP_STOP_CONFIRM = 'Stop follow-ups to this person? Nothing more will be sent.';
+
+export function followupWaitPhrase(waitDays: number): string {
+  return `${waitDays.toLocaleString()} ${waitDays === 1 ? 'day' : 'days'} after the last send, weekends skipped`;
+}
+
+// Gmail and IMAP continue the thread. AgentMail and Microsoft have no reply path, so they send a new "Re:" message.
+export function followupThreadSentence(provider: string | null | undefined): string | null {
+  if (provider === 'gmail' || provider === 'imap') return 'Follow-ups continue the same email thread.';
+  if (provider === 'agentmail' || provider === 'microsoft') {
+    return 'Follow-ups go out as new messages whose subject starts with Re:.';
+  }
+  return null;
+}
+
+export const ACTIVE_FOLLOWUP_STATUSES = ['waiting', 'armed', 'sending'];
+
+export function isFollowupActive(rule: Pick<FollowupRule, 'status'>): boolean {
+  return ACTIVE_FOLLOWUP_STATUSES.includes(rule.status);
+}
+
+// The step that goes out next, as "Follow-up 1 of 2". The step is kept inside the plan's length.
+export function followupProgress(step: number, total: number): string {
+  if (total <= 0) return 'Follow-up';
+  return `Follow-up ${Math.min(Math.max(step, 1), total)} of ${total}`;
+}
+
+// What an active rule is doing, in plain words.
+export function followupStatusLine(rule: FollowupRule): string {
+  if (rule.status === 'waiting') return 'Waiting for the first send';
+  const progress = followupProgress(rule.nextStep, rule.steps.length);
+  if (rule.status === 'sending') return `${progress} is sending`;
+  const day = formatDueDay(rule.nextDueAt);
+  return day ? `${progress} due ${day}` : `${progress}, no due date yet`;
+}
+
+const FOLLOWUP_STOPPED_LABELS: Record<string, string> = {
+  replied: 'Stopped, replied',
+  bounced: 'Stopped, bounced',
+  suppressed: 'Stopped, opted out or suppressed',
+  stopped_by_user: 'Stopped, by you',
+  connector_changed: 'Stopped, connector changed',
+  not_sent: 'Stopped, the first message was not sent',
+  step_not_sent: 'Stopped, a follow-up could not be sent',
+};
+
+// How a finished rule ended, in honest words.
+export function followupOutcomeLabel(rule: FollowupRule): string {
+  if (rule.status === 'done') return 'Done, all sent';
+  if (rule.status === 'expired') {
+    return rule.stoppedReason === 'ceiling' ? 'Expired, approved more than 90 days ago' : 'Expired, the computer was off past the send window';
+  }
+  return (rule.stoppedReason && FOLLOWUP_STOPPED_LABELS[rule.stoppedReason]) || 'Stopped';
 }

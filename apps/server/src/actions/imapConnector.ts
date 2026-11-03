@@ -8,6 +8,7 @@ import { type ImapConnector, getConnector, getImapInternals } from '../queries/c
 import { getActiveMailConnector } from '../queries/mailProvider.js';
 import { type ActionContext, mutate, parseInput, type Tx } from './context.js';
 import { activateMailProviderIfUnsetIn, reassignMailProviderAfterRemovalIn } from './mailProvider.js';
+import { stopRulesForProviderIn } from './followupRules.js';
 import { blockWaitingIntentsIn, resumeReconcilesIn, transitionIntentIn } from './sendIntentState.js';
 
 export const imapPasswordRejectedSentence = 'The mail server no longer accepts the saved app password. Enter it again in Settings.';
@@ -315,6 +316,7 @@ export function disconnectImapConnector(ctx: ActionContext): void {
     if (!row) throw notFound('IMAP connector');
     const wasActive = getActiveMailConnector(tx.db, tx.workspaceId)?.kind === 'imap';
     const blocked = blockWaitingIntentsIn(tx, { provider: 'imap' }, reasonCodes.connectorRemoved);
+    stopRulesForProviderIn(tx, { provider: 'imap' }, 'connector_changed');
     const inFlight = tx.db
       .prepare("SELECT id, status FROM send_intent WHERE workspace_id = ? AND provider = 'imap' AND status IN ('submitting', 'unknown')")
       .all(tx.workspaceId) as { id: string; status: 'submitting' | 'unknown' }[];

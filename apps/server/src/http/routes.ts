@@ -45,6 +45,7 @@ import {
   searchApifyActors,
   setMailProvider,
   setModelProvider,
+  stopFollowupRule,
   startGmailOAuth,
   startMicrosoftOAuth,
   stageCsvImport,
@@ -62,6 +63,7 @@ import { displayDatabasePath } from '../paths.js';
 import { listActivities } from '../queries/activities.js';
 import { providerCatalog } from '../providers/presets.js';
 import { listConnectors } from '../queries/connectors.js';
+import { listFollowupRules } from '../queries/followupRules.js';
 import { getActiveModelConnector } from '../queries/modelProvider.js';
 import { getImportDetail } from '../queries/imports.js';
 import { getOpportunityDetail, listOpportunities } from '../queries/opportunities.js';
@@ -105,6 +107,7 @@ const activitiesQuery = z.object({
   ...pagingQuery,
 });
 const statusQuery = z.object({ status: z.string().optional(), ...pagingQuery });
+const followupRulesQuery = z.object({ status: z.string().optional(), personId: z.string().optional(), ...pagingQuery });
 const searchQuery = z.object({ q: z.string().default('') });
 const messageBody = z
   .object({
@@ -391,6 +394,10 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   app.post('/api/send-intents/:id/control', async (request) =>
     controlSendIntent(context(), idParam(request.params), request.body),
   );
+  app.get('/api/followup-rules', async (request) =>
+    listFollowupRules(db, workspaceId(), parseInput(followupRulesQuery, request.query)),
+  );
+  app.post('/api/followup-rules/:id/stop', async (request) => ({ rule: stopFollowupRule(context(), idParam(request.params)) }));
   app.get('/api/suppressions', async (request) => listSuppressions(db, workspaceId(), parseInput(z.object(pagingQuery), request.query)));
   app.post('/api/suppressions', async (request, reply) => {
     const suppression = addSuppression(context(), request.body);

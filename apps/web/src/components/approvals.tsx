@@ -81,7 +81,9 @@ export function ApprovalCard({
     : drafts
       ? `Save ${draftCountLabel(drafts.count)}`
       : send
-        ? `Send ${messageCountLabel(send.messages.length)}`
+        ? send.followups
+          ? `Send ${messageCountLabel(send.messages.length)} and approve ${send.followups.steps.length} ${send.followups.steps.length === 1 ? 'follow-up' : 'follow-ups'}`
+          : `Send ${messageCountLabel(send.messages.length)}`
         : 'Approve';
 
   const submit = (next: 'approve' | 'reject') => {

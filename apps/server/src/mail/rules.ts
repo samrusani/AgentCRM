@@ -148,4 +148,26 @@ export const reasonCodes = {
   dailyCap: 'daily_cap',
   replyReceived: 'reply_received',
   connectorRemoved: 'connector_removed',
+  followupArmed: 'followup_armed',
+  followupStopped: 'followup_stopped',
 } as const;
+
+// A step intent that a follow-up rule created and that sat queued for a day is not sent. Its own creation time counts,
+// because the approval may be weeks old by then.
+export const followupStaleSentence = 'Created by a follow-up rule more than a day ago.';
+
+// An unknown follow-up step is never submitted again once its rule has stopped or expired, because the attempt before the
+// stop may or may not have gone out. It keeps its unknown task, and only a read only check can settle it.
+export const followupStoppedUnknownSentence =
+  'Follow-ups to this person were stopped after this message was staged, so the app will not try to send it again. It may or may not have been sent. Look in the sent mail of the sending account before sending again.';
+
+export const followupExpiredTaskTitle = (who: string): string =>
+  clip(`Follow-up to ${who} was not sent: the computer was off past the send window`);
+export const followupCeilingTaskTitle = (who: string): string =>
+  clip(`Follow-up to ${who} was not sent: the plan expired 90 days after approval`);
+export const followupStepNotSentTaskTitle = (who: string): string => clip(`Follow-up to ${who} was not sent`);
+
+// Subject of a follow-up: "Re: " plus the first message's subject, unless it already starts with Re: in any case.
+export function followupSubject(anchorSubject: string): string {
+  return /^\s*re:/i.test(anchorSubject) ? anchorSubject : `Re: ${anchorSubject}`;
+}

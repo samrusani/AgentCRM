@@ -12,6 +12,7 @@ export * from './crud.js';
 export { advanceDraftRun, draftJobKind, draftKind } from './draftOutreach.js';
 export { advanceCsvImportRun, csvImportJobKind, csvImportKind, previewCsvFile, stageCsvImport } from './csvImport.js';
 export { advanceDemoRun, demoActor, demoCandidateEmails } from './demoResearch.js';
+export { stopFollowupRule, tickFollowupRules, tickFollowupRulesIfDue } from './followupRules.js';
 export * from './jobs.js';
 export { getModelProvider, setModelProvider } from './modelProvider.js';
 export { getMailProvider, setMailProvider } from './mailProvider.js';

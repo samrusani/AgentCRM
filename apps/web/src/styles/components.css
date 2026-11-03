@@ -1838,27 +1838,37 @@ textarea.input {
   padding: 8px 0;
   border-bottom: 1px solid var(--line);
 }
-.outbox-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+/* The outbox and follow-up rows are flex rows that wrap, not a grid with an auto column. An auto column takes the
+   side's full unwrapped width (provider, address, age, buttons), which left the name and status about one character wide
+   in a narrow pane. Here the main block keeps a floor of 220px and the side drops below it when the pane is too narrow. */
+.outbox-row,
+.followup-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
   gap: 4px 12px;
-  align-items: start;
+  align-items: flex-start;
 }
-.outbox-row__main {
+.outbox-row__main,
+.followup-row__main {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  min-width: 0;
-  overflow-wrap: anywhere;
+  flex: 1 1 220px;
+  min-width: min(220px, 100%);
+  overflow-wrap: break-word;
 }
 .outbox-row__side {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
+  min-width: 0;
+  max-width: 100%;
 }
 .outbox-row__confirm,
 .outbox-row__error {
-  grid-column: 1 / -1;
+  flex: 1 1 100%;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2006,4 +2016,108 @@ fieldset.connector__form {
 fieldset.connector__form > legend {
   padding: 0;
   margin-bottom: 4px;
+}
+
+/* Follow-ups */
+.followup-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.followup-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.followup-row__side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+.followup-confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--danger);
+}
+.followup-history {
+  margin-top: 8px;
+}
+.followup-history > summary {
+  cursor: pointer;
+}
+.followup-history__group {
+  margin-top: 8px;
+}
+.followup-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0 0 8px;
+}
+.followup-marker {
+  font-size: 12px;
+}
+
+/* Follow-ups in prepare to send and in the send review */
+.followup-steps,
+.followup-review__steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.followup-step {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.followup-step__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.followup-step__wait {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.followup-step__count {
+  align-self: flex-end;
+  font-size: 12px;
+}
+.followup-review {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.followup-review__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.followup-review p {
+  margin: 0;
+}
+.followup-review__body {
+  margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

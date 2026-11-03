@@ -1,7 +1,15 @@
 import { Link } from 'react-router-dom';
 import { useMailProvider, useMailProviderNamer, useMailSummary } from '../api/hooks';
-import type { SendExcluded, SendReviewMessage, SendReviewPayload } from '../api/types';
-import { DAILY_SEND_CAP, isMessageComplete, messageCountLabel, reasonSentence } from '../lib/mail';
+import type { FollowupPlan, SendExcluded, SendReviewMessage, SendReviewPayload } from '../api/types';
+import {
+  DAILY_SEND_CAP,
+  FOLLOWUP_STOP_SENTENCE,
+  followupThreadSentence,
+  followupWaitPhrase,
+  isMessageComplete,
+  messageCountLabel,
+  reasonSentence,
+} from '../lib/mail';
 
 export const SEND_REVIEW_FIXED_LINE = 'Approving sends these exact messages. Nothing can be edited after approval.';
 
@@ -62,6 +70,31 @@ function MessageBlock({ message, position, total }: { message: SendReviewMessage
   );
 }
 
+// The pre-approved follow-ups. Every step shows its complete text, never truncated, because approving covers it.
+function FollowupsBlock({ plan, mailProvider }: { plan: FollowupPlan; mailProvider: string | null }) {
+  const thread = followupThreadSentence(mailProvider);
+  return (
+    <section className="followup-review" aria-label="Follow-ups">
+      <h4 className="followup-review__title">
+        Follow-ups <span className="num muted">({plan.steps.length})</span>
+      </h4>
+      <ol className="followup-review__steps">
+        {plan.steps.map((step, index) => (
+          <li key={index} className="followup-step">
+            <p className="send-message__position muted num">
+              Follow-up {index + 1} of {plan.steps.length}
+            </p>
+            <p className="cell-name">{followupWaitPhrase(step.waitDays)}</p>
+            <p className="followup-review__body">{step.body}</p>
+          </li>
+        ))}
+      </ol>
+      {thread ? <p>{thread}</p> : null}
+      <p>{FOLLOWUP_STOP_SENTENCE}</p>
+    </section>
+  );
+}
+
 // The strictest card in the product. Every message is shown in full, never collapsed, because approving sends
 // exactly this text. The caller decides whether the surface may offer the buttons.
 export function SendReviewBody({ review }: { review: SendReviewPayload }) {
@@ -114,6 +147,8 @@ export function SendReviewBody({ review }: { review: SendReviewPayload }) {
           full and cannot be approved. Reject it and prepare the send again.
         </p>
       ) : null}
+
+      {review.followups ? <FollowupsBlock plan={review.followups} mailProvider={review.mailProvider} /> : null}
 
       <p className="send-review__fixed">{SEND_REVIEW_FIXED_LINE}</p>
     </div>

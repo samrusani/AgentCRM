@@ -21,6 +21,7 @@ import { type GmailConnector, getConnector, getGmailInternals, readGmailPending 
 import { getActiveMailConnector } from '../queries/mailProvider.js';
 import { type ActionContext, mutate, parseInput, type Tx } from './context.js';
 import { activateMailProviderIfUnsetIn, reassignMailProviderAfterRemovalIn } from './mailProvider.js';
+import { stopRulesForProviderIn } from './followupRules.js';
 import { blockWaitingIntentsIn, resumeGmailReconcilesIn, transitionIntentIn } from './sendIntentState.js';
 
 export const gmailNotSignedInMessage = 'Gmail is not signed in. Sign in with Google in Settings first.';
@@ -327,6 +328,7 @@ export function disconnectGmailConnector(ctx: ActionContext): void {
     if (!row) throw notFound('Gmail connector');
     const wasActive = getActiveMailConnector(tx.db, tx.workspaceId)?.kind === 'gmail';
     const blocked = blockWaitingIntentsIn(tx, { provider: 'gmail' }, reasonCodes.connectorRemoved);
+    stopRulesForProviderIn(tx, { provider: 'gmail' }, 'connector_changed');
     const inFlight = tx.db
       .prepare("SELECT id, status FROM send_intent WHERE workspace_id = ? AND provider = 'gmail' AND status IN ('submitting', 'unknown')")
       .all(tx.workspaceId) as { id: string; status: 'submitting' | 'unknown' }[];

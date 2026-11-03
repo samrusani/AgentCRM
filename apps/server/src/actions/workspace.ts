@@ -61,6 +61,7 @@ export function resetAllData(db: Db): void {
     'import_row',
     'import_batch',
     'connector',
+    'followup_rule',
     'send_intent',
     'email_message',
     'suppression',
@@ -80,6 +81,9 @@ export function resetAllData(db: Db): void {
     'workspace',
   ];
   db.transaction(() => {
+    // followup_rule.intent_id points at send_intent and send_intent.followup_rule_id points back, so the loop is broken
+    // first: clear the intents' references, then the rules go before the intents.
+    db.prepare('UPDATE send_intent SET followup_rule_id = NULL, followup_step = NULL, followup_reply_to = NULL').run();
     for (const table of tables) db.prepare(`DELETE FROM ${table}`).run();
   }).immediate();
 }

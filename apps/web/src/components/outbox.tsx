@@ -1,20 +1,28 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useControlSendIntent, useMailProvider, useMailProviderNamer, useMailSummary, useSendIntents } from '../api/hooks';
-import type { MailSummary, SendIntent } from '../api/types';
+import {
+  useControlSendIntent,
+  useFollowupRules,
+  useMailProvider,
+  useMailProviderNamer,
+  useMailSummary,
+  useSendIntents,
+} from '../api/hooks';
+import type { FollowupRule, MailSummary, SendIntent } from '../api/types';
 import { formatAgo } from '../lib/format';
 import { recordLink } from '../lib/links';
 import {
   ACKNOWLEDGEABLE_STATUSES,
   CANCELLABLE_STATUSES,
   OUTBOX_GROUPS,
+  followupProgress,
   reasonSentence,
 } from '../lib/mail';
 import { EmptyState, ErrorState, Loading, errorMessage } from './common';
 
 const GROUP_ROWS_SHOWN = 10;
 
-function OutboxRow({ intent }: { intent: SendIntent }) {
+function OutboxRow({ intent, rules }: { intent: SendIntent; rules: FollowupRule[] }) {
   const providerName = useMailProviderNamer();
   const control = useControlSendIntent();
   const [confirming, setConfirming] = useState(false);
@@ -24,6 +32,15 @@ function OutboxRow({ intent }: { intent: SendIntent }) {
   const canAcknowledge = ACKNOWLEDGEABLE_STATUSES.includes(intent.status);
   const showReason = ['blocked', 'failed', 'unknown'].includes(intent.status);
   const when = intent.submittedAt ?? intent.updatedAt;
+  // "Follow-up 1 of 2" when the rule is loaded, else a plain "Follow-up".
+  const rule = intent.followupRuleId ? rules.find((entry) => entry.id === intent.followupRuleId) : undefined;
+  const marker = intent.followupStep
+    ? rule
+      ? followupProgress(intent.followupStep, rule.steps.length)
+      : 'Follow-up'
+    : intent.followupRuleId
+      ? 'Follow-up'
+      : null;
 
   return (
     <li className="outbox-row">
@@ -39,6 +56,7 @@ function OutboxRow({ intent }: { intent: SendIntent }) {
           {intent.personName ? <span className="muted"> {intent.toEmail}</span> : null}
         </span>
         <span className="outbox-row__subject">{intent.subject || 'No subject'}</span>
+        {marker ? <span className="outbox-row__marker muted">{marker}</span> : null}
         {showReason ? (
           <span className="outbox-row__reason muted">
             {intent.error
@@ -107,7 +125,17 @@ function OutboxRow({ intent }: { intent: SendIntent }) {
   );
 }
 
-function OutboxGroup({ label, note, items }: { label: string; note?: string; items: SendIntent[] }) {
+function OutboxGroup({
+  label,
+  note,
+  items,
+  rules,
+}: {
+  label: string;
+  note?: string;
+  items: SendIntent[];
+  rules: FollowupRule[];
+}) {
   const [showAll, setShowAll] = useState(false);
   const shown = showAll ? items : items.slice(0, GROUP_ROWS_SHOWN);
   return (
@@ -118,7 +146,7 @@ function OutboxGroup({ label, note, items }: { label: string; note?: string; ite
       {note ? <p className="muted">{note}</p> : null}
       <ul className="outbox-list">
         {shown.map((intent) => (
-          <OutboxRow key={intent.id} intent={intent} />
+          <OutboxRow key={intent.id} intent={intent} rules={rules} />
         ))}
       </ul>
       {items.length > shown.length ? (
@@ -176,6 +204,7 @@ function CapLine({ summary }: { summary: MailSummary | undefined }) {
 export function Outbox() {
   const intents = useSendIntents();
   const summary = useMailSummary();
+  const rules = useFollowupRules().data ?? [];
 
   if (intents.isPending) return <Loading what="the outbox" />;
   if (intents.isError) {
@@ -198,9 +227,9 @@ export function Outbox() {
       ) : (
         <div className="outbox">
           {groups.map((group) => (
-            <OutboxGroup key={group.key} label={group.label} note={group.note} items={group.items} />
+            <OutboxGroup key={group.key} label={group.label} note={group.note} items={group.items} rules={rules} />
           ))}
-          {other.length > 0 ? <OutboxGroup label="Other states" items={other} /> : null}
+          {other.length > 0 ? <OutboxGroup label="Other states" items={other} rules={rules} /> : null}
         </div>
       )}
       {cancelled > 0 ? (
