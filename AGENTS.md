@@ -21,6 +21,7 @@ Run these from the repository root.
 | --- | --- |
 | `apps/server` | Fastify API, SQLite database, action service, job worker, CLI, MCP server |
 | `apps/web` | React web app built with Vite |
+| `apps/extension` | Chrome extension for one click lead capture from LinkedIn and X profiles |
 | `docs/` | Architecture contract and design system |
 | `data/` | Local database files, never committed |
 

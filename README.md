@@ -52,6 +52,7 @@ Open http://127.0.0.1:5173 in your browser. The API listens on http://127.0.0.1:
 | CLI: doctor, seed, serve, search, runs | Working |
 | Email: AgentMail, Gmail, Microsoft 365, and IMAP/SMTP (iCloud Mail and Fastmail presets) behind one adapter, reviewed sends with per provider duplicate protection, replies, opt outs, bounces, suppressions | Working. AgentMail, Gmail, and Microsoft are verified against stubbed provider APIs; the IMAP/SMTP connector is verified against its transport seam and a local SMTP socket, not live servers. Gmail and Microsoft use an OAuth client or app registration you create (docs/connect-gmail.md, docs/connect-microsoft.md); iCloud and Fastmail use app passwords |
 | Follow-up rules: up to two pre-approved nudges per send, frozen text, server enforced stops on reply, bounce, opt out, and suppression, threading on Gmail and IMAP | Working, verified against the fake IMAP transport; adversarially reviewed |
+| Browser extension: one click capture of the LinkedIn or X profile you are viewing, token guarded, nothing leaves your machine | Working; load unpacked from apps/extension, generate the token in Settings |
 | Model costs: per call usage rows, per run estimates from list prices | Working, always labelled estimates |
 | Performance: measured against the published budgets at 100,000 people and 1,000,000 activities | 9 of 9 budgets pass; see docs/performance.md |
 

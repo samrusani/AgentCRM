@@ -1,0 +1,19 @@
+{
+  "name": "agentcrm-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Chrome extension that adds the LinkedIn or X profile you are viewing to AgentCRM.",
+  "scripts": {
+    "build": "esbuild src/content/linkedin.ts --bundle --format=iife --target=chrome110 --outfile=dist/linkedin.js && esbuild src/content/x.ts --bundle --format=iife --target=chrome110 --outfile=dist/x.js && esbuild src/background.ts --bundle --format=esm --target=chrome110 --outfile=dist/background.js && esbuild src/options.ts --bundle --format=iife --target=chrome110 --outfile=dist/options.js && node scripts/icons.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.7",
+    "esbuild": "^0.28.2",
+    "jsdom": "^30.1.3",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}

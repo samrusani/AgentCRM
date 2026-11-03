@@ -1,8 +1,10 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   abortRemoteRunIfNeeded,
   addSuppression,
+  bearerToken,
+  capturePerson,
   configureAgentmailConnector,
   configureAnthropicConnector,
   completeGmailOAuth,
@@ -30,7 +32,9 @@ import {
   disconnectGmailConnector,
   disconnectMicrosoftConnector,
   disconnectModelConnector,
+  generateCaptureToken,
   getApifyActor,
+  getCaptureSettings,
   getMailProvider,
   getModelProvider,
   liftSuppression,
@@ -40,6 +44,7 @@ import {
   moveOpportunityStage,
   parseInput,
   prepareSendIntents,
+  removeCaptureToken,
   previewCsvFile,
   saveQualificationConfig,
   searchApifyActors,
@@ -55,6 +60,7 @@ import {
   updateOrganization,
   updatePerson,
   updateTask,
+  verifyCaptureToken,
 } from '../actions/index.js';
 import { respondToMessage } from '../agent/message.js';
 import { maxHistoryTurnCharacters, maxHistoryTurns, respondWithModel } from '../agent/modelChat.js';
@@ -156,6 +162,26 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
 
   app.get('/api/templates', async () => ({ items: listTemplates(db, workspaceId()), nextCursor: null }));
   app.post('/api/workspace/template', async (request) => switchTemplate(context(), request.body));
+
+  // The two capture routes are the only ones that need a token. The guard runs before the body is parsed.
+  const captureGuard = async (request: FastifyRequest): Promise<void> => {
+    verifyCaptureToken(db, workspaceId(), bearerToken(request.headers.authorization));
+  };
+  app.get('/api/capture/settings', async () => getCaptureSettings({ db, workspaceId: workspaceId() }));
+  app.post('/api/capture/token', async (_request, reply) => {
+    reply.status(201);
+    return generateCaptureToken(context());
+  });
+  app.delete('/api/capture/token', async (_request, reply) => {
+    removeCaptureToken(context());
+    return reply.status(204).send();
+  });
+  app.post('/api/capture/verify', { onRequest: captureGuard }, async () => ({ ok: true, workspace: requireWorkspace(db).name }));
+  app.post('/api/capture', { onRequest: captureGuard }, async (request, reply) => {
+    const result = capturePerson(context(), request.body);
+    reply.status(result.outcome === 'created' ? 201 : 200);
+    return result;
+  });
 
   app.get('/api/today', async () => getToday(db, workspaceId()));
 

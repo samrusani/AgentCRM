@@ -363,6 +363,26 @@ export function useRemoveApifyConnector() {
   });
 }
 
+export function useCaptureSettings() {
+  return useQuery({ queryKey: ['capture-settings'], queryFn: () => api.capture.settings() });
+}
+
+export function useGenerateCaptureToken() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.capture.generateToken(),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: ['capture-settings'] }),
+  });
+}
+
+export function useRemoveCaptureToken() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.capture.removeToken(),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: ['capture-settings'] }),
+  });
+}
+
 export function useModelConnector(kind: ModelProviderKind) {
   const query = useConnectors();
   const connector = query.data?.find((entry) => entry.kind === kind) ?? null;

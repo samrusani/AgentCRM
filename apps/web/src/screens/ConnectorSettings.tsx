@@ -12,6 +12,7 @@ import { Icon } from '../components/Icons';
 import { normalizeActorId } from '../lib/imports';
 import { DEFAULT_LEAD_ACTORS } from '../lib/leads';
 import { AgentMailConnectorCard } from './AgentMailConnectorCard';
+import { BrowserExtensionCard } from './BrowserExtensionCard';
 import { GmailConnectorCard } from './GmailConnectorCard';
 import { ImapConnectorCard } from './ImapConnectorCard';
 import { MicrosoftConnectorCard } from './MicrosoftConnectorCard';
@@ -343,6 +344,7 @@ export function ConnectorSettings() {
           <GmailConnectorCard oauthError={gmailError} onDismissOauthError={dismissGmailError} />
           <MicrosoftConnectorCard oauthError={microsoftError} onDismissOauthError={dismissMicrosoftError} />
           <ImapConnectorCard />
+          <BrowserExtensionCard />
         </div>
       ) : null}
     </section>

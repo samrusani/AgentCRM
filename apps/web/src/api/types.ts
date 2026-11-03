@@ -34,6 +34,16 @@ export interface Health {
   dbPath: string;
 }
 
+export interface CaptureSettings {
+  configured: boolean;
+  createdAt: string | null;
+}
+
+export interface CaptureToken {
+  token: string;
+  createdAt: string;
+}
+
 export interface Page<T> {
   items: T[];
   nextCursor: string | null;

@@ -21,6 +21,7 @@ export const CONNECTOR_MARKS: Record<string, string> = {
   gmail: 'Gm',
   microsoft: 'Ms',
   imap: 'Im',
+  extension: 'Bx',
 };
 
 // The card header is a disclosure: collapsed it still names the card, a short summary, and its state.

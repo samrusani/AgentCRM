@@ -5,6 +5,14 @@ export * from './gmailConnector.js';
 export * from './microsoftConnector.js';
 export * from './imapConnector.js';
 export * from './approvals.js';
+export {
+  bearerToken,
+  capturePerson,
+  generateCaptureToken,
+  getCaptureSettings,
+  removeCaptureToken,
+  verifyCaptureToken,
+} from './capture.js';
 export * from './changes.js';
 export * from './connectors.js';
 export * from './context.js';

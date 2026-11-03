@@ -11,6 +11,8 @@ import type {
   ApifyConnectorInput,
   ApifyRunInput,
   Approval,
+  CaptureSettings,
+  CaptureToken,
   Claim,
   Connector,
   Criterion,
@@ -1074,6 +1076,12 @@ export const api = {
       normalizeModelProvider(await request<unknown>('GET', '/model-provider')),
     set: async (kind: ModelProviderKind): Promise<ModelProviderSelection | null> =>
       normalizeModelProvider(await request<unknown>('PUT', '/model-provider', { body: { kind } })),
+  },
+  capture: {
+    settings: () => request<CaptureSettings>('GET', '/capture/settings'),
+    // The plaintext token exists only in this response. The server stores a hash.
+    generateToken: () => request<CaptureToken>('POST', '/capture/token'),
+    removeToken: () => request<unknown>('DELETE', '/capture/token'),
   },
   agentMessage: async (input: AgentMessageInput): Promise<AgentReply> => {
     const body: AgentMessageInput = { text: input.text };

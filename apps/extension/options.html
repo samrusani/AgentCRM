@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentCRM capture options</title>
+  <style>
+    :root {
+      --bg: #F6F7F9; --surface: #FFFFFF; --ink: #1A1D23; --ink-muted: #5B6472; --line: #E3E6EB;
+      --accent: #15685B; --on-accent: #FFFFFF; --accent-tint: #E7F2EF; --danger: #B42318;
+      color-scheme: light dark;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #121418; --surface: #191C21; --ink: #E7EAEE; --ink-muted: #959DAB; --line: #262B33;
+        --accent: #43B39C; --on-accent: #15211E; --accent-tint: #1A2B27; --danger: #F0756A;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 40px 16px; background: var(--bg); color: var(--ink);
+      font: 13px/1.45 "Geist Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    main { max-width: 480px; margin: 0 auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 24px; }
+    h1 { margin: 0 0 4px; font-size: 20px; line-height: 1.3; font-weight: 600; }
+    p { margin: 0 0 16px; color: var(--ink-muted); }
+    label { display: block; margin: 16px 0 4px; font-weight: 550; }
+    input {
+      width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px;
+      background: var(--bg); color: var(--ink); font: inherit;
+    }
+    input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .hint { margin: 4px 0 0; font-size: 12px; }
+    .caution { color: var(--ink-muted); }
+    .caution[hidden] { display: none; }
+    .actions { display: flex; gap: 8px; margin-top: 24px; }
+    button { height: 32px; padding: 0 14px; border-radius: 6px; font: inherit; font-weight: 550; cursor: pointer; }
+    .primary { border: 0; background: var(--accent); color: var(--on-accent); }
+    .quiet { border: 1px solid var(--line); background: transparent; color: var(--ink); }
+    button:disabled { opacity: 0.6; cursor: default; }
+    #result { min-height: 20px; margin: 12px 0 0; color: var(--ink); }
+    #result[data-tone="error"] { color: var(--danger); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>AgentCRM capture</h1>
+    <p>Captures the one LinkedIn or X profile you are viewing, when you click. It sends it only to the server below.</p>
+    <label for="baseUrl">Server address</label>
+    <input id="baseUrl" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://localhost:4720" aria-describedby="addressNote">
+    <p id="addressNote" class="hint caution" role="status" aria-live="polite" hidden>This address is not on this computer. The token will be sent there.</p>
+    <label for="token">Capture token</label>
+    <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="cap_">
+    <p class="hint">Generate it in AgentCRM under Settings, Connectors, Browser extension.</p>
+    <div class="actions">
+      <button id="save" class="primary" type="button">Save</button>
+      <button id="test" class="quiet" type="button">Test connection</button>
+    </div>
+    <p id="result" role="status" aria-live="polite"></p>
+  </main>
+  <script src="dist/options.js"></script>
+</body>
+</html>

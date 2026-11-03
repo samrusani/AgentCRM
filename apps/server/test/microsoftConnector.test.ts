@@ -236,9 +236,9 @@ describe('the Microsoft sign in flow', () => {
     const start = await call('POST', '/api/connectors/microsoft/oauth/start', undefined, { origin: 'http://127.0.0.1:5173' });
     const callback = await call('GET', callbackPathFor(ms.approve(start.body.url)));
     expect(callback.location).toBe('http://127.0.0.1:5173/settings/connectors');
+    // A cross site web origin cannot even start a sign in: the app wide origin guard refuses the POST.
     const other = await call('POST', '/api/connectors/microsoft/oauth/start', undefined, { origin: 'https://evil.example.org' });
-    const second = await call('GET', callbackPathFor(ms.approve(other.body.url)));
-    expect(second.location).toBe('/settings/connectors');
+    expect(other.status).toBe(403);
   });
 
   it('refuses a callback whose state does not match, records nothing, and keeps the sign in under way', async () => {

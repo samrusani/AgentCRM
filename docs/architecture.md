@@ -128,6 +128,43 @@ Policy, matching the Apify section: a run started by the user in the UI may use 
 
 The run never promises a spend cap it cannot enforce: `maxItems` caps pay per result actors and the run timeout caps the rest, and the UI repeats the Apify section's sentence about that. Prices shown anywhere are store listing hints dated 2026-11-02, not invoices.
 
+## Browser capture extension
+
+A Chrome extension (`apps/extension`, Manifest V3, plain TypeScript bundled with esbuild and typechecked with tsc, no runtime dependencies) adds one "Add to AgentCRM" button to LinkedIn profile pages and X profile pages. Clicking it reads the profile the user is looking at and sends it to the local server, which creates the person with field claims. Nothing leaves the machine: the extension talks only to the configured base URL (default `http://localhost:4720`) and is loaded unpacked from the repository folder.
+
+The extension captures exactly one profile per click and runs nothing in the background. It reads only what the page already shows the signed in user. That is the whole design: user initiated, one profile at a time, no crawling, no feeds, no automation.
+
+### Capture token
+
+Any web page the user visits can attempt a `fetch` against localhost, so the capture write path is authenticated. The server keeps a SHA-256 hash of one capture token in `workspace.settings.capture` (`{ tokenHash, createdAt }`), never the token itself. `POST /api/capture/token` generates a token (`cap_` plus 43 base64url characters from 32 random bytes), stores its hash, and returns the plaintext once; it is not readable again, and generating again rotates it, invalidating the old one immediately. The Settings card shows it exactly once with a copy control. `POST /api/capture` and `POST /api/capture/verify` require `Authorization: Bearer <token>`; the presented token is hashed and compared with `crypto.timingSafeEqual`. A missing, wrong, or never generated token answers 401 `unauthorized`. These two routes are the only token guarded routes; everything else stays loopback only as before (the loopback Host check applies to these too).
+
+The token management routes take no body, and a cross site page could otherwise hit them with a fire and forget POST that needs no CORS preflight (it could not read the answer, but it could rotate the token out from under the extension). So the server also refuses any state changing request (anything but GET, HEAD, OPTIONS) that carries an `Origin` header naming a non loopback web origin, with 403. Requests without an `Origin` (the CLI, MCP, curl), same machine web origins, and browser extension origins are unaffected. The web app also listens for the `record_updated` frame with entityType `capture_settings`, which the token routes emit, so the Settings card reflects a rotation it did not make.
+
+### Capture endpoint
+
+`POST /api/capture` body (zod, strict): `{ source: 'linkedin' | 'x', url, name, headline?, company?, location?, handle?, bio?, website?, email? }`. `name` is required (the extension always has one: it falls back to the profile id or handle). Limits: url and website 500, name, headline, company, location 200, handle 30, bio 2,000, email 254 and must parse as an email (the extension drops a scraped string that does not look like one before sending).
+
+The server canonicalizes the URL itself and trusts nothing about it from the page:
+
+- `linkedin`: `normalizeProfileUrl` must yield `/in/<id>` (the lead capture rules: linkedin.com or subdomain, id case preserved). Canonical URL `https://www.linkedin.com/in/<id>`. Anything else is 400 with a sentence naming the accepted shape.
+- `x`: host `x.com`, `twitter.com`, `www.` or `mobile.` variants; the first path segment is the handle and must match `^[A-Za-z0-9_]{1,15}$` and not be a reserved path (`home`, `explore`, `notifications`, `messages`, `search`, `settings`, `i`, `compose`, `intent`, `login`, `signup`, `about`, `tos`, `privacy`, `jobs`, `hashtag`, `share`, `download`, `account`, `logout`, `lists`, `bookmarks`, `help`, `verified`, `grok`; the list tracks the site and an unlisted reserved name degrades to a junk capture the user can delete, never an error). Canonical URL `https://x.com/<handle>` with the handle's case kept; the dedupe key lowercases it because handles are case insensitive.
+
+Dedupe, before any write: an existing person whose saved `linkedinUrl` claim normalizes to the same `/in/<id>` (for linkedin), whose saved `xUrl` claim has the same lowercased handle (for x), or whose email equals the captured email (case folded). A hit answers 200 `{ outcome: 'existing', person: { id, name } }` and writes nothing; the honest limit is that capturing someone already in the CRM adds no new fields, the record is edited in the app. Rows staged in pending imports are not checked here; import accept time dedupe already skips a staged row whose email or profile matches a person that exists by then. Identity is the profile, so the same human captured on LinkedIn and then on X becomes two people, merged by hand like any other duplicate; LinkedIn ids that differ only in case also stay distinct, matching lead capture's rule. The canonical LinkedIn URL is built from the raw path segment, percent encoding kept, so it round trips through the same normalization on the next capture.
+
+Captured text is third party content. Control characters, bidirectional override characters, zero width characters, and NUL are stripped from every field (the bio keeps its line breaks), and a name that is empty once invisible characters are gone is rejected, which also keeps the FTS index's no NUL assumption true. The capture note and claims reach the same model facing surfaces as imported claims and CSV fields do, framed there as data, and nothing a model reads from them can send anything without the usual approvals.
+
+A new person answers 201 `{ outcome: 'created', person: { id, name } }`, created in one transaction: `splitName(name)`, title from headline, location, email when free, tags `captured` and the source name. No organization is created; company text becomes a claim only, because a headline fragment is too weak evidence to create or match an organization against. Claims written for name, title, company, location, email, website, and `linkedinUrl` or `xUrl` (the canonical URL): `source_type` `extension`, source URL the canonical profile URL, extraction method `extension:linkedin` or `extension:x`, status `imported`. One activity note records the capture (`Captured from LinkedIn <canonical url>.` plus the bio as a paragraph when present). Audit event `capture.person`, SSE `record_updated`.
+
+`POST /api/capture/verify` (token required, empty body) answers `{ ok: true, workspace }` and is what the extension's options page calls to test the connection.
+
+### The extension
+
+Layout: `manifest.json` and `options.html` at the extension root referencing bundled `dist/` scripts; `npm run build --prefix apps/extension` bundles with esbuild (and generates the toolbar icons deterministically at build time, so no binaries are committed); load unpacked points at `apps/extension`. Permissions: `storage` only. Host permissions: `http://localhost/*` and `http://127.0.0.1/*` (match patterns cannot name ports, so this covers any local port). Content scripts run on `https://www.linkedin.com/*`, `https://x.com/*`, and `https://twitter.com/*` variants at `document_idle`.
+
+The content script decides whether the current URL is a profile page with the same rules the server enforces, renders one floating button in a shadow root (the host pages' CSS never touches it), and re-evaluates on SPA navigation (location polling plus `popstate`, because neither site reloads the page). The capture sends the address bar's origin and path only, never the query or fragment, so tracking parameters neither leak nor overflow the server's URL limit. Because these sites swap pages in place, the document head can briefly describe the previous profile: a head signal that names a different profile than the address bar (JSON-LD url or og:url on LinkedIn, the header handle on X) drops that layer and degrades toward the floor instead of capturing another profile's fields. A capture on an interstitial or error view can still degrade to the profile id as the name; that is visible and correctable, never silent corruption of another record. Extraction is layered and each layer is a pure function over the document, unit tested against fixture HTML: LinkedIn tries JSON-LD `Person`, then the `og:title` meta, then the page heading, with the guaranteed floor of the `/in/` id as the name; X reads the profile header test ids with the floor of the handle from the URL and the name from `document.title`. The brittle selector layer failing degrades the capture, never breaks the button.
+
+The content script never sees the token. It messages the background service worker, which reads `{ baseUrl, token }` from `chrome.storage.local` (local, not synced off the machine) and makes the one fetch. Button states: idle, sending, `Added`, `Already in CRM`, and an error state whose message names the fix (open the options page when unconfigured or 401). The options page holds base URL and token fields, a save, and a test connection control backed by `/api/capture/verify`.
+
 ## CSV import
 
 CSV import reuses the staging, dedupe, review, and accept machinery that Apify uses, so a spreadsheet and a scrape get identical honesty guarantees.
@@ -291,7 +328,7 @@ Email endpoints:
 
 ## API contract
 
-Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expectedVersion`); database columns stay snake_case. List endpoints accept `limit` (default 50, max 200) and an opaque `cursor` (base64url of the last row id, keyset ordered), and return `{ items, nextCursor }` where `nextCursor` is null on the last page. Successful creates return 201. Errors use HTTP status plus `{ "error": { "code", "message" } }`. Codes: `validation`, `not_found`, `version_conflict` (409, with the current record at `error.current`), `conflict`, `internal`. Duplicate person emails and organization domains return 409 `conflict`.
+Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expectedVersion`); database columns stay snake_case. List endpoints accept `limit` (default 50, max 200) and an opaque `cursor` (base64url of the last row id, keyset ordered), and return `{ items, nextCursor }` where `nextCursor` is null on the last page. Successful creates return 201. Errors use HTTP status plus `{ "error": { "code", "message" } }`. Codes: `validation`, `not_found`, `version_conflict` (409, with the current record at `error.current`), `conflict`, `unauthorized` (401, only on the token guarded capture routes), `internal`. Duplicate person emails and organization domains return 409 `conflict`.
 
 | Method and path | Purpose |
 | --- | --- |
@@ -343,6 +380,11 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 | GET `/api/qualification` | The workspace's qualification config |
 | PUT `/api/qualification` | Replace the qualification config after validation |
 | POST `/api/agent/message` | `{ text, history?, context? }` returns `{ reply, actions, modelConnected, usage?, provider?, model? }`. Model backed with a bounded read only tool loop when the active model provider is ready; deterministic and rule based otherwise. Actions are `{ id, label, kind, entityType?, entityId? }` with kinds `start_demo_run`, `open_record`, and `start_apify_import` (the UI opens the import setup; the server never starts the scrape itself) |
+| GET `/api/capture/settings` | `{ configured, createdAt }`: whether a capture token exists, never the token |
+| POST `/api/capture/token` | Generate or rotate the capture token; returns `{ token, createdAt }` with the plaintext shown this once (only its hash is stored) |
+| DELETE `/api/capture/token` | Remove the capture token, disabling capture |
+| POST `/api/capture/verify` | Bearer token required; `{ ok: true, workspace }`. The extension's test connection |
+| POST `/api/capture` | Bearer token required; one profile from the browser extension (see Browser capture extension). 201 `{ outcome: 'created', person }` or 200 `{ outcome: 'existing', person }` |
 | GET `/api/events` | Server sent events. Frames: `run_updated` `{type,runId}`, `approval_updated` `{type,approvalId,runId}`, `record_updated` `{type,entityType,entityId}`, `followup_updated` `{type,ruleId,personId}`, plus an initial `ready` event and a 15 second keep alive comment. The web app refetches on these signals |
 
 ## MCP server
