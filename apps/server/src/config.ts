@@ -111,6 +111,17 @@ export function graphRequestTimeoutMilliseconds(): number {
   return positiveIntegerFromEnvironment('AGENTCRM_MS_TIMEOUT_MS', 15_000);
 }
 
+// IMAP and SMTP connector. One step (connecting, logging in, one command) gives up after this long. A whole send is
+// allowed five steps, and a whole IMAP operation five (connect two, the work two, logout one). Tests shorten it to exercise the unknown outcome path.
+export function imapStepTimeoutMilliseconds(): number {
+  return positiveIntegerFromEnvironment('AGENTCRM_IMAP_TIMEOUT_MS', 8_000);
+}
+
+// AGENTCRM_IMAP_FAKE=1 swaps the real mail servers for an in process fake, for a manual check in the browser.
+export function imapFakeEnabled(): boolean {
+  return process.env.AGENTCRM_IMAP_FAKE === '1';
+}
+
 export const minimumMailPollMilliseconds = 5000;
 
 // How often the inbox is polled. Default 60 seconds, never faster than every 5 seconds.
@@ -122,13 +133,14 @@ export const defaultMailReconcileDelays: readonly number[] = [30_000, 120_000, 6
 
 // Gmail's check is read only and costs nothing to repeat, so it keeps looking for roughly a day before it stops and
 // asks a person to check the sent mail: 30 seconds, 2 minutes, 10 minutes, 1 hour, 6 hours, 22 hours. Microsoft uses
-// the same schedule, because its check reads one draft and can only send that same draft again.
+// the same schedule, because its check reads one draft and can only send that same draft again. IMAP uses it too: its
+// check is a read only search of the Sent mailbox, and nothing is ever sent again.
 export const defaultGmailReconcileDelays: readonly number[] = [30_000, 120_000, 600_000, 3_600_000, 21_600_000, 79_200_000];
 
 // Waits before each reconciliation attempt for a send whose outcome is unknown. AgentMail: 30 seconds, 2 minutes,
 // 10 minutes. Gmail has the longer schedule above.
 // AGENTCRM_MAIL_RECONCILE_MS replaces them with one number (used for every attempt) or a comma list.
-export function mailReconcileDelays(provider: 'agentmail' | 'gmail' | 'microsoft' = 'agentmail'): readonly number[] {
+export function mailReconcileDelays(provider: 'agentmail' | 'gmail' | 'microsoft' | 'imap' = 'agentmail'): readonly number[] {
   const defaults = provider === 'agentmail' ? defaultMailReconcileDelays : defaultGmailReconcileDelays;
   const raw = process.env.AGENTCRM_MAIL_RECONCILE_MS;
   if (raw === undefined || raw.trim() === '') return defaults;

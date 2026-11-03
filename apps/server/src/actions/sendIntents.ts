@@ -4,6 +4,7 @@ import {
   dailySendCap,
   gmailRequestTimeoutMilliseconds,
   graphRequestTimeoutMilliseconds,
+  imapStepTimeoutMilliseconds,
   mailReconcileDelays,
   maxIntentsPerApproval,
 } from '../config.js';
@@ -17,6 +18,7 @@ import {
   gmailSearchWindowEndedSentence,
   microsoftCheckWindowEndedSentence,
   idempotencyWindowMilliseconds,
+  imapCheckWindowEndedSentence,
   isDemoAddress,
   isValidEmail,
   microsoftNoResendSentence,
@@ -742,7 +744,7 @@ function recordAccepted(
   ctx: ActionContext,
   intentId: string,
   from: ('submitting' | 'unknown' | 'cancelled')[],
-  result: { messageId: string; threadId: string | null },
+  result: { messageId: string; threadId: string | null; notes?: string[] },
   via: string,
 ): void {
   mutate(ctx, (tx) => {
@@ -755,13 +757,14 @@ function recordAccepted(
       'accepted',
       { error: null, providerMessageId: result.messageId, providerThreadId: result.threadId },
       'accepted',
-      { via },
+      { via, ...(result.notes && result.notes.length > 0 ? { notes: result.notes } : {}) },
     );
     if (!moved) return;
+    const notes = result.notes && result.notes.length > 0 ? `\n\n${result.notes.join('\n')}` : '';
     createEmailActivityIn(tx, {
       personId: row.person_id,
       kind: 'email_out',
-      body: `Sent (provider accepted). Delivery is not confirmed.\n\nTo: ${row.to_email}\nSubject: ${row.subject}`,
+      body: `Sent (provider accepted). Delivery is not confirmed.\n\nTo: ${row.to_email}\nSubject: ${row.subject}${notes}`,
     });
   });
 }
@@ -833,7 +836,7 @@ function beforeSendFor(ctx: ActionContext, intentId: string): NonNullable<Submit
           reason,
           stage: 'before_send',
           strayDraftId: row.provider_draft_id,
-          note: 'The draft stays in Outlook drafts and was not sent.',
+          note: row.provider === 'microsoft' ? 'The draft stays in Outlook drafts and was not sent.' : 'The message was not sent.',
         });
         return reason;
       }
@@ -886,17 +889,19 @@ function duplicateProtectionExpired(row: { submitted_at: string | null; created_
 
 function windowEndedSentence(provider: MailProviderKind): string {
   if (provider === 'microsoft') return microsoftCheckWindowEndedSentence;
+  if (provider === 'imap') return imapCheckWindowEndedSentence;
   return provider === 'gmail' ? gmailSearchWindowEndedSentence : duplicateProtectionExpiredSentence;
 }
 
 function stillUnknownSentence(provider: MailProviderKind, checks: number): string {
   if (provider === 'microsoft') return `Still unknown after ${checks} checks. Look in Sent Items and Drafts of the Microsoft account before sending again.`;
+  if (provider === 'imap') return `Still unknown after ${checks} checks. Look in the Sent folder of the mailbox in the provider's webmail before sending again.`;
   return provider === 'gmail'
     ? `Still unknown after ${checks} checks. Look in the sent mail of the Gmail account before sending again.`
     : `Still unknown after ${checks} checks. Look in the sent folder of the AgentMail inbox before sending again.`;
 }
 
-// Gmail and Microsoft checks read the provider instead of repeating the request, so they need only a working account.
+// Gmail, Microsoft, and IMAP checks read the provider instead of repeating the request, so they need only a working account.
 function checksAreReadOnly(provider: MailProviderKind): boolean {
   return provider !== 'agentmail';
 }
@@ -1000,7 +1005,7 @@ async function reconcileIntentOnce(ctx: ActionContext, payload: Record<string, u
     if (reason && checksAreReadOnly(row.provider)) {
       // The read only search cannot run (the sign in failed, was removed, or is for a different account). Say so now,
       // once, with a task for a person, instead of waiting quietly. The search resumes when the same account is ready.
-      stopCheckingIn(tx, row, `Checking again stopped: ${endSentence(reason === reasonCodes.connectorRemoved ? `The ${mailProviderLabels[row.provider]} connector was removed` : reason)} It stays unknown until the same ${mailProviderLabels[row.provider]} account is signed in again or a person acknowledges it.`, 'cannot_check');
+      stopCheckingIn(tx, row, `Checking again stopped: ${endSentence(reason === reasonCodes.connectorRemoved ? `The ${mailProviderLabels[row.provider]} connector was removed` : reason)} It stays unknown until the same ${mailProviderLabels[row.provider]} account is ${row.provider === 'imap' ? 'connected' : 'signed in'} again or a person acknowledges it.`, 'cannot_check');
       return null;
     }
     if (reason) {
@@ -1166,12 +1171,17 @@ const worstCaseMicrosoftGraphCalls = 5;
 const worstCaseMicrosoftRequestsPerCall = 2 + 2 * 2;
 const worstCaseMicrosoftSubmitRequests = worstCaseMicrosoftGraphCalls * worstCaseMicrosoftRequestsPerCall;
 const staleSubmitMarginMilliseconds = 30_000;
+// IMAP: the transport gives one whole send five steps of the step timeout, and one whole IMAP operation (the Sent copy)
+// five more: two to connect, two for the work, one to log out. These are hard deadlines, enforced by the transport.
+const imapSendSteps = 5;
+const imapAppendSteps = 5;
 
 export function staleSubmittingMilliseconds(): number {
   return (
     Math.max(
       Math.max(agentmailRequestTimeoutMilliseconds(), gmailRequestTimeoutMilliseconds()) * worstCaseSubmitRequests,
       graphRequestTimeoutMilliseconds() * worstCaseMicrosoftSubmitRequests,
+      imapStepTimeoutMilliseconds() * (imapSendSteps + imapAppendSteps),
     ) + staleSubmitMarginMilliseconds
   );
 }

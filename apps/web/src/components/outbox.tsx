@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useControlSendIntent, useMailProvider, useMailSummary, useSendIntents } from '../api/hooks';
+import { useControlSendIntent, useMailProvider, useMailProviderNamer, useMailSummary, useSendIntents } from '../api/hooks';
 import type { MailSummary, SendIntent } from '../api/types';
 import { formatAgo } from '../lib/format';
 import { recordLink } from '../lib/links';
@@ -8,7 +8,6 @@ import {
   ACKNOWLEDGEABLE_STATUSES,
   CANCELLABLE_STATUSES,
   OUTBOX_GROUPS,
-  mailProviderName,
   reasonSentence,
 } from '../lib/mail';
 import { EmptyState, ErrorState, Loading, errorMessage } from './common';
@@ -16,6 +15,7 @@ import { EmptyState, ErrorState, Loading, errorMessage } from './common';
 const GROUP_ROWS_SHOWN = 10;
 
 function OutboxRow({ intent }: { intent: SendIntent }) {
+  const providerName = useMailProviderNamer();
   const control = useControlSendIntent();
   const [confirming, setConfirming] = useState(false);
   const link = recordLink('person', intent.personId);
@@ -52,7 +52,7 @@ function OutboxRow({ intent }: { intent: SendIntent }) {
       <div className="outbox-row__side">
         {intent.provider || intent.address ? (
           <span className="muted">
-            via {intent.provider ? mailProviderName(intent.provider) : null}
+            via {intent.provider ? providerName(intent.provider) : null}
             {intent.provider && intent.address ? ', ' : null}
             {intent.address}
           </span>
@@ -133,13 +133,14 @@ function OutboxGroup({ label, note, items }: { label: string; note?: string; ite
 // Names the provider and address new sends go out through. Open intents name the provider that staged them.
 function SendingLine() {
   const provider = useMailProvider();
+  const providerName = useMailProviderNamer();
   if (!provider.isSuccess) return null;
   const active = provider.data;
   return (
     <p className="muted">
       {active ? (
         <>
-          Sending with {mailProviderName(active.kind)}
+          Sending with {providerName(active.kind)}
           {active.address ? (
             <>
               {' '}

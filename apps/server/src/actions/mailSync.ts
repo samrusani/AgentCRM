@@ -15,6 +15,7 @@ import { messageIdTokens } from '../providers/gmail.js';
 import { MailProviderError, type MailProviderKind, type NormalizedInbound } from '../providers/mailTypes.js';
 import { getActiveMailConnector, mailAccountOf } from '../queries/mailProvider.js';
 import { type ActionContext, mutate, type Tx } from './context.js';
+import { imapPasswordRejectedSentence } from './imapConnector.js';
 import { createMailAdapter, type MailAdapter, markMailProviderRejected } from './mailProviders.js';
 import {
   blockWaitingIntentsIn,
@@ -49,7 +50,7 @@ interface SyncTarget {
 type SettingsPatch = Record<string, string | null>;
 
 function cursorKeyOf(kind: MailProviderKind): string {
-  return kind === 'agentmail' ? 'lastMessageTimestamp' : kind === 'microsoft' ? 'deltaLink' : 'historyId';
+  return kind === 'agentmail' ? 'lastMessageTimestamp' : kind === 'microsoft' ? 'deltaLink' : kind === 'imap' ? 'inboxCursor' : 'historyId';
 }
 
 // The saved position of the mail provider in use, read from the connector settings.
@@ -73,7 +74,8 @@ function patchSettingsIn(tx: Tx, target: Pick<SyncTarget, 'kind' | 'accountId'>,
     | undefined;
   if (!row) return false;
   const settings = JSON.parse(row.settings) as Record<string, unknown>;
-  const current = target.kind === 'agentmail' ? settings.inboxId : typeof settings.emailAddress === 'string' ? settings.emailAddress.toLowerCase() : null;
+  const accountField = target.kind === 'imap' ? settings.address : settings.emailAddress;
+  const current = target.kind === 'agentmail' ? settings.inboxId : typeof accountField === 'string' ? accountField.toLowerCase() : null;
   if (current !== target.accountId) return false;
   tx.db.prepare('UPDATE connector SET settings = ? WHERE id = ?').run(JSON.stringify({ ...settings, ...patch }), row.id);
   return true;
@@ -82,9 +84,16 @@ function patchSettingsIn(tx: Tx, target: Pick<SyncTarget, 'kind' | 'accountId'>,
 function errorSentence(error: unknown, adapter: MailAdapter): string {
   const label = adapter.provider.label;
   if (error instanceof MailProviderError) {
-    if (error.kind === 'unauthorized') return adapter.account.kind === 'agentmail' ? 'AgentMail rejected the saved API key.' : `${label} no longer accepts the saved sign in.`;
+    if (error.kind === 'unauthorized') {
+      if (adapter.account.kind === 'imap') return imapPasswordRejectedSentence;
+      return adapter.account.kind === 'agentmail' ? 'AgentMail rejected the saved API key.' : `${label} no longer accepts the saved sign in.`;
+    }
     if (error.kind === 'rate_limited') return `${label} is rate limiting requests. The next poll will try again.`;
-    if (error.kind === 'timeout') return `${label} did not answer in time. The next poll will try again.`;
+    if (error.kind === 'timeout') return `${adapter.account.kind === 'imap' ? 'The mail server' : label} did not answer in time. The next poll will try again.`;
+  }
+  if (adapter.account.kind === 'imap') {
+    const detail = error instanceof MailProviderError ? ` (${error.message.replace(/[.!?]+$/, '')})` : '';
+    return `The last poll could not read the Inbox from the mail server${detail}. The next poll will try again.`;
   }
   return `The last poll could not read from ${label}. The next poll will try again.`;
 }

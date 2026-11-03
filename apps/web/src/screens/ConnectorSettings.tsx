@@ -13,6 +13,7 @@ import { normalizeActorId } from '../lib/imports';
 import { DEFAULT_LEAD_ACTORS } from '../lib/leads';
 import { AgentMailConnectorCard } from './AgentMailConnectorCard';
 import { GmailConnectorCard } from './GmailConnectorCard';
+import { ImapConnectorCard } from './ImapConnectorCard';
 import { MicrosoftConnectorCard } from './MicrosoftConnectorCard';
 
 function ApifyRemoveControl() {
@@ -341,6 +342,7 @@ export function ConnectorSettings() {
           <AgentMailConnectorCard connector={agentmail} />
           <GmailConnectorCard oauthError={gmailError} onDismissOauthError={dismissGmailError} />
           <MicrosoftConnectorCard oauthError={microsoftError} onDismissOauthError={dismissMicrosoftError} />
+          <ImapConnectorCard />
         </div>
       ) : null}
     </section>

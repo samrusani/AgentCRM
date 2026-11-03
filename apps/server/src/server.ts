@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { createContext, ensureWorkspace } from './actions/index.js';
-import { apiHost, apiPort } from './config.js';
+import { apiHost, apiPort, imapFakeEnabled } from './config.js';
 import { type Db, openDatabase } from './db.js';
 import { EventBus } from './events.js';
 import { buildApp } from './http/app.js';
@@ -46,6 +46,7 @@ export async function startServer(options: { port?: number; databasePath?: strin
   }
   const people = Number((db.prepare('SELECT COUNT(*) AS n FROM person').get() as { n: number }).n);
   console.log(`AgentCRM API listening on http://${apiHost}:${port} (database ${displayDatabasePath(databasePath)})`);
+  if (imapFakeEnabled()) console.log('AGENTCRM_IMAP_FAKE=1: IMAP and SMTP use an in process fake mail server. No real mail is sent or read. Debug routes are under /api/debug/imap-fake.');
   if (people === 0) console.log('The database has no records yet. Run "npm run seed" to add synthetic demo data.');
   return { app, db, port, close };
 }

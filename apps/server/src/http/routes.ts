@@ -7,6 +7,8 @@ import {
   configureAnthropicConnector,
   completeGmailOAuth,
   completeMicrosoftOAuth,
+  configureImapConnector,
+  disconnectImapConnector,
   configureApifyConnector,
   configureGmailConnector,
   configureMicrosoftConnector,
@@ -75,6 +77,8 @@ import { getToday } from '../queries/today.js';
 import { requireWorkspace } from '../queries/workspace.js';
 import type { AppOptions } from './app.js';
 import { openEventStream } from './events.js';
+import { registerImapFakeRoutes } from './imapFakeRoutes.js';
+import { getFakeMailTransport } from '../providers/mailTransportFactory.js';
 
 const pagingQuery = {
   cursor: z.string().min(1).optional(),
@@ -358,6 +362,20 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
     });
     return reply.redirect(outcome.redirect, 303);
   });
+  // The IMAP and SMTP connector. A failed check is not an HTTP error: the connector comes back with status "error" and the
+  // sentence for the failing step. Only invalid input is refused.
+  app.put('/api/connectors/imap', async (request, reply) => {
+    const { connector, created } = await configureImapConnector(context(), request.body);
+    reply.status(created ? 201 : 200);
+    return connector;
+  });
+  app.delete('/api/connectors/imap', async (_request, reply) => {
+    disconnectImapConnector(context());
+    return reply.status(204).send();
+  });
+  // Only with AGENTCRM_IMAP_FAKE=1: routes to drive the in process fake mail server.
+  const fakeMail = getFakeMailTransport();
+  if (fakeMail) registerImapFakeRoutes(app, fakeMail);
   app.get('/api/mail-provider', async (_request, reply) => reply.send(getMailProvider(context()) ?? null));
   app.post('/api/mail-provider', async (request) => setMailProvider(context(), request.body));
   app.put('/api/mail-provider', async (request) => setMailProvider(context(), request.body));

@@ -3,6 +3,7 @@ export { advanceLeadCaptureRun, leadCaptureJobKind, leadCaptureKind } from './le
 export * from './agentmailConnector.js';
 export * from './gmailConnector.js';
 export * from './microsoftConnector.js';
+export * from './imapConnector.js';
 export * from './approvals.js';
 export * from './changes.js';
 export * from './connectors.js';

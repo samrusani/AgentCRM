@@ -1,15 +1,15 @@
 import type { Db } from '../db.js';
 import { isMailProviderKind, type MailProviderKind } from '../providers/mailTypes.js';
 import { readSettings } from '../qualification/config.js';
-import { type AgentmailConnector, type GmailConnector, listConnectors, type MicrosoftConnector } from './connectors.js';
+import { type AgentmailConnector, type GmailConnector, type ImapConnector, listConnectors, type MicrosoftConnector } from './connectors.js';
 
-export type MailConnector = AgentmailConnector | GmailConnector | MicrosoftConnector;
+export type MailConnector = AgentmailConnector | GmailConnector | MicrosoftConnector | ImapConnector;
 
 export function isMailConnector(connector: { kind: string }): connector is MailConnector {
   return isMailProviderKind(connector.kind);
 }
 
-// The account a connector sends from. AgentMail has an inbox id and an address. Gmail's and Microsoft's account id is the address.
+// The account a connector sends from. AgentMail has an inbox id and an address. Gmail's, Microsoft's, and IMAP's account id is the address.
 export interface MailAccount {
   kind: MailProviderKind;
   connectorId: string;
@@ -33,7 +33,12 @@ export function mailAccountOf(connector: MailConnector): MailAccount {
     accountId,
     address,
     lastSyncAt: connector.settings.lastSyncAt,
-    ready: connector.status === 'connected' && Boolean(accountId) && Boolean(address),
+    // An IMAP account is ready only when both logins were verified and a Sent mailbox is known.
+    ready:
+      connector.status === 'connected' &&
+      Boolean(accountId) &&
+      Boolean(address) &&
+      (connector.kind !== 'imap' || (connector.settings.imapOk && connector.settings.smtpOk && Boolean(connector.settings.sentMailbox))),
   };
 }
 

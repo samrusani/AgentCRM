@@ -110,6 +110,14 @@
 .input::placeholder {
   color: var(--ink-muted);
 }
+.input[readonly] {
+  background: var(--bg);
+  color: var(--ink-muted);
+}
+.input--port {
+  flex: 0 0 72px;
+  width: 72px;
+}
 .input--select {
   width: auto;
   padding-right: 4px;
@@ -1987,4 +1995,15 @@ textarea.input {
 .template-check {
   white-space: normal;
   color: var(--ink);
+}
+
+fieldset.connector__form {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+fieldset.connector__form > legend {
+  padding: 0;
+  margin-bottom: 4px;
 }

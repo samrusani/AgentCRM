@@ -1,14 +1,14 @@
 // The mail provider interface. Sending and inbound sync run through it, so every provider obeys the same approval,
 // suppression, cap, and honesty rules. The send intent state machine lives in the callers, never in an adapter.
 
-export const mailProviderKinds = ['agentmail', 'gmail', 'microsoft'] as const;
+export const mailProviderKinds = ['agentmail', 'gmail', 'microsoft', 'imap'] as const;
 export type MailProviderKind = (typeof mailProviderKinds)[number];
 
 export function isMailProviderKind(value: unknown): value is MailProviderKind {
   return typeof value === 'string' && (mailProviderKinds as readonly string[]).includes(value);
 }
 
-export const mailProviderLabels: Record<MailProviderKind, string> = { agentmail: 'AgentMail', gmail: 'Gmail', microsoft: 'Microsoft' };
+export const mailProviderLabels: Record<MailProviderKind, string> = { agentmail: 'AgentMail', gmail: 'Gmail', microsoft: 'Microsoft', imap: 'IMAP' };
 
 export type MailErrorKind =
   | 'unauthorized'
@@ -92,10 +92,11 @@ export interface MailIntent {
 // before the adapter sends anything. When it returns false the adapter must not send.
 export interface SubmitHooks {
   saveDraft?: (draft: { draftId: string; internetMessageId: string | null }) => boolean;
-  // Draft first providers only. Called immediately before the request that sends the draft, after the token and the
+  // Draft first providers and IMAP. Called immediately before the request that sends the draft, after the token and the
   // account were confirmed. The caller checks every guard of a first send again and records the time of the attempt in
   // a transaction of its own. It returns null to go ahead, or the reason to stop, in which case nothing is sent. It runs
-  // again before a repeat after a 401, which Microsoft rejects before it accepts any mail.
+  // again before a repeat after a 401, which Microsoft rejects before it accepts any mail. IMAP calls it once, after
+  // the Message-ID was saved and before the SMTP session opens.
   beforeSend?: () => string | null;
   // The adopt scan found a draft of this intent that no longer matches what was approved. It was left alone.
   noteStrayDraft?: (draft: { draftId: string }) => void;
@@ -115,6 +116,8 @@ export interface ReconcileOptions {
 export interface MailSubmitResult {
   messageId: string;
   threadId: string | null;
+  // Facts a person may want about an accepted send, such as a Sent copy that could not be saved. The caller records them.
+  notes?: string[];
 }
 
 export type ReconcileResult =

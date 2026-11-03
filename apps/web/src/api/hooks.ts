@@ -15,6 +15,7 @@ import type {
   DraftOutreachInput,
   GmailCredentialsInput,
   MicrosoftCredentialsInput,
+  ImapConnectorInput,
   LeadCaptureInput,
   MailProviderKind,
   ModelProviderInput,
@@ -25,6 +26,7 @@ import type {
   TemplateSwitchInput,
 } from './types';
 import { isRunActive } from '../lib/format';
+import { mailProviderName } from '../lib/mail';
 import { useUI } from '../lib/ui';
 
 const PAGE_SIZE = 200;
@@ -657,6 +659,40 @@ export function useRemoveMicrosoftConnector() {
       void queryClient.invalidateQueries({ queryKey: ['today'] });
     },
   });
+}
+
+export function useImapConnector() {
+  const query = useConnectors();
+  const connector = query.data?.find((entry) => entry.kind === 'imap') ?? null;
+  return { query, connector };
+}
+
+export function useSaveImapConnector() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ImapConnectorInput) => api.connectors.saveImap(input),
+    onSettled: () => invalidateGmail(queryClient),
+  });
+}
+
+export function useRemoveImapConnector() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.connectors.removeImap(),
+    onSettled: () => {
+      invalidateGmail(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ['send-intents'] });
+      void queryClient.invalidateQueries({ queryKey: ['approvals'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+    },
+  });
+}
+
+// Maps a provider kind to the name people see. IMAP shows the preset's own name when it is known, so it needs the connector.
+export function useMailProviderNamer(): (kind: string | null | undefined) => string {
+  const { connector } = useImapConnector();
+  const preset = connector?.imap?.preset ?? null;
+  return (kind) => mailProviderName(kind, preset);
 }
 
 export function useMailInboxes(enabled: boolean) {

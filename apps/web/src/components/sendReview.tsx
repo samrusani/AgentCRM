@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
-import { useMailProvider, useMailSummary } from '../api/hooks';
+import { useMailProvider, useMailProviderNamer, useMailSummary } from '../api/hooks';
 import type { SendExcluded, SendReviewMessage, SendReviewPayload } from '../api/types';
-import { DAILY_SEND_CAP, isMessageComplete, mailProviderName, messageCountLabel, reasonSentence } from '../lib/mail';
+import { DAILY_SEND_CAP, isMessageComplete, messageCountLabel, reasonSentence } from '../lib/mail';
 
 export const SEND_REVIEW_FIXED_LINE = 'Approving sends these exact messages. Nothing can be edited after approval.';
 
@@ -27,6 +27,7 @@ export function ExcludedList({ excluded, heading }: { excluded: SendExcluded[]; 
 
 function MessageBlock({ message, position, total }: { message: SendReviewMessage; position: number; total: number }) {
   const inUse = useMailProvider().data ?? null;
+  const providerName = useMailProviderNamer();
   // The frozen payload names the provider when the server records it. Otherwise the in use provider stands in only
   // when it owns this exact sending address.
   const providerKind =
@@ -48,7 +49,7 @@ function MessageBlock({ message, position, total }: { message: SendReviewMessage
           <dt>From</dt>
           <dd>
             {message.inboxEmail ?? 'No sending address'}
-            {providerKind ? <span className="muted"> with {mailProviderName(providerKind)}</span> : null}
+            {providerKind ? <span className="muted"> with {providerName(providerKind)}</span> : null}
           </dd>
         </div>
         <div>

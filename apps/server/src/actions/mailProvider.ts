@@ -59,6 +59,9 @@ function notReadySentence(kind: MailProviderKind, account: MailAccount): string 
     return `${label} needs attention before it can be used: ${account.statusMessage ?? 'it no longer accepts the saved credentials.'}`;
   }
   if (kind === 'agentmail') return 'AgentMail has no inbox selected. Select an inbox in Settings before making it the mail provider in use.';
+  if (kind === 'imap') {
+    return 'The IMAP and SMTP account is not verified. Connect it in Settings and check that both logins work before making it the mail provider in use.';
+  }
   return kind === 'microsoft'
     ? 'Microsoft needs a sign in. Sign in with Microsoft in Settings before making it the mail provider in use.'
     : 'Gmail needs a sign in. Sign in with Google in Settings before making it the mail provider in use.';

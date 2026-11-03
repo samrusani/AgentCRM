@@ -291,7 +291,7 @@ export interface ApiErrorEnvelope {
 export type ConnectorStatus = 'connected' | 'error' | string;
 
 export type ModelProviderKind = 'anthropic' | 'openai' | 'deepseek' | 'zai' | 'ollama';
-export type MailProviderKind = 'agentmail' | 'gmail' | 'microsoft';
+export type MailProviderKind = 'agentmail' | 'gmail' | 'microsoft' | 'imap';
 export type ConnectorKind = 'apify' | MailProviderKind | ModelProviderKind;
 
 // The one mail connector sending and inbound sync use. The server answers null when none is configured.
@@ -312,6 +312,32 @@ export interface GmailCredentialsInput {
 // Microsoft is a public client: the Entra client id is the only credential, there is no secret.
 export interface MicrosoftCredentialsInput {
   clientId: string;
+}
+
+export type ImapPreset = 'icloud' | 'fastmail' | 'custom';
+export type SmtpTls = 'tls' | 'starttls';
+
+// The PUT body for the IMAP and SMTP connector. Presets fill the servers on the server, so only custom sends them.
+export interface ImapConnectorInput {
+  preset: ImapPreset;
+  address: string;
+  username?: string;
+  appPassword?: string;
+  imapHost?: string;
+  imapPort?: number;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpTls?: SmtpTls;
+  sentMailbox?: string;
+}
+
+// The servers an IMAP and SMTP connector reads and sends through, as the server reports them.
+export interface ImapServers {
+  imapHost: string | null;
+  imapPort: number | null;
+  smtpHost: string | null;
+  smtpPort: number | null;
+  smtpTls: string | null;
 }
 
 // The one provider chat and drafting use. The server answers null when none is configured.
@@ -387,6 +413,16 @@ export interface Connector {
   lastSyncAt: string | null;
   tokenMasked: string | null;
   updatedAt: string | null;
+  // IMAP and SMTP only: the preset, the servers, the Sent mailbox, and what the last connect verified. Never the password.
+  imap: ImapSettings | null;
+}
+
+export interface ImapSettings {
+  preset: ImapPreset | null;
+  servers: ImapServers;
+  sentMailbox: string | null;
+  imapOk: boolean;
+  smtpOk: boolean;
 }
 
 export interface ApifyActorSummary {

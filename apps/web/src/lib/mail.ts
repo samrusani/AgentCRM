@@ -22,10 +22,19 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
-const PROVIDER_NAMES: Record<string, string> = { agentmail: 'AgentMail', gmail: 'Gmail', microsoft: 'Microsoft 365' };
+const PROVIDER_NAMES: Record<string, string> = {
+  agentmail: 'AgentMail',
+  gmail: 'Gmail',
+  microsoft: 'Microsoft 365',
+  imap: 'IMAP and SMTP',
+};
 
-export function mailProviderName(kind: string | null | undefined): string {
+const IMAP_PRESET_NAMES: Record<string, string> = { icloud: 'iCloud Mail', fastmail: 'Fastmail' };
+
+// The IMAP connector shows its preset's name when it has one: "iCloud Mail", "Fastmail", else "IMAP and SMTP".
+export function mailProviderName(kind: string | null | undefined, imapPreset?: string | null): string {
   if (!kind) return 'the mail provider';
+  if (kind === 'imap' && imapPreset && IMAP_PRESET_NAMES[imapPreset]) return IMAP_PRESET_NAMES[imapPreset];
   return PROVIDER_NAMES[kind] ?? kind;
 }
 

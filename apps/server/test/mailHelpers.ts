@@ -3,6 +3,7 @@ import {
   completeMicrosoftOAuth,
   configureAgentmailConnector,
   configureGmailConnector,
+  configureImapConnector,
   configureMicrosoftConnector,
   createActivityIn,
   createPerson,
@@ -18,6 +19,7 @@ import type { TestEnvironment } from './helpers.js';
 import { stubAgentmailKey, stubInboxId } from './agentmailStub.js';
 import { type GoogleStub, stubGoogleClientId, stubGoogleClientSecret } from './googleStub.js';
 import { type MicrosoftStub, stubMicrosoftClientId } from './microsoftStub.js';
+import { stubImapAddress, stubImapPassword } from './mailTransportStub.js';
 
 export async function connectMail(env: TestEnvironment): Promise<void> {
   await configureAgentmailConnector(env.ctx, { token: stubAgentmailKey, inboxId: stubInboxId });
@@ -98,4 +100,11 @@ export function insertAcceptedToday(env: TestEnvironment, personId: string, coun
       )
       .run(id, now, env.workspaceId, personId, stubInboxId, `filler${index}@filler.invalid`, `Filler ${index}`, 'body', now, now);
   }
+}
+
+// Connects the IMAP and SMTP connector against the transport stub, with the Fastmail preset unless told otherwise.
+export async function connectImap(env: TestEnvironment, input: Record<string, unknown> = {}) {
+  const result = await configureImapConnector(env.ctx, { preset: 'fastmail', address: stubImapAddress, appPassword: stubImapPassword, ...input });
+  if (result.connector.status !== 'connected') throw new Error(`The stub connect failed: ${result.connector.statusMessage}`);
+  return result;
 }

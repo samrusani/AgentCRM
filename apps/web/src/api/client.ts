@@ -27,6 +27,9 @@ import type {
   LeadCaptureSettings,
   GmailCredentialsInput,
   MicrosoftCredentialsInput,
+  ImapConnectorInput,
+  ImapPreset,
+  ImapSettings,
   MailInbox,
   MailProviderKind,
   MailProviderSelection,
@@ -300,6 +303,28 @@ function normalizeLeadCapture(kind: unknown, raw: unknown): LeadCaptureSettings 
   };
 }
 
+// Only the IMAP and SMTP connector carries these. The server may nest the servers and the verified flags or send them flat.
+function normalizeImap(kind: unknown, settings: Record<string, unknown>): ImapSettings | null {
+  if (kind !== 'imap') return null;
+  const servers = objectOrEmpty(settings.servers);
+  const verified = objectOrEmpty(settings.verified);
+  const pick = (key: string) => servers[key] ?? settings[key];
+  const preset = textOrNull(settings.preset);
+  return {
+    preset: preset === 'icloud' || preset === 'fastmail' || preset === 'custom' ? (preset as ImapPreset) : null,
+    servers: {
+      imapHost: textOrNull(pick('imapHost')),
+      imapPort: numberOrNull(pick('imapPort')),
+      smtpHost: textOrNull(pick('smtpHost')),
+      smtpPort: numberOrNull(pick('smtpPort')),
+      smtpTls: textOrNull(pick('smtpTls')),
+    },
+    sentMailbox: textOrNull(settings.sentMailbox),
+    imapOk: (verified.imapOk ?? settings.imapOk) === true,
+    smtpOk: (verified.smtpOk ?? settings.smtpOk) === true,
+  };
+}
+
 function normalizeConnector(raw: unknown): Connector {
   const record = objectOrEmpty(raw);
   const settings = objectOrEmpty(record.settings);
@@ -329,6 +354,7 @@ function normalizeConnector(raw: unknown): Connector {
     lastSyncAt: textOrNull(settings.lastSyncAt ?? record.lastSyncAt),
     tokenMasked: textOrNull(record.tokenMasked ?? settings.tokenMasked),
     updatedAt: textOrNull(record.updatedAt),
+    imap: normalizeImap(textOrNull(record.kind), settings),
   };
 }
 
@@ -896,6 +922,12 @@ export const api = {
       return url;
     },
     removeMicrosoft: () => request<unknown>('DELETE', '/connectors/microsoft'),
+
+    // Saving connects: the server verifies IMAP, finds the Sent mailbox, and verifies SMTP. A failed check comes back as a
+    // connector with status error and a sentence per step, not as an HTTP error.
+    saveImap: async (input: ImapConnectorInput) =>
+      normalizeConnector(await request<unknown>('PUT', '/connectors/imap', { body: input })),
+    removeImap: () => request<unknown>('DELETE', '/connectors/imap'),
   },
 
   mail: {

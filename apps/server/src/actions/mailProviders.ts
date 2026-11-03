@@ -1,10 +1,13 @@
 import { createAgentmailMailProvider } from '../providers/agentmail.js';
 import { createGmailMailProvider } from '../providers/gmail.js';
+import { createImapSmtpMailProvider } from '../providers/imapSmtp.js';
+import { getMailTransport } from '../providers/mailTransportFactory.js';
 import { createMicrosoftMailProvider } from '../providers/microsoft.js';
 import type { MailProvider, MailProviderKind } from '../providers/mailTypes.js';
 import { getConnectorSecret } from '../queries/connectors.js';
 import { getMailAccount, type MailAccount } from '../queries/mailProvider.js';
 import { markAgentmailError } from './agentmailConnector.js';
+import { markImapError, readImapServerSettings } from './imapConnector.js';
 import type { ActionContext } from './context.js';
 import { createGmailTokenStore, markGmailError } from './gmailConnector.js';
 import { createMicrosoftTokenStore, markMicrosoftError } from './microsoftConnector.js';
@@ -36,6 +39,20 @@ export function createMailAdapter(ctx: ActionContext, kind: MailProviderKind): M
       }),
     };
   }
+  if (kind === 'imap') {
+    const server = readImapServerSettings(ctx);
+    if (!server) return null;
+    return {
+      account,
+      credential: '',
+      provider: createImapSmtpMailProvider({
+        settings: server.settings,
+        transport: getMailTransport(),
+        smtpStoresSentCopy: server.smtpStoresSentCopy,
+        now: () => Date.parse(ctx.now()),
+      }),
+    };
+  }
   if (kind === 'microsoft') {
     return {
       account,
@@ -62,5 +79,6 @@ export function createMailAdapter(ctx: ActionContext, kind: MailProviderKind): M
 export function markMailProviderRejected(ctx: ActionContext, adapter: Pick<MailAdapter, 'account' | 'credential'>): void {
   if (adapter.account.kind === 'agentmail') markAgentmailError(ctx, adapter.credential);
   else if (adapter.account.kind === 'microsoft') markMicrosoftError(ctx, 'unauthorized');
+  else if (adapter.account.kind === 'imap') markImapError(ctx);
   else markGmailError(ctx, 'unauthorized');
 }

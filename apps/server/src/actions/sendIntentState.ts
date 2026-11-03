@@ -230,11 +230,11 @@ export function createEmailActivityIn(tx: Tx, input: { personId: string; kind: '
 
 export const mailReconcileJobKind = 'mail_reconcile';
 
-// A Gmail or Microsoft account is signed in and working again. A message whose outcome was unknown for that same
+// A Gmail, Microsoft, or IMAP account is signed in and working again. A message whose outcome was unknown for that same
 // address goes back on the reconcile schedule, so the check starts again on the next tick. Messages a person already
 // acknowledged are cancelled, so they are not unknown any more and are not touched. A message that already has a
 // reconcile job waiting is left alone.
-export function resumeReconcilesIn(tx: Tx, provider: 'gmail' | 'microsoft', address: string): number {
+export function resumeReconcilesIn(tx: Tx, provider: 'gmail' | 'microsoft' | 'imap', address: string): number {
   const rows = tx.db
     .prepare('SELECT id FROM send_intent WHERE workspace_id = ? AND provider = ? AND status = \'unknown\' AND lower(inbox_id) = ?')
     .all(tx.workspaceId, provider, address.toLowerCase()) as { id: string }[];

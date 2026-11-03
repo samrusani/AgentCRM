@@ -119,6 +119,11 @@ export const gmailSearchWindowEndedSentence =
 export const microsoftCheckWindowEndedSentence =
   "This message was not confirmed in Outlook within a day, so the app stopped checking. Check the Sent Items folder in Outlook.";
 
+// IMAP and SMTP: the check is a read only search of the Sent mailbox for the saved Message-ID. After the same window it
+// stops and asks a person. Nothing is ever sent again from here.
+export const imapCheckWindowEndedSentence =
+  "This message was not found in the Sent mailbox within a day, so the app stopped checking. It may or may not have been sent, because neither iCloud nor Fastmail documents whether its mail server keeps a Sent copy on its own. Look in the Sent folder in the provider's webmail before sending again.";
+
 // An approval older than this is not trusted to start a send.
 export const approvalMaxAgeMilliseconds = 24 * 60 * 60 * 1000;
 export const approvalTooOldSentence = 'Approved more than a day ago. Review and approve again.';

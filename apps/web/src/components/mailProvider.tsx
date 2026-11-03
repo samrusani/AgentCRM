@@ -1,7 +1,6 @@
 import { useState } from 'react';
-import { useSendIntents, useSetMailProvider } from '../api/hooks';
+import { useMailProviderNamer, useSendIntents, useSetMailProvider } from '../api/hooks';
 import type { Connector, MailProviderKind, MailProviderSelection } from '../api/types';
-import { mailProviderName } from '../lib/mail';
 import { errorMessage } from './common';
 import type { CardState } from './connector';
 
@@ -22,7 +21,10 @@ export function mailCardState(
 // AgentMail needs an inbox chosen. Gmail needs a finished sign in. This is the same rule the server applies.
 export function mailConnectorReady(kind: MailProviderKind, connector: Connector | null): boolean {
   if (!connector || connector.status !== 'connected') return false;
-  return kind === 'agentmail' ? Boolean(connector.inboxId && connector.inboxEmail) : Boolean(connector.emailAddress);
+  if (kind === 'agentmail') return Boolean(connector.inboxId && connector.inboxEmail);
+  // IMAP and SMTP is ready only after the last connect verified both the IMAP login and SMTP.
+  if (kind === 'imap') return Boolean(connector.emailAddress && connector.imap?.imapOk && connector.imap.smtpOk);
+  return Boolean(connector.emailAddress);
 }
 
 // Statuses of messages that can still go out from the provider that staged them, or are waiting for review.
@@ -47,6 +49,7 @@ export function UseMailProvider({
 }) {
   const setProvider = useSetMailProvider();
   const intents = useSendIntents();
+  const providerName = useMailProviderNamer();
   const [confirming, setConfirming] = useState(false);
   if (!connector) return null;
   if (active?.kind === kind) {
@@ -56,7 +59,7 @@ export function UseMailProvider({
   if (connector.status === 'error') return null;
 
   const open = active ? (intents.data ?? []).filter((intent) => intent.provider === active.kind && OPEN_INTENT_STATUSES.includes(intent.status)).length : 0;
-  const activeName = mailProviderName(active?.kind);
+  const activeName = providerName(active?.kind);
   const switchNow = () => setProvider.mutate(kind, { onSuccess: () => setConfirming(false) });
 
   return (

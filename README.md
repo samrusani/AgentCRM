@@ -50,7 +50,7 @@ Open http://127.0.0.1:5173 in your browser. The API listens on http://127.0.0.1:
 | Qualification: editable criteria, per criterion verdicts with evidence, fit sort | Working; unknown never counts as a match |
 | MCP server over stdio | Working, read and propose tools; can start qualify runs, allowlisted Apify runs, allowlisted lead captures, and budgeted draft runs |
 | CLI: doctor, seed, serve, search, runs | Working |
-| Email: AgentMail, Gmail, and Microsoft 365 connectors behind one adapter, reviewed sends with per provider duplicate protection, replies, opt outs, bounces, suppressions | Working, verified against stubbed provider APIs; bring your own account. Gmail and Microsoft use an OAuth client or app registration you create (docs/connect-gmail.md, docs/connect-microsoft.md) |
+| Email: AgentMail, Gmail, Microsoft 365, and IMAP/SMTP (iCloud Mail and Fastmail presets) behind one adapter, reviewed sends with per provider duplicate protection, replies, opt outs, bounces, suppressions | Working. AgentMail, Gmail, and Microsoft are verified against stubbed provider APIs; the IMAP/SMTP connector is verified against its transport seam and a local SMTP socket, not live servers. Gmail and Microsoft use an OAuth client or app registration you create (docs/connect-gmail.md, docs/connect-microsoft.md); iCloud and Fastmail use app passwords |
 | Model costs: per call usage rows, per run estimates from list prices | Working, always labelled estimates |
 
 ## Documentation
