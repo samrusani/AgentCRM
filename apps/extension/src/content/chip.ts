@@ -98,6 +98,8 @@ const HOST_STYLES: Record<ChipPlacement, Array<[string, string]>> = {
   inline: [
     ['display', 'inline-flex'],
     ['vertical-align', 'middle'],
+    // In a flex row (LinkedIn's name line) align-self centers the icon on the text line.
+    ['align-self', 'center'],
     ['margin-left', '8px'],
     ['visibility', 'visible'],
   ],

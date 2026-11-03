@@ -124,13 +124,29 @@ describe('signed in SPA structure (verified live, 2026-11)', () => {
     });
   });
 
-  it('the anchor is the name h2 inside main, which sits inside a link', () => {
+  it('the anchor is the degree marker element, the end of the name line, not the name link where the button would wrap', () => {
     const doc = page(liveProfileHtml());
     const anchor = findLinkedinNameAnchor(doc, live);
+    expect(anchor?.textContent?.trim()).toBe('· 2nd');
+    expect(anchor?.closest('a')).toBeNull();
+  });
+
+  it('anchors on the LAST degree leaf when a hidden variant precedes the visible one, as on the live flex name row', () => {
+    const html = liveProfileHtml().replace(
+      '<div class="djeDeg">· 2nd</div>',
+      '<div class="djeHidden"><p>· 1st</p></div><p class="djeDegVisible">· 2nd</p>',
+    );
+    const doc = page(html);
+    const anchor = findLinkedinNameAnchor(doc, live);
+    expect(anchor?.className).toBe('djeDegVisible');
+    expect(anchor?.parentElement?.className).toBe('djeCard');
+  });
+
+  it('with no degree leaf the anchor is the name heading itself', () => {
+    const html = liveProfileHtml().replace('<div class="djeDeg">· 2nd</div>', '');
+    const anchor = findLinkedinNameAnchor(page(html), live);
     expect(anchor?.tagName).toBe('H2');
     expect(anchor?.textContent).toBe('Satya Nadella');
-    expect(anchor?.closest('a')).not.toBeNull();
-    expect(anchor).toBe(doc.querySelector('main h2'));
   });
 
   it('does not take a later section title or a hidden ad heading as the name', () => {
@@ -144,7 +160,7 @@ describe('signed in SPA structure (verified live, 2026-11)', () => {
     const profile = extractLinkedinProfile(doc, live);
     expect(profile.name).toBe('Satya Nadella');
     expect(profile.headline).toBe('Chairman and CEO at Microsoft');
-    expect(findLinkedinNameAnchor(doc, live)?.textContent).toBe('Satya Nadella');
+    expect(findLinkedinNameAnchor(doc, live)?.textContent?.trim()).toBe('· 2nd');
   });
 
   it('without a corroborating title the first heading in main is the name', () => {

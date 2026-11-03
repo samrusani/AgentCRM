@@ -330,7 +330,7 @@ export function findLinkedinNameAnchor(doc: Document, url?: URL): Element | null
   if (url) {
     const name = extractLinkedinProfile(doc, url, { details: false }).name;
     const match = headings.find((heading) => sameText(cleanText(heading.textContent), name));
-    if (match) return match;
+    if (match) return nameLineEnd(match, doc) ?? match;
     const id = isProfilePath(url.pathname);
     const stale = id !== null && (attempt(() => headIsStale(doc, id)) ?? false);
     if (!stale) {
@@ -340,5 +340,31 @@ export function findLinkedinNameAnchor(doc: Document, url?: URL): Element | null
       if (titles.length > 0 && !titles.some((title) => headingMatches(doc, title))) return null;
     }
   }
-  return doc.querySelector('h1') ?? headings[0] ?? null;
+  const fallback = doc.querySelector('h1') ?? headings[0] ?? null;
+  return fallback ? (nameLineEnd(fallback, doc) ?? fallback) : null;
+}
+
+/** A leaf whose whole text is a connection degree marker, such as "· 2nd" or "· 3rd+". */
+const DEGREE_LEAF = /^·?\s*(1st|2nd|3rd)\+?$/;
+
+/**
+ * The trailing element of the name line: LinkedIn renders the name and the connection degree as items of one flex
+ * row, so the button reads best inserted after the degree, not after the name link (where it wraps to its own line).
+ * Takes the LAST degree leaf in the top card (a hidden variant can precede the visible one) and returns its topmost
+ * branch below the common ancestor with the heading. Null when the card has no degree leaf; the caller then falls
+ * back to the heading itself.
+ */
+function nameLineEnd(heading: Element, doc: Document): Element | null {
+  const card = topCardOf(heading, doc);
+  if (!card) return null;
+  const leaves = Array.from(card.querySelectorAll('*')).filter(
+    (el) => el.children.length === 0 && !el.contains(heading) && DEGREE_LEAF.test((el.textContent ?? '').trim()),
+  );
+  const deg = leaves[leaves.length - 1];
+  if (!deg) return null;
+  let branch: Element = deg;
+  while (branch.parentElement && branch.parentElement !== card && !branch.parentElement.contains(heading)) {
+    branch = branch.parentElement;
+  }
+  return branch.parentElement && branch.parentElement.contains(heading) ? branch : null;
 }

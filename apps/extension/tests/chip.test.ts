@@ -40,11 +40,11 @@ describe('anchor finders', () => {
     expect(findLinkedinNameAnchor(page('<body><h2>Outside main</h2></body>'), url)).toBeNull();
   });
 
-  it('linkedin: the live structure anchors on the name h2 inside its link, with no h1 on the page', () => {
+  it('linkedin: the live structure anchors on the degree marker at the end of the name line, with no h1 on the page', () => {
     const doc = page(liveProfileHtml());
     const anchor = findLinkedinNameAnchor(doc, new URL('https://www.linkedin.com/in/satya-nadella/'));
-    expect(anchor?.tagName).toBe('H2');
-    expect(anchor?.parentElement?.tagName).toBe('A');
+    expect(anchor?.textContent?.trim()).toBe('· 2nd');
+    expect(anchor?.closest('a')).toBeNull();
   });
 
   it('x: finds the UserName name row', () => {
@@ -471,12 +471,12 @@ describe('labeled chip (floating)', () => {
 });
 
 describe('linkedin live structure end to end', () => {
-  it('mounts the icon after the link wrapping the name h2 and captures name, headline, and location', async () => {
+  it('mounts the icon after the degree marker on the name line and captures name, headline, and location', async () => {
     const h = await boot('linkedin', '/in/satya-nadella/', liveProfileHtml(), reply(NOT_IN_CRM));
     await h.settle(0);
     const host = h.host()!;
-    expect(host.previousElementSibling?.tagName).toBe('A');
-    expect(host.previousElementSibling?.querySelector('h2')?.textContent).toBe('Satya Nadella');
+    expect(host.previousElementSibling?.textContent?.trim()).toBe('· 2nd');
+    expect(host.previousElementSibling?.className).toBe('djeDeg');
     expect(h.button()!.dataset.placement).toBe('inline');
     h.button()!.click();
     await h.settle(0);
