@@ -1,7 +1,7 @@
 // Adversarial review probes for the browser capture extension. CONFIRMS: the bug is real and the test passes because
 // it is. KILLS: a safety property holds. Nothing here changes application code.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { normalizeBaseUrl, sendCapture, verifyConnection } from '../src/api';
+import { normalizeBaseUrl, sendCapture, sendLookup, verifyConnection } from '../src/api';
 import { extractLinkedinProfile } from '../src/extract/linkedin';
 import { validEmail } from '../src/extract/common';
 import { extractXProfile, isProfileView } from '../src/extract/x';
@@ -50,6 +50,10 @@ async function boot(script: 'linkedin' | 'x', initialPath: string, html: string,
   return h;
 }
 
+// Messages of one kind the content script sent. The chip also sends a lookup on mount, so tests that care about
+// captures filter by kind instead of counting every call.
+const sentOfKind = (h: Harness, kind: string) => h.sendMessage.mock.calls.map((c) => c[0]).filter((m) => m.kind === kind);
+
 beforeEach(() => {
   Element.prototype.attachShadow = function (init: ShadowRootInit) {
     const shadow = realAttach.call(this, init);
@@ -82,7 +86,7 @@ describe('stale page data attached to the wrong profile', () => {
     await h.settle(900);
     h.button()!.click();
     await h.settle(0);
-    const payload = h.sendMessage.mock.calls[0]![0].payload;
+    const payload = sentOfKind(h, 'capture')[0]!.payload;
     expect(payload.url).toBe('http://localhost:3000/in/bob-b');
     expect(payload.name).toBe('bob b');
     expect(payload.headline).toBeUndefined();
@@ -122,7 +126,7 @@ describe('stale page data attached to the wrong profile', () => {
     // No timer tick yet: the chip still shows for the previous profile.
     h.button()!.click();
     await h.settle(0);
-    const payload = h.sendMessage.mock.calls[0]![0].payload;
+    const payload = sentOfKind(h, 'capture')[0]!.payload;
     expect(payload.url).toBe('http://localhost:3000/bob');
     expect(payload.name).toBe('bob');
     expect(payload.handle).toBe('bob');
@@ -164,7 +168,7 @@ describe('payload shape against the server limits', () => {
     const h = await boot('linkedin', `/in/jane-doe${tracking}`, `<body><h1>Jane Doe</h1></body>`, () => ({ ok: true, outcome: 'created', personName: 'x' }));
     h.button()!.click();
     await h.settle(0);
-    const payload = h.sendMessage.mock.calls[0]![0].payload;
+    const payload = sentOfKind(h, 'capture')[0]!.payload;
     expect(payload.url).toBe('http://localhost:3000/in/jane-doe');
     expect(payload.url).not.toMatch(/[?#]/);
     expect(payload.url.length).toBeLessThanOrEqual(500);
@@ -174,7 +178,7 @@ describe('payload shape against the server limits', () => {
     const h = await boot('x', '/jack/with_replies?s=20&t=abc#frag', `<body></body>`, () => ({ ok: true, outcome: 'created', personName: 'x' }));
     h.button()!.click();
     await h.settle(0);
-    expect(h.sendMessage.mock.calls[0]![0].payload.url).toBe('http://localhost:3000/jack/with_replies');
+    expect(sentOfKind(h, 'capture')[0]!.payload.url).toBe('http://localhost:3000/jack/with_replies');
   });
 
   it('KILLS: every string the extension accepts as an email also passes the server (zod) email check', async () => {
@@ -206,7 +210,7 @@ describe('chip behavior', () => {
     resolveA(ok());
     await h.settle(0);
     expect(h.button()!.textContent).toBe('Add to AgentCRM');
-    expect(h.sendMessage).toHaveBeenCalledTimes(1);
+    expect(sentOfKind(h, 'capture')).toHaveLength(1);
   });
 
   it('KILLS: a page cannot trigger a capture by clicking, focusing, or dispatching events on the chip host', async () => {
@@ -218,7 +222,8 @@ describe('chip behavior', () => {
     host.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await h.settle(100);
-    expect(h.sendMessage).not.toHaveBeenCalled();
+    expect(sentOfKind(h, 'capture')).toHaveLength(0);
+    expect(sentOfKind(h, 'openOptions')).toHaveLength(0);
   });
 
   it('CONFIRMS: the host element has a fixed id in the page DOM, so any page script can detect the extension and restyle or hide it', async () => {
@@ -239,7 +244,7 @@ describe('chip behavior', () => {
     expect(h.button()!.textContent).toBe('Open the extension options to set the token');
     h.button()!.click();
     await h.settle(0);
-    expect(h.sendMessage.mock.calls.map((c) => c[0].kind)).toEqual(['capture', 'openOptions']);
+    expect(h.sendMessage.mock.calls.map((c) => c[0].kind)).toEqual(['lookup', 'capture', 'openOptions']);
   });
 
   it('KILLS: server text shown on the chip is rendered as text, not markup', async () => {
@@ -262,8 +267,8 @@ describe('chip behavior', () => {
     const h = await boot('linkedin', '/in/x', hostile, () => ({ ok: true, outcome: 'created', personName: 'x' }));
     h.button()!.click();
     await h.settle(0);
-    expect(h.sendMessage).toHaveBeenCalledTimes(1);
-    const payload = h.sendMessage.mock.calls[0]![0].payload;
+    expect(sentOfKind(h, 'capture')).toHaveLength(1);
+    const payload = sentOfKind(h, 'capture')[0]!.payload;
     expect(typeof payload.name).toBe('string');
     expect(payload.name.length).toBeGreaterThan(0);
     expect(payload.name.length).toBeLessThanOrEqual(200);
@@ -418,3 +423,328 @@ describe('background worker', () => {
   });
 });
 
+
+// Second wave: inline placement, the lookup driven In CRM state, and the lookup message path.
+describe('lookup and inline chip (second wave)', () => {
+  const none = { ok: true, exists: false };
+  const created = { ok: true, outcome: 'created', personName: 'x' };
+  const hosts = () => Array.from(document.querySelectorAll('#agentcrm-capture-host'));
+  const lookups = (h: Harness) => sentOfKind(h, 'lookup');
+  const text = (h: Harness) => h.button()!.textContent;
+
+  async function bootBg(stored: Record<string, unknown>, fetchImpl: (...a: any[]) => Promise<Response>) {
+    vi.resetModules();
+    let listener: ((m: unknown, sender: { id?: string }, respond: (r: unknown) => void) => boolean) | undefined;
+    vi.stubGlobal('chrome', {
+      runtime: { id: 'ext', openOptionsPage: vi.fn(), onMessage: { addListener: (l: typeof listener) => (listener = l) } },
+      action: { onClicked: { addListener: () => undefined } },
+      storage: { local: { get: vi.fn(async (defaults: Record<string, unknown>) => ({ ...defaults, ...stored })) } },
+    });
+    vi.stubGlobal('fetch', fetchImpl);
+    await import('../src/background');
+    const ask = (message: unknown) => new Promise<any>((resolve) => listener!(message, { id: 'ext' }, resolve));
+    return { ask };
+  }
+
+  it('KILLS: with a non loopback base URL the lookup handler makes no fetch, with a loopback one it does, and the copy states the view-time check', async () => {
+    const h = await boot('linkedin', '/in/just-looking', '<body><h1>Just Looking</h1></body>', () => none);
+    await h.settle(5000);
+    expect(sentOfKind(h, 'capture')).toHaveLength(0);
+    expect(lookups(h)).toHaveLength(1);
+    expect(lookups(h)[0]!.payload).toEqual({ source: 'linkedin', url: 'http://localhost:3000/in/just-looking' });
+    const payload = lookups(h)[0]!.payload;
+    // Any address that is not a loopback host: the lookup answers ok false and nothing is fetched.
+    for (const baseUrl of ['https://remote.example', 'http://10.0.0.5:4720', 'http://localhost.evil.example']) {
+      const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ exists: false }), { status: 200 }));
+      const { ask } = await bootBg({ token: 'cap_secret', baseUrl }, fetchImpl);
+      const response = await ask({ kind: 'lookup', payload });
+      expect(response.ok, baseUrl).toBe(false);
+      expect(fetchImpl, baseUrl).not.toHaveBeenCalled();
+      expect(JSON.stringify(response)).not.toContain('cap_secret');
+    }
+    // A loopback address does send it.
+    const local = vi.fn(async () => new Response(JSON.stringify({ exists: false }), { status: 200 }));
+    const { ask } = await bootBg({ token: 'cap_secret', baseUrl: 'http://localhost:4720' }, local);
+    await ask({ kind: 'lookup', payload });
+    expect((local.mock.calls[0] as unknown[])[0]).toBe('http://localhost:4720/api/capture/lookup');
+    expect(JSON.stringify(local.mock.calls[0])).toContain('Bearer cap_secret');
+    // The user facing copy states the view-time check instead of denying it.
+    const check = 'Viewing a profile checks it against your CRM so the button can say In CRM, and that check only ever talks to a local server address';
+    expect(readFileSync(join(root, 'options.html'), 'utf8').replace(/\s+/g, ' ')).toContain(check);
+    expect(readFileSync(join(root, 'options.html'), 'utf8')).toContain('Nothing else runs in the background');
+    expect(readFileSync(join(root, 'README.md'), 'utf8').replace(/\s+/g, ' ')).toContain(check);
+    expect(readFileSync(join(root, 'README.md'), 'utf8')).toContain('nothing else runs in the background');
+    expect(readFileSync(join(root, 'README.md'), 'utf8')).not.toContain('never runs in the background');
+  });
+
+  it('KILLS: a synthetic popstate triggers no immediate re-evaluation and no lookup, and the chip has one min-width across states', async () => {
+    const h = await boot('x', '/start', '<body></body>', () => none);
+    const before = lookups(h).length;
+    for (let i = 0; i < 25; i += 1) {
+      history.pushState({}, '', `/victim${i}`);
+      const event = new PopStateEvent('popstate');
+      expect(event.isTrusted).toBe(false);
+      window.dispatchEvent(event);
+      await h.settle(0);
+    }
+    expect(lookups(h).length).toBe(before);
+    expect(Array.from(new Set(lookups(h).map((m) => m.payload.url))).filter((u) => u.includes('victim'))).toEqual([]);
+    // The 800 ms poll still catches up, once, on the profile the address bar finally shows.
+    await h.settle(900);
+    expect(lookups(h).filter((m) => m.payload.url.includes('victim')).map((m) => m.payload.url)).toEqual(['http://localhost:3000/victim24']);
+    // One fixed outer size across idle, sending, Added, and In CRM: a min-width rule on the chip, no per state width.
+    const css = roots[roots.length - 1]!.querySelector('style')!.textContent!;
+    expect(css).toMatch(/\.chip\s*\{[^}]*min-width:\s*11em/);
+    expect(css).not.toMatch(/\[data-state[^{]*\{[^}]*(?:min-width|width):/);
+  });
+
+  it('KILLS: the page cannot read the lookup answer from the host element, its markup, or its text (closed shadow root, no state attributes)', async () => {
+    let resolve: (v: unknown) => void = () => undefined;
+    const h = await boot('linkedin', '/in/secret-person', '<body><h1>Secret Person</h1></body>', (msg) =>
+      msg.kind === 'lookup' ? new Promise((r) => (resolve = r)) : created,
+    );
+    const host = h.host()!;
+    const before = host.outerHTML;
+    expect(text(h)).toBe('Add to AgentCRM');
+    resolve({ ok: true, exists: true, person: { id: 'per_1', name: '<img src=x onerror=alert(1)>Jane Secret' } });
+    await h.settle(0);
+    expect(text(h)).toBe('In CRM');
+    expect(host.shadowRoot).toBeNull();
+    expect(host.outerHTML).toBe(before);
+    expect(host.textContent).toBe('');
+    expect(document.body.innerHTML).not.toContain('Jane Secret');
+    expect(roots[roots.length - 1]!.innerHTML).not.toContain('Jane Secret');
+    expect(roots[roots.length - 1]!.querySelector('img')).toBeNull();
+  });
+
+  it('KILLS: the background reply to the content script carries ok and exists only', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ exists: true, person: { id: 'per_1', name: 'Jane Secret', email: 'j@example.com' } }), { status: 200 }));
+    const { ask } = await bootBg({ token: 'cap_secret', baseUrl: 'http://localhost:4720' }, fetchImpl);
+    const response = await ask({ kind: 'lookup', payload: { source: 'x', url: 'https://x.com/jane' } });
+    expect(response).toEqual({ ok: true, exists: true });
+    expect(JSON.stringify(response)).not.toContain('Jane Secret');
+  });
+
+  it('KILLS: sendLookup counts only a literal exists true, drops any extra fields, and never throws on odd replies', async () => {
+    const run = (res: Response | Promise<Response>) => sendLookup({ baseUrl: '', token: 'cap_secret_value' }, { source: 'x', url: 'https://x.com/a' }, (() => Promise.resolve(res)) as never);
+    expect(await run(new Response(JSON.stringify({ exists: 'true' }), { status: 200 }))).toEqual({ ok: true, exists: false });
+    expect(await run(new Response(JSON.stringify({ exists: 1 }), { status: 200 }))).toEqual({ ok: true, exists: false });
+    expect(await run(new Response(JSON.stringify([]), { status: 200 }))).toEqual({ ok: true, exists: false });
+    expect(await run(new Response(JSON.stringify({ exists: true }), { status: 200 }))).toEqual({ ok: true, exists: true });
+    expect(await run(new Response(JSON.stringify({ exists: true, person: { id: 1, name: 2 } }), { status: 200 }))).toEqual({ ok: true, exists: true });
+    expect(await run(new Response(JSON.stringify({ exists: true, person: { id: 'p', name: 'N', email: 'e@x.co', tags: ['t'] } }), { status: 200 }))).toEqual({
+      ok: true,
+      exists: true,
+    });
+    for (const bad of [new Response('<html>', { status: 200 }), new Response('', { status: 201 }), new Response('{}', { status: 500 }), new Response('{}', { status: 401 })]) {
+      const result = await run(bad);
+      expect(result.ok).toBe(false);
+      expect(JSON.stringify(result)).not.toContain('cap_secret_value');
+    }
+    expect((await sendLookup({ token: 'cap_secret_value' }, { source: 'x', url: 'x' }, (() => Promise.reject(new TypeError('Failed to fetch'))) as never)).ok).toBe(false);
+  });
+
+  it('KILLS: a lookup message with no payload or extra payload keys still gets an answer, and only source and url go on the wire', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ exists: false }), { status: 200 }));
+    const { ask } = await bootBg({ token: 'cap_secret', baseUrl: 'http://localhost:4720' }, fetchImpl);
+    const empty = await ask({ kind: 'lookup' });
+    expect(empty.ok).toBe(false);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    await ask({ kind: 'lookup', payload: { source: 'x', url: 'https://x.com/a', name: 'Nope', email: 'a@b.co', token: 'cap_other' } });
+    const init = (fetchImpl.mock.calls[0] as unknown[])[1] as RequestInit;
+    expect(JSON.parse(init.body as string)).toEqual({ source: 'x', url: 'https://x.com/a' });
+  });
+
+  it('KILLS: an inline chip beside a heading inside a link is placed after the link, and a click on it neither follows nor reaches the link', async () => {
+    for (const markup of [
+      '<a id="l" href="/in/jane/"><h1>Jane Doe</h1></a>',
+      '<a id="l" href="/in/jane/"><div><span><h1>Jane Doe</h1></span></div></a>',
+      '<h1><a id="l" href="/in/jane/">Jane Doe</a></h1>',
+    ]) {
+      const h = await boot('linkedin', '/in/jane', `<body><div id="row">${markup}</div></body>`, () => none);
+      const link = document.getElementById('l')!;
+      const reached = vi.fn();
+      link.addEventListener('click', reached);
+      const seen: Event[] = [];
+      document.addEventListener('click', (e) => seen.push(e), true);
+      expect(hosts()).toHaveLength(1);
+      expect(h.host()!.closest('a')).toBeNull();
+      h.button()!.click();
+      await h.settle(0);
+      expect(reached, markup).not.toHaveBeenCalled();
+      expect(seen[0]!.defaultPrevented, markup).toBe(true);
+      expect(sentOfKind(h, 'capture')).toHaveLength(1);
+    }
+    const x = await boot('x', '/jack', '<body><a id="l" href="/jack"><div data-testid="UserName"><span>Jack</span><span>@jack</span></div></a></body>', () => none);
+    expect(x.host()!.closest('a')).toBeNull();
+    expect(x.host()!.previousElementSibling?.id).toBe('l');
+  });
+
+  it('KILLS: role=link and role=button wrappers (and nested interactive ancestors) are escaped, and keydown and keyup from the chip never reach them', async () => {
+    for (const wrapperHtml of [
+      '<div id="w" role="link" tabindex="0"><h1>Jane Doe</h1></div>',
+      '<div id="w" role="button" tabindex="0"><h1>Jane Doe</h1></div>',
+      '<button id="w"><h1>Jane Doe</h1></button>',
+      '<div id="w" role="link"><a href="/in/jane/"><span><h1>Jane Doe</h1></span></a></div>',
+    ]) {
+      const h = await boot('linkedin', '/in/jane', `<body><div id="row">${wrapperHtml}</div></body>`, () => none);
+      const wrapper = document.getElementById('w')!;
+      expect(h.host()!.closest('a, button, [role="link"], [role="button"]'), wrapperHtml).toBeNull();
+      expect(h.host()!.previousElementSibling, wrapperHtml).toBe(wrapper);
+      const onKey = vi.fn();
+      const onClick = vi.fn();
+      for (const type of ['keydown', 'keyup']) {
+        wrapper.addEventListener(type, onKey);
+        document.addEventListener(type, onKey);
+      }
+      wrapper.addEventListener('click', onClick);
+      for (const type of ['keydown', 'keyup']) {
+        h.button()!.dispatchEvent(new KeyboardEvent(type, { key: 'Enter', bubbles: true, composed: true }));
+      }
+      expect(onKey, wrapperHtml).not.toHaveBeenCalled();
+      h.button()!.click();
+      expect(onClick, wrapperHtml).not.toHaveBeenCalled();
+    }
+  });
+
+  it('KILLS: key presses at the chip are stopped even when the chip is floating', async () => {
+    const h = await boot('linkedin', '/in/jane', '<body></body>', () => none);
+    const onKey = vi.fn();
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKey);
+    h.button()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true, composed: true }));
+    h.button()!.dispatchEvent(new KeyboardEvent('keyup', { key: 'a', bubbles: true, composed: true }));
+    expect(onKey).not.toHaveBeenCalled();
+  });
+
+  it('KILLS: an anchor that flips between present and absent every poll tick never leaves two hosts, never repeats the lookup, and keeps In CRM', async () => {
+    const h = await boot('linkedin', '/in/flap', '<body><div id="row"><h1>Flap Person</h1></div></body>', (msg) => (msg.kind === 'lookup' ? { ok: true, exists: true } : created));
+    await h.settle(0);
+    expect(text(h)).toBe('In CRM');
+    for (let i = 0; i < 12; i += 1) {
+      const heading = document.querySelector('h1');
+      if (heading) heading.remove();
+      else document.getElementById('row')!.append(document.createElement('h1'));
+      await h.settle(800);
+      expect(hosts(), `tick ${i}`).toHaveLength(1);
+      expect(text(h), `tick ${i}`).toBe('In CRM');
+    }
+    expect(lookups(h)).toHaveLength(1);
+  });
+
+  it('CONFIRMS: a flapping anchor rebuilds the host and its shadow root on every flip, so a click that straddles a flip is lost', async () => {
+    const h = await boot('linkedin', '/in/flap', '<body><div id="row"><h1>Flap Person</h1></div></body>', () => none);
+    const start = roots.length;
+    for (let i = 0; i < 10; i += 1) {
+      const heading = document.querySelector('h1');
+      if (heading) heading.remove();
+      else document.getElementById('row')!.append(document.createElement('h1'));
+      await h.settle(800);
+    }
+    expect(roots.length - start).toBe(10);
+  });
+
+  it('KILLS: query, hash, and subpage changes on the same profile keep the state and send no second lookup; a different profile resets and sends exactly one', async () => {
+    const pending: Array<(v: unknown) => void> = [];
+    const h = await boot('linkedin', '/in/jane', '<body><h1>Jane</h1></body>', (msg) =>
+      msg.kind === 'lookup' ? new Promise((r) => pending.push(r)) : created,
+    );
+    pending[0]!({ ok: true, exists: true });
+    await h.settle(0);
+    expect(text(h)).toBe('In CRM');
+    for (const next of ['/in/jane?trk=abc#section', '/in/jane/details/experience/', '/in/jane/', '/in/jane#top']) {
+      await h.navigate(next);
+      await h.settle(900);
+      expect(text(h), next).toBe('In CRM');
+      expect(lookups(h), next).toHaveLength(1);
+    }
+    await h.navigate('/in/other');
+    await h.settle(900);
+    expect(text(h)).toBe('Add to AgentCRM');
+    expect(lookups(h)).toHaveLength(2);
+    expect(lookups(h)[1]!.payload.url).toBe('http://localhost:3000/in/other');
+  });
+
+  it('KILLS: x keys on the lowercased handle, so a case change or a profile tab is the same profile; linkedin keeps id case', async () => {
+    const x = await boot('x', '/Jack', '<body></body>', (msg) => (msg.kind === 'lookup' ? { ok: true, exists: true } : created));
+    await x.settle(0);
+    expect(text(x)).toBe('In CRM');
+    for (const next of ['/jack', '/JACK/with_replies', '/jack?s=20']) {
+      await x.navigate(next);
+      await x.settle(900);
+      expect(text(x), next).toBe('In CRM');
+    }
+    expect(lookups(x)).toHaveLength(1);
+    const l = await boot('linkedin', '/in/Jane', '<body><h1>Jane</h1></body>', (msg) => (msg.kind === 'lookup' ? { ok: true, exists: true } : created));
+    await l.settle(0);
+    await l.navigate('/in/jane');
+    await l.settle(900);
+    expect(lookups(l)).toHaveLength(2);
+  });
+
+  it('KILLS: a lookup reply for profile A that lands after the address bar became B, before the next poll tick, is dropped at reply time', async () => {
+    const pending: Array<(v: unknown) => void> = [];
+    const h = await boot('linkedin', '/in/aaa', '<body><h1>Aaa</h1></body>', (msg) =>
+      msg.kind === 'lookup' ? new Promise((r) => pending.push(r)) : created,
+    );
+    await h.navigate('/in/bbb');
+    pending[0]!({ ok: true, exists: true });
+    await h.settle(0);
+    expect(location.pathname).toBe('/in/bbb');
+    expect(text(h)).toBe('Add to AgentCRM');
+    // The next tick moves on to B, which is looked up on its own and gets its own answer.
+    await h.settle(900);
+    expect(text(h)).toBe('Add to AgentCRM');
+    expect(lookups(h)).toHaveLength(2);
+    expect(lookups(h)[1]!.payload.url).toBe('http://localhost:3000/in/bbb');
+    pending[1]!({ ok: true, exists: true });
+    await h.settle(0);
+    expect(text(h)).toBe('In CRM');
+  });
+
+  it('KILLS: after the correcting tick, a late reply for A can never mark B, and B gets exactly its own answer', async () => {
+    const pending: Array<(v: unknown) => void> = [];
+    const h = await boot('x', '/alice', '<body></body>', (msg) => (msg.kind === 'lookup' ? new Promise((r) => pending.push(r)) : created));
+    await h.navigate('/bob');
+    await h.settle(900);
+    pending[0]!({ ok: true, exists: true });
+    await h.settle(0);
+    expect(text(h)).toBe('Add to AgentCRM');
+    pending[1]!({ ok: true, exists: true });
+    await h.settle(0);
+    expect(text(h)).toBe('In CRM');
+    await h.navigate('/carol');
+    await h.settle(900);
+    expect(text(h)).toBe('Add to AgentCRM');
+    expect(lookups(h).map((m) => m.payload.url)).toEqual(['http://localhost:3000/alice', 'http://localhost:3000/bob', 'http://localhost:3000/carol']);
+  });
+
+  it('KILLS: no lookup, no host, and no message at all on a page that is not a profile', async () => {
+    const h = await boot('linkedin', '/feed/', '<body><h1>Feed</h1></body>', () => none);
+    await h.settle(5000);
+    expect(hosts()).toHaveLength(0);
+    expect(h.sendMessage).not.toHaveBeenCalled();
+    await h.navigate('/in/now-a-profile');
+    await h.settle(900);
+    expect(hosts()).toHaveLength(1);
+    expect(lookups(h)).toHaveLength(1);
+    await h.navigate('/jobs/');
+    await h.settle(900);
+    expect(hosts()).toHaveLength(0);
+  });
+
+  it('CONFIRMS: a failed lookup is never retried while the URL stays the same, so a server that starts late leaves a saved profile on Add to AgentCRM', async () => {
+    const h = await boot('x', '/someone', '<body></body>', (msg) => (msg.kind === 'lookup' ? { ok: false, code: 'network', message: 'down' } : created));
+    await h.settle(60_000);
+    expect(lookups(h)).toHaveLength(1);
+    expect(text(h)).toBe('Add to AgentCRM');
+  });
+
+  it('CONFIRMS: a content script instance left behind by an extension reload keeps its own host, so the page ends up with two chips', async () => {
+    await boot('linkedin', '/in/jane', '<body><div id="row"><h1>Jane Doe</h1></div></body>', () => none);
+    expect(hosts()).toHaveLength(1);
+    vi.resetModules();
+    await import('../src/content/linkedin');
+    expect(hosts()).toHaveLength(2);
+  });
+});

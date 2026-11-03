@@ -1,9 +1,11 @@
-import { extractXProfile, isProfileView } from '../extract/x';
+import { extractXProfile, findXNameAnchor, isProfileView } from '../extract/x';
 import { compact } from '../extract/common';
 import { startChip } from './chip';
 
 startChip({
-  isProfile: (url) => isProfileView(url.pathname) !== null,
+  source: 'x',
+  findAnchor: findXNameAnchor,
+  profileKey: (url) => isProfileView(url.pathname)?.toLowerCase() ?? null,
   build: (doc, url) => {
     const profile = extractXProfile(doc, url);
     return compact({

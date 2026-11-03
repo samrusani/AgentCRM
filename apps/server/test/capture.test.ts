@@ -317,6 +317,33 @@ describe('capture a person', () => {
     it('matches the email case folded, across sources', async () => {
       const first = await capture({ source: 'x', url: 'https://x.com/emailowner', name: 'Email Owner', email: 'owner@example.com' });
       const id = first.body!.person.id as string;
+      const before = totals();
+      const events: DomainEvent[] = [];
+      const unsubscribe = env.bus.subscribe((event) => events.push(event));
+      const { status, body } = await capture({ source: 'linkedin', url: 'https://www.linkedin.com/in/new-id', name: 'Email Owner', email: 'OWNER@Example.COM' });
+      unsubscribe();
+      expect(status).toBe(200);
+      expect(body).toEqual({ outcome: 'existing', person: { id, name: 'Email Owner' } });
+      // The email hit saves the profile URL claim (the person had no linkedinUrl claim) and nothing else.
+      // The claim write carries the standard claim.create audit row; there is no capture specific event.
+      expect(totals()).toEqual({ ...before, claims: before.claims + 1, audits: before.audits + 1 });
+      expect(
+        (env.db.prepare('SELECT action FROM audit_event ORDER BY created_at DESC, rowid DESC LIMIT 1').get() as { action: string }).action,
+      ).toBe('claim.create');
+      const claim = env.db
+        .prepare("SELECT value, source_url, source_type, extraction_method, status FROM field_claim WHERE entity_id = ? AND field = 'linkedinUrl'")
+        .all(id);
+      expect(claim).toEqual([
+        {
+          value: 'https://www.linkedin.com/in/new-id',
+          source_url: 'https://www.linkedin.com/in/new-id',
+          source_type: 'extension',
+          extraction_method: 'extension:linkedin',
+          status: 'imported',
+        },
+      ]);
+      expect(events.filter((event) => event.type === 'record_updated' && event.entityId === id)).toHaveLength(1);
+      // The same capture again now matches the URL claim and writes nothing.
       await expectExisting({ source: 'linkedin', url: 'https://www.linkedin.com/in/new-id', name: 'Email Owner', email: 'OWNER@Example.COM' }, id);
     });
 
@@ -392,6 +419,118 @@ describe('capture a person', () => {
       const { status } = await capture({ ...base, bio: 'b'.repeat(2000) });
       expect(status).toBe(201);
     });
+  });
+});
+
+describe('capture lookup', () => {
+  let token: string;
+  beforeAll(async () => {
+    token = await newToken();
+  });
+  const lookup = (payload: unknown) => call('POST', '/api/capture/lookup', { authorization: bearer(token), payload });
+  const capture = (payload: unknown) => call('POST', '/api/capture', { authorization: bearer(token), payload });
+
+  it('answers 401 without a token and with a wrong token, before parsing the body', async () => {
+    const payload = { source: 'x', url: 'https://x.com/someone' };
+    const missing = await call('POST', '/api/capture/lookup', { payload });
+    expect(missing.status).toBe(401);
+    expect(missing.body!.error.code).toBe('unauthorized');
+    const wrong = await call('POST', '/api/capture/lookup', { authorization: 'Bearer cap_wrong', payload });
+    expect(wrong.status).toBe(401);
+    expect(wrong.body!.error.code).toBe('unauthorized');
+    const unparsed = await app.inject({
+      method: 'POST',
+      url: '/api/capture/lookup',
+      headers: { ...host, 'content-type': 'application/json' },
+      payload: '{not json',
+    });
+    expect(unparsed.statusCode).toBe(401);
+  });
+
+  it('rejects a non profile URL and a reserved X path with the capture messages', async () => {
+    const linkedin = await lookup({ source: 'linkedin', url: 'https://www.linkedin.com/company/acme' });
+    expect(linkedin.status).toBe(400);
+    expect(linkedin.body!.error.code).toBe('validation');
+    expect(linkedin.body!.error.message).toMatch(/profile link/);
+    const x = await lookup({ source: 'x', url: 'https://x.com/home' });
+    expect(x.status).toBe(400);
+    expect(x.body!.error.code).toBe('validation');
+    expect(x.body!.error.message).toMatch(/profile link/);
+  });
+
+  it('rejects unknown keys, an unknown source, and a missing url', async () => {
+    for (const payload of [
+      { source: 'x', url: 'https://x.com/someone', name: 'Extra' },
+      { source: 'facebook', url: 'https://x.com/someone' },
+      { source: 'x' },
+    ]) {
+      const { status, body } = await lookup(payload);
+      expect(status).toBe(400);
+      expect(body!.error.code).toBe('validation');
+    }
+  });
+
+  it('answers exists false for a profile nobody captured', async () => {
+    expect((await lookup({ source: 'linkedin', url: 'https://www.linkedin.com/in/nobody-here' })).body).toEqual({ exists: false });
+    expect((await lookup({ source: 'x', url: 'https://x.com/nobody_here' })).body).toEqual({ exists: false });
+  });
+
+  it('finds a captured LinkedIn profile through URL variants', async () => {
+    const created = await capture({ source: 'linkedin', url: 'https://www.linkedin.com/in/Look-Up-Lin', name: 'Lin Lookup' });
+    expect(created.status).toBe(201);
+    for (const url of [
+      'https://www.linkedin.com/in/Look-Up-Lin',
+      'https://www.linkedin.com/in/Look-Up-Lin/?utm_source=share',
+      'https://linkedin.com/in/Look-Up-Lin/',
+      'HTTPS://uk.LinkedIn.com/in/Look-Up-Lin',
+    ]) {
+      const { status, body } = await lookup({ source: 'linkedin', url });
+      expect(status, url).toBe(200);
+      expect(body, url).toEqual({ exists: true });
+      expect(body, url).not.toHaveProperty('person');
+    }
+    expect((await lookup({ source: 'linkedin', url: 'https://www.linkedin.com/in/Look-Up-Lin-2' })).body).toEqual({ exists: false });
+  });
+
+  it('finds a captured X profile with a different handle case and a twitter.com host', async () => {
+    const created = await capture({ source: 'x', url: 'https://x.com/LookUpEx', name: 'Ex Lookup' });
+    expect(created.status).toBe(201);
+    for (const url of ['https://twitter.com/lookupex', 'https://mobile.x.com/LOOKUPEX/', 'x.com/LookUpEx/status/1?s=20']) {
+      const { status, body } = await lookup({ source: 'x', url });
+      expect(status, url).toBe(200);
+      expect(body, url).toEqual({ exists: true });
+      expect(body, url).not.toHaveProperty('person');
+    }
+  });
+
+  it('does not cross sources: an X claim is not found by a LinkedIn lookup of the same word', async () => {
+    expect((await lookup({ source: 'linkedin', url: 'https://www.linkedin.com/in/lookupex' })).body).toEqual({ exists: false });
+  });
+
+  it('matches profile URL claims only, never email', async () => {
+    const created = await capture({ source: 'x', url: 'https://x.com/emailonly', name: 'Email Only', email: 'emailonly@example.com' });
+    expect(created.status).toBe(201);
+    const { status, body } = await lookup({ source: 'linkedin', url: 'https://www.linkedin.com/in/emailonly' });
+    expect(status).toBe(200);
+    expect(body).toEqual({ exists: false });
+  });
+
+  it('writes nothing: no rows, no audit event, no record event, no settings change', async () => {
+    await capture({ source: 'linkedin', url: 'https://www.linkedin.com/in/read-only-check', name: 'Read Only' });
+    const events: DomainEvent[] = [];
+    const unsubscribe = env.bus.subscribe((event) => events.push(event));
+    const settingsBefore = (env.db.prepare('SELECT settings FROM workspace').get() as { settings: string }).settings;
+    const before = totals();
+    const hit = await lookup({ source: 'linkedin', url: 'https://www.linkedin.com/in/read-only-check/' });
+    const miss = await lookup({ source: 'x', url: 'https://x.com/read_only_miss' });
+    const rejected = await lookup({ source: 'x', url: 'https://x.com/home' });
+    unsubscribe();
+    expect(hit.body).toEqual({ exists: true });
+    expect(miss.body).toEqual({ exists: false });
+    expect(rejected.status).toBe(400);
+    expect(totals()).toEqual(before);
+    expect((env.db.prepare('SELECT settings FROM workspace').get() as { settings: string }).settings).toBe(settingsBefore);
+    expect(events).toEqual([]);
   });
 });
 

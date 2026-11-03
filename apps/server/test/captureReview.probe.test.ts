@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { normalizeXProfileUrl } from '../src/actions/capture.js';
 import { runChatTool } from '../src/agent/modelChat.js';
+import type { DomainEvent } from '../src/events.js';
 import { buildApp } from '../src/http/app.js';
 import { searchAll } from '../src/queries/search.js';
 import { createTestEnvironment, insertSecondWorkspace } from './helpers.js';
@@ -483,5 +484,316 @@ describe('hostile profile strings', () => {
     const reply = await capture({ source: 'x', url: 'https://x.com/invisible_one', name: '\u200b\u2063' });
     expect(reply.status).toBe(400);
     expect(people()).toBe(before);
+  });
+});
+
+describe('lookup endpoint', () => {
+  let token: string;
+  beforeAll(async () => {
+    token = await newToken();
+  });
+  const lookup = (payload: unknown, headers: Record<string, string> = auth(token)) => call('POST', '/api/capture/lookup', { headers, payload });
+  const capture = (payload: unknown) => call('POST', '/api/capture', { headers: auth(token), payload });
+
+  it('KILLS: lookup never writes, never opens a transaction, and never reaches mutate (only SELECT statements run)', async () => {
+    await capture({ source: 'linkedin', url: 'https://www.linkedin.com/in/probe-readonly', name: 'Probe Readonly' });
+    const seen: string[] = [];
+    const db = env.db as any;
+    const realPrepare = db.prepare.bind(db);
+    const realExec = db.exec.bind(db);
+    db.prepare = (sql: string) => {
+      seen.push(sql);
+      return realPrepare(sql);
+    };
+    db.exec = (sql: string) => {
+      seen.push(sql);
+      return realExec(sql);
+    };
+    try {
+      expect((await lookup({ source: 'linkedin', url: 'https://www.linkedin.com/in/probe-readonly' })).body!.exists).toBe(true);
+      expect((await lookup({ source: 'x', url: 'https://x.com/probe_ro_miss' })).body).toEqual({ exists: false });
+      expect((await lookup({ source: 'x', url: 'https://x.com/home' })).status).toBe(400);
+    } finally {
+      delete db.prepare;
+      delete db.exec;
+    }
+    expect(seen.length).toBeGreaterThan(0);
+    for (const sql of seen) expect(sql.trim().toUpperCase(), sql).toMatch(/^SELECT\b/);
+  });
+
+  it('KILLS: with no or a wrong token a hit and a miss are byte identical, so the endpoint is no membership oracle', async () => {
+    await capture({ source: 'x', url: 'https://x.com/oracle_hit', name: 'Oracle Hit' });
+    const raw = async (url: string, headers: Record<string, string>) => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/capture/lookup',
+        headers: { ...host, 'content-type': 'application/json', ...headers },
+        payload: JSON.stringify({ source: 'x', url }),
+      });
+      return { status: response.statusCode, body: response.body };
+    };
+    const attempts: Array<Record<string, string>> = [{}, { authorization: 'Bearer cap_wrong' }, { authorization: 'Bearer' }];
+    for (const headers of attempts) {
+      const hit = await raw('https://x.com/oracle_hit', headers);
+      const miss = await raw('https://x.com/oracle_miss', headers);
+      expect(hit.status).toBe(401);
+      expect(hit).toEqual(miss);
+      expect(hit.body).not.toContain('exists');
+    }
+  });
+
+  it('KILLS: a cross-site page gets 403 (Origin guard) before the token or the body are looked at, with no CORS grant and no preflight', async () => {
+    await capture({ source: 'x', url: 'https://x.com/cors_hit', name: 'Cors Hit' });
+    for (const origin of ['https://evil.example', 'null', 'https://localhost.evil.example']) {
+      const withToken = await lookup({ source: 'x', url: 'https://x.com/cors_hit' }, { ...auth(token), origin });
+      expect(withToken.status, origin).toBe(403);
+      expect(JSON.stringify(withToken.body)).not.toContain('exists');
+      expect(withToken.headers['access-control-allow-origin']).toBeUndefined();
+      const noToken = await lookup({ source: 'x', url: 'https://x.com/cors_hit' }, { origin });
+      expect(noToken.status, origin).toBe(403);
+    }
+    const pre = await call('OPTIONS', '/api/capture/lookup', {
+      headers: { origin: 'https://evil.example', 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization,content-type' },
+    });
+    expect(pre.status).toBe(404);
+    expect(pre.headers['access-control-allow-origin']).toBeUndefined();
+    // A simple request shape (text/plain, no Authorization) cannot read an answer either: it is refused 403 or 401.
+    const simple = await app.inject({
+      method: 'POST',
+      url: '/api/capture/lookup',
+      headers: { ...host, origin: 'https://evil.example', 'content-type': 'text/plain' },
+      payload: '{"source":"x","url":"https://x.com/cors_hit"}',
+    });
+    expect(simple.statusCode).toBe(403);
+  });
+
+  it('KILLS: only POST reaches lookup, with or without the token, and path variants do not slip past the guard', async () => {
+    for (const method of ['GET', 'HEAD', 'PUT', 'PATCH', 'DELETE']) {
+      for (const headers of [auth(token), {} as Record<string, string>]) {
+        const reply = await call(method, '/api/capture/lookup', { headers });
+        expect([200, 201], `${method}`).not.toContain(reply.status);
+      }
+    }
+    const payload = { source: 'x', url: 'https://x.com/cors_hit' };
+    for (const url of ['/API/CAPTURE/LOOKUP', '//api/capture/lookup', '/api/capture/lookup/', '/api/capture/lookup%2f', '/api/capture/./lookup']) {
+      const reply = await call('POST', url, { payload });
+      expect([200, 201], url).not.toContain(reply.status);
+    }
+    expect((await call('POST', '/api/capture/lookup?x=1', { payload })).status).toBe(401);
+  });
+
+  it('KILLS: hostile bodies with a valid token answer 400, never 500, and the strict schema refuses every extra key', async () => {
+    const huge = `https://x.com/${'a'.repeat(100_000)}`;
+    const bodies: unknown[] = [
+      [],
+      null,
+      'a string',
+      42,
+      {},
+      { source: 'x' },
+      { url: 'https://x.com/jack' },
+      { source: 'x', url: 'https://x.com/jack', email: 'jane@example.com' },
+      { source: 'x', url: 'https://x.com/jack', name: 'Jack' },
+      { source: 'x', url: 'https://x.com/jack', workspaceId: 'wsp_x' },
+      { source: 'x', url: ['https://x.com/jack'] },
+      { source: ['x'], url: 'https://x.com/jack' },
+      { source: 'x', url: { toString: 'x' } },
+      { source: 'x', url: '' },
+      { source: 'x', url: '   ' },
+      { source: 'x', url: huge },
+      { source: 'x', url: `https://x.com/jack?${'q'.repeat(500)}` },
+      { source: 'linkedin', url: 'https://x.com/jack' },
+      { source: 'x', url: 'https://www.linkedin.com/in/jack' },
+      JSON.parse('{"source":"x","url":"https://x.com/jack","__proto__":{"a":1}}'),
+    ];
+    for (const payload of bodies) {
+      const reply = await lookup(payload);
+      expect(reply.status, JSON.stringify(payload)?.slice(0, 80)).toBe(400);
+    }
+    for (const raw of ['{not json', '', '{"source":"x"']) {
+      const reply = await app.inject({
+        method: 'POST',
+        url: '/api/capture/lookup',
+        headers: { ...host, ...auth(token), 'content-type': 'application/json' },
+        payload: raw,
+      });
+      expect(reply.statusCode, raw).toBe(400);
+    }
+    // No body and no content type at all.
+    const bare = await app.inject({ method: 'POST', url: '/api/capture/lookup', headers: { ...host, ...auth(token) } });
+    expect(bare.statusCode).toBe(400);
+    // The 500 character limit is exact, as in capture, and the scrubber runs first.
+    const prefix = 'https://www.linkedin.com/in/lookup-limit?q=';
+    const exact = prefix + 'a'.repeat(500 - prefix.length);
+    expect((await lookup({ source: 'linkedin', url: exact })).status).toBe(200);
+    expect((await lookup({ source: 'linkedin', url: `${exact}a` })).status).toBe(400);
+    expect((await lookup({ source: 'x', url: '\u0000​' })).status).toBe(400);
+  });
+
+  it('KILLS: the answer is exactly { exists } and never carries email, title, claims, version, or any person key, on a hit or a miss', async () => {
+    await capture({
+      source: 'linkedin',
+      url: 'https://www.linkedin.com/in/shape-check',
+      name: 'Shape Check',
+      headline: 'CEO of Secret Corp',
+      email: 'shape@example.com',
+      bio: 'private bio text',
+    });
+    const hit = await lookup({ source: 'linkedin', url: 'https://www.linkedin.com/in/shape-check' });
+    expect(hit.body).toEqual({ exists: true });
+    expect(Object.keys(hit.body!)).toEqual(['exists']);
+    const text = JSON.stringify(hit.body);
+    for (const secret of ['Shape Check', 'shape@example.com', 'Secret Corp', 'private bio', 'version', 'workspace', 'per_']) expect(text).not.toContain(secret);
+    const miss = await lookup({ source: 'linkedin', url: 'https://www.linkedin.com/in/shape-check-miss' });
+    expect(miss.body).toEqual({ exists: false });
+    expect('person' in miss.body!).toBe(false);
+  });
+
+  it('KILLS: lookup answers exactly { exists: true } with no person key, so a token holder cannot read a name from it (fixed from CONFIRMS)', async () => {
+    await capture({ source: 'x', url: 'https://x.com/name_leak', name: 'Name Leak Person' });
+    const hit = await lookup({ source: 'x', url: 'https://x.com/name_leak' });
+    expect(hit.body).toEqual({ exists: true });
+    expect('person' in hit.body!).toBe(false);
+    expect(JSON.stringify(hit.body)).not.toContain('Name Leak');
+  });
+
+  it('KILLS: a capture answered existing through the email match saves the profile URL claim, so lookup and a repeat capture recognize it (fixed from CONFIRMS)', async () => {
+    // The owner was captured on X, so it has no linkedinUrl claim yet.
+    const owner = await capture({ source: 'x', url: 'https://x.com/lkp_mail_owner', name: 'Mail Owner', email: 'lookup-mail@example.com' });
+    expect(owner.status).toBe(201);
+    const ownerId = owner.body!.person.id as string;
+    const claimsFor = (id: string, field: string) =>
+      env.db
+        .prepare("SELECT value, source_url, source_type, extraction_method, status FROM field_claim WHERE entity_type = 'person' AND entity_id = ? AND field = ?")
+        .all(id, field) as Array<Record<string, string>>;
+    expect(claimsFor(ownerId, 'linkedinUrl')).toHaveLength(0);
+
+    // Before the email hit the other profile is unknown to lookup.
+    expect((await lookup({ source: 'linkedin', url: 'https://www.linkedin.com/in/lookup-mail-other' })).body).toEqual({ exists: false });
+
+    const auditsBefore = count('SELECT COUNT(*) AS n FROM audit_event');
+    const events: DomainEvent[] = [];
+    const unsubscribe = env.bus.subscribe((event) => events.push(event));
+    const other = await capture({ source: 'linkedin', url: 'https://www.linkedin.com/in/lookup-mail-other', name: 'Mail Other', email: 'LOOKUP-MAIL@example.com' });
+    unsubscribe();
+    expect(other.status).toBe(200);
+    expect(other.body!.outcome).toBe('existing');
+    expect(other.body!.person.id).toBe(ownerId);
+
+    // The person now has the linkedinUrl claim for the captured profile, with the created capture's shape.
+    const claims = claimsFor(ownerId, 'linkedinUrl');
+    expect(claims).toHaveLength(1);
+    expect(claims).toContainEqual({
+      value: 'https://www.linkedin.com/in/lookup-mail-other',
+      source_url: 'https://www.linkedin.com/in/lookup-mail-other',
+      source_type: 'extension',
+      extraction_method: 'extension:linkedin',
+      status: 'imported',
+    });
+    expect(events.filter((event) => event.type === 'record_updated' && event.entityType === 'person' && event.entityId === ownerId)).toHaveLength(1);
+    // No capture specific audit event: the only new row is the standard claim.create for the claim write.
+    expect(count('SELECT COUNT(*) AS n FROM audit_event')).toBe(auditsBefore + 1);
+    expect(count("SELECT COUNT(*) AS n FROM audit_event WHERE action = 'capture.person' AND entity_id = ?", ownerId)).toBe(1);
+
+    // Lookup now says exists true for that profile.
+    expect((await lookup({ source: 'linkedin', url: 'https://www.linkedin.com/in/lookup-mail-other' })).body).toEqual({ exists: true });
+
+    // A repeat capture now hits through the URL claim and writes nothing more.
+    const claimTotal = count('SELECT COUNT(*) AS n FROM field_claim');
+    const auditTotal = count('SELECT COUNT(*) AS n FROM audit_event');
+    const repeatEvents: DomainEvent[] = [];
+    const stop = env.bus.subscribe((event) => repeatEvents.push(event));
+    const repeat = await capture({ source: 'linkedin', url: 'https://www.linkedin.com/in/lookup-mail-other', name: 'Mail Other', email: 'lookup-mail@example.com' });
+    stop();
+    expect(repeat.status).toBe(200);
+    expect(repeat.body).toEqual({ outcome: 'existing', person: { id: ownerId, name: 'Mail Owner' } });
+    expect(count('SELECT COUNT(*) AS n FROM field_claim')).toBe(claimTotal);
+    expect(count('SELECT COUNT(*) AS n FROM audit_event')).toBe(auditTotal);
+    expect(repeatEvents).toEqual([]);
+  });
+
+  it('KILLS: an email hit on a person who already has a different linkedinUrl claim writes nothing (ambiguous, left alone)', async () => {
+    const owner = await capture({ source: 'linkedin', url: 'https://www.linkedin.com/in/ambig-owner', name: 'Ambig Owner', email: 'ambig@example.com' });
+    expect(owner.status).toBe(201);
+    const ownerId = owner.body!.person.id as string;
+    const claimTotal = count('SELECT COUNT(*) AS n FROM field_claim');
+    const personClaims = count("SELECT COUNT(*) AS n FROM field_claim WHERE entity_type = 'person' AND entity_id = ?", ownerId);
+    const auditTotal = count('SELECT COUNT(*) AS n FROM audit_event');
+    const events: DomainEvent[] = [];
+    const unsubscribe = env.bus.subscribe((event) => events.push(event));
+    const other = await capture({ source: 'linkedin', url: 'https://www.linkedin.com/in/ambig-different', name: 'Ambig Different', email: 'ambig@example.com' });
+    unsubscribe();
+    expect(other.status).toBe(200);
+    expect(other.body).toEqual({ outcome: 'existing', person: { id: ownerId, name: 'Ambig Owner' } });
+    expect(count('SELECT COUNT(*) AS n FROM field_claim')).toBe(claimTotal);
+    expect(count("SELECT COUNT(*) AS n FROM field_claim WHERE entity_type = 'person' AND entity_id = ?", ownerId)).toBe(personClaims);
+    expect(count('SELECT COUNT(*) AS n FROM audit_event')).toBe(auditTotal);
+    expect(events).toEqual([]);
+    expect((await lookup({ source: 'linkedin', url: 'https://www.linkedin.com/in/ambig-different' })).body).toEqual({ exists: false });
+  });
+
+  it('KILLS: lookup matches the claim even when the person has no email, and an email alone never matches another profile', async () => {
+    await capture({ source: 'x', url: 'https://x.com/no_mail_lookup', name: 'No Mail' });
+    expect((await lookup({ source: 'x', url: 'https://x.com/No_Mail_Lookup/with_replies' })).body).toEqual({ exists: true });
+    env.db
+      .prepare("INSERT INTO person (id, created_at, workspace_id, version, first_name, last_name, email, tags, updated_at) VALUES ('per_probemail001', ?, ?, 1, 'Mail', 'Only', 'mailonly@example.com', '[]', ?)")
+      .run('2026-03-02T00:00:00.000Z', env.workspaceId, '2026-03-02T00:00:00.000Z');
+    for (const reply of [
+      await lookup({ source: 'linkedin', url: 'https://www.linkedin.com/in/mailonly' }),
+      await lookup({ source: 'x', url: 'https://x.com/mailonly' }),
+    ]) {
+      expect(reply.body).toEqual({ exists: false });
+    }
+  });
+
+  it('KILLS: lookup never sees another workspace, even for a claim that matches exactly', async () => {
+    env.db.prepare('INSERT OR IGNORE INTO workspace (id, created_at, name, template) VALUES (?, ?, ?, ?)').run(
+      'wsp_lookupother1',
+      '2026-03-02T00:00:00.000Z',
+      'Lookup other',
+      'startup-fundraising',
+    );
+    env.db
+      .prepare("INSERT INTO person (id, created_at, workspace_id, version, first_name, last_name, email, tags, updated_at) VALUES ('per_lookupws0001', ?, 'wsp_lookupother1', 1, 'Other', 'Ws', NULL, '[]', ?)")
+      .run('2026-03-02T00:00:00.000Z', '2026-03-02T00:00:00.000Z');
+    env.db
+      .prepare(
+        "INSERT INTO field_claim (id, created_at, workspace_id, entity_type, entity_id, field, value, source_url, source_type, observed_at, status) VALUES ('clm_lookupws0001', ?, 'wsp_lookupother1', 'person', 'per_lookupws0001', 'linkedinUrl', 'https://www.linkedin.com/in/lookup-other-ws', NULL, 'import', ?, 'imported')",
+      )
+      .run('2026-03-02T00:00:00.000Z', '2026-03-02T00:00:00.000Z');
+    expect((await lookup({ source: 'linkedin', url: 'https://www.linkedin.com/in/lookup-other-ws' })).body).toEqual({ exists: false });
+    // A claim in this workspace that points at a person of the other workspace does not count either.
+    env.db
+      .prepare(
+        "INSERT INTO field_claim (id, created_at, workspace_id, entity_type, entity_id, field, value, source_url, source_type, observed_at, status) VALUES ('clm_lookupws0002', ?, ?, 'person', 'per_lookupws0001', 'linkedinUrl', 'https://www.linkedin.com/in/lookup-cross-pointer', NULL, 'import', ?, 'imported')",
+      )
+      .run('2026-03-02T00:00:00.000Z', env.workspaceId, '2026-03-02T00:00:00.000Z');
+    expect((await lookup({ source: 'linkedin', url: 'https://www.linkedin.com/in/lookup-cross-pointer' })).body).toEqual({ exists: false });
+  });
+
+  it('KILLS: invisible characters in the url are scrubbed the same way capture scrubs them, so lookup and capture agree on identity', async () => {
+    await capture({ source: 'x', url: 'https://x.com/scrub_same', name: 'Scrub Same' });
+    for (const url of ['https://x.com/scr​ub_same', 'https://x.com/scrub\u0000_same', '‮https://x.com/scrub_same']) {
+      const reply = await lookup({ source: 'x', url });
+      expect(reply.status, JSON.stringify(url)).toBe(200);
+      expect(reply.body).toEqual({ exists: true });
+    }
+  });
+
+  it('KILLS: lookups leave no audit row, no activity, and no workspace settings change, even for hits', async () => {
+    await capture({ source: 'x', url: 'https://x.com/quiet_one', name: 'Quiet One' });
+    const before = {
+      audits: count('SELECT COUNT(*) AS n FROM audit_event'),
+      activities: count('SELECT COUNT(*) AS n FROM activity'),
+      claims: count('SELECT COUNT(*) AS n FROM field_claim'),
+      settings: settingsRow(),
+    };
+    for (let i = 0; i < 5; i += 1) await lookup({ source: 'x', url: 'https://x.com/quiet_one' });
+    expect({
+      audits: count('SELECT COUNT(*) AS n FROM audit_event'),
+      activities: count('SELECT COUNT(*) AS n FROM activity'),
+      claims: count('SELECT COUNT(*) AS n FROM field_claim'),
+      settings: settingsRow(),
+    }).toEqual(before);
   });
 });

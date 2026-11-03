@@ -183,6 +183,13 @@ const optionalEmail = z
   })
   .transform((value) => (value === undefined || value === '' ? undefined : value.toLowerCase()));
 
+const lookupSchema = z
+  .object({
+    source: z.enum(['linkedin', 'x']),
+    url: scrubbedText(z.string().trim().min(1).max(500)),
+  })
+  .strict();
+
 const captureSchema = z
   .object({
     source: z.enum(['linkedin', 'x']),
@@ -246,14 +253,19 @@ function canonicalize(source: 'linkedin' | 'x', url: string): Canonical {
 
 const personName = (first: string, last: string): string => `${first} ${last}`.trim();
 
-function summarize(tx: Tx, id: string): CaptureResult['person'] {
+function summarize(tx: Pick<Tx, 'db' | 'workspaceId'>, id: string): CaptureResult['person'] {
   const row = tx.db
     .prepare('SELECT first_name AS first, last_name AS last FROM person WHERE id = ? AND workspace_id = ?')
     .get(id, tx.workspaceId) as { first: string; last: string | null };
   return { id, name: personName(row.first, row.last ?? '') };
 }
 
-function findExistingPerson(tx: Tx, source: 'linkedin' | 'x', canonical: Canonical, email: string | undefined): string | null {
+function findExistingPerson(
+  tx: Pick<Tx, 'db' | 'workspaceId'>,
+  source: 'linkedin' | 'x',
+  canonical: Canonical,
+  email: string | undefined,
+): { id: string; via: 'url' | 'email' } | null {
   const field = source === 'linkedin' ? 'linkedinUrl' : 'xUrl';
   const claims = (
     canonical.hint
@@ -273,15 +285,40 @@ function findExistingPerson(tx: Tx, source: 'linkedin' | 'x', canonical: Canonic
           .all(tx.workspaceId, field, tx.workspaceId)
   ) as { id: string; value: string }[];
   for (const claim of claims) {
-    if (canonical.matches(claim.value)) return claim.id;
+    if (canonical.matches(claim.value)) return { id: claim.id, via: 'url' };
   }
   if (email) {
     const row = tx.db
       .prepare('SELECT id FROM person WHERE workspace_id = ? AND lower(email) = ?')
       .get(tx.workspaceId, email.toLowerCase()) as { id: string } | undefined;
-    if (row) return row.id;
+    if (row) return { id: row.id, via: 'email' };
   }
   return null;
+}
+
+// An email hit proves the person is the captured profile, so the profile URL is saved as a claim and the
+// next lookup and capture match it. A person with any claim for that field already (even a different
+// URL) is left alone: which profile is right is ambiguous and the record is edited in the app.
+function saveProfileUrlClaim(tx: Tx, personId: string, source: 'linkedin' | 'x', url: string): void {
+  const field = source === 'linkedin' ? 'linkedinUrl' : 'xUrl';
+  const has = tx.db
+    .prepare(
+      `SELECT 1 FROM field_claim WHERE workspace_id = ? AND entity_type = 'person' AND entity_id = ? AND field = ? LIMIT 1`,
+    )
+    .get(tx.workspaceId, personId, field);
+  if (has) return;
+  createFieldClaimIn(tx, {
+    entityType: 'person',
+    entityId: personId,
+    field,
+    value: url,
+    sourceUrl: url,
+    sourceType: 'extension',
+    observedAt: tx.now(),
+    status: 'imported',
+    extractionMethod: `extension:${source}`,
+  });
+  // createFieldClaimIn writes the claim.create audit row and emits the person's record_updated frame.
 }
 
 // One profile from the browser extension. The match runs in the same transaction as the create, so two
@@ -290,8 +327,11 @@ export function capturePerson(ctx: ActionContext, input: unknown): CaptureResult
   const data = parseInput(captureSchema, input);
   const canonical = canonicalize(data.source, data.url);
   return mutate(ctx, (tx): CaptureResult => {
-    const existingId = findExistingPerson(tx, data.source, canonical, data.email);
-    if (existingId) return { outcome: 'existing', person: summarize(tx, existingId) };
+    const existing = findExistingPerson(tx, data.source, canonical, data.email);
+    if (existing) {
+      if (existing.via === 'email') saveProfileUrlClaim(tx, existing.id, data.source, canonical.url);
+      return { outcome: 'existing', person: summarize(tx, existing.id) };
+    }
 
     const split = splitName(data.name);
     const person = createPersonIn(tx, {
@@ -341,4 +381,17 @@ export function capturePerson(ctx: ActionContext, input: unknown): CaptureResult
     emitRecord(tx, 'person', person.id);
     return { outcome: 'created', person: { id: person.id, name: personName(person.firstName, person.lastName) } };
   });
+}
+
+// A boolean and nothing else: the button needs no more, so the matched person's fields stay in the app.
+export interface LookupResult {
+  exists: boolean;
+}
+
+// Whether a profile is already in the CRM. Read only: no transaction, no audit event, no event. Email is
+// unknown at lookup time, so only a saved profile URL claim can match.
+export function lookupCapture(ctx: Pick<ActionContext, 'db' | 'workspaceId'>, input: unknown): LookupResult {
+  const data = parseInput(lookupSchema, input);
+  const canonical = canonicalize(data.source, data.url);
+  return { exists: findExistingPerson(ctx, data.source, canonical, undefined) !== null };
 }

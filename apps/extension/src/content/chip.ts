@@ -1,44 +1,73 @@
 import { CONFIG_MESSAGE } from '../messages';
-import type { CapturePayload, CaptureResponse, ExtensionRequest } from '../messages';
+import type { CapturePayload, CaptureResponse, ExtensionRequest, LookupResponse } from '../messages';
 
 // The chip lives in a shadow root on a host div so site styles never leak in. Tokens follow docs/design.md.
+// Inline (next to the profile name) is the default look; the floating fallback adds fixed positioning.
 const STYLE = `
 :host { all: initial; }
 .chip {
   --accent: #15685B; --on-accent: #FFFFFF; --danger: #B42318; --ink-muted: #5B6472; --surface: #FFFFFF; --line: #E3E6EB;
-  position: fixed; right: 20px; bottom: 20px; z-index: 2147483647;
+  position: static; box-sizing: border-box; margin: 0; white-space: nowrap;
   font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
-  padding: 8px 14px; border: 0; border-radius: 6px; cursor: pointer;
+  display: inline-block; min-width: 11em; text-align: center;
+  padding: 3px 10px; border: 1px solid transparent; border-radius: 6px; cursor: pointer;
   background: var(--accent); color: var(--on-accent);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
+.chip[data-placement="floating"] { position: fixed; right: 20px; bottom: 20px; z-index: 2147483647; padding: 8px 14px; }
 .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .chip[data-state="sending"] { background: var(--surface); color: var(--ink-muted); box-shadow: inset 0 0 0 1px var(--line); cursor: progress; }
 .chip[data-state="error"] { background: var(--danger); }
+.chip[data-state="inCrm"] { background: transparent; color: var(--ink-muted); border-color: var(--line); box-shadow: none; cursor: default; }
+.chip[data-state="inCrm"][data-placement="floating"] { background: var(--surface); }
 @media (prefers-color-scheme: dark) {
   .chip { --accent: #43B39C; --on-accent: #15211E; --danger: #F0756A; --ink-muted: #959DAB; --surface: #1F232A; --line: #262B33; }
 }
 `;
 
-export type ChipState = 'idle' | 'sending' | 'added' | 'existing' | 'error';
+export type ChipState = 'idle' | 'sending' | 'added' | 'inCrm' | 'error';
+export type ChipPlacement = 'inline' | 'floating';
 
 const LABELS: Record<Exclude<ChipState, 'error'>, string> = {
   idle: 'Add to AgentCRM',
   sending: 'Adding',
   added: 'Added',
-  existing: 'Already in CRM',
+  inCrm: 'In CRM',
+};
+
+// The host carries inline styles only, set with !important so a site reset or a broad selector cannot zero it out.
+const HOST_STYLES: Record<ChipPlacement, Array<[string, string]>> = {
+  inline: [
+    ['display', 'inline-flex'],
+    ['vertical-align', 'middle'],
+    ['margin-left', '8px'],
+    ['visibility', 'visible'],
+  ],
+  // The fixed positioning lives on the chip inside the shadow root; the host only has to stay renderable.
+  floating: [
+    ['display', 'inline'],
+    ['visibility', 'visible'],
+  ],
 };
 
 export interface ChipConfig {
-  /** True when the URL is a page that shows a profile this script can capture. */
-  isProfile(url: URL): boolean;
+  /** Which site this script runs on; sent with the profile URL in the lookup. */
+  source: 'linkedin' | 'x';
+  /** The element the chip sits next to, or null when the page has not rendered it (the chip then floats). Must not throw. */
+  findAnchor(doc: Document): Element | null;
+  /**
+   * The canonical identity of the profile the URL shows, or null when it is not a profile page this script can
+   * capture. Query, hash, and subpages of one profile yield the same key (LinkedIn: the raw `/in/` id; X: the
+   * lowercased handle).
+   */
+  profileKey(url: URL): string | null;
   /** Builds the request body. Must not throw; the extractors guarantee a name. */
   build(doc: Document, url: URL): CapturePayload;
 }
 
-function send(request: ExtensionRequest): Promise<CaptureResponse | undefined> {
+function send<T>(request: ExtensionRequest): Promise<T | undefined> {
   try {
-    return Promise.resolve(chrome.runtime.sendMessage(request) as Promise<CaptureResponse | undefined>).catch(() => undefined);
+    return Promise.resolve(chrome.runtime.sendMessage(request) as Promise<T | undefined>).catch(() => undefined);
   } catch {
     return Promise.resolve(undefined);
   }
@@ -54,15 +83,40 @@ export function messageFor(response: CaptureResponse | undefined): { text: strin
   return { text: text === '' ? 'Could not add this profile' : text.slice(0, 140), needsOptions: false };
 }
 
+const INTERACTIVE = 'a, button, [role="link"], [role="button"]';
+
+/**
+ * Where the host goes: after the anchor, or after the outermost interactive ancestor wrapping it (a link, a
+ * button, or an element with either role) so a click or key press on the chip never reaches one.
+ */
+function insertionPoint(anchor: Element): Element {
+  let point: Element = anchor;
+  for (let wrapper = point.closest(INTERACTIVE); wrapper; wrapper = point.parentElement?.closest(INTERACTIVE) ?? null) {
+    point = wrapper;
+  }
+  return point;
+}
+
 export function startChip(config: ChipConfig): void {
   let host: HTMLDivElement | null = null;
   let button: HTMLButtonElement | null = null;
+  let placement: ChipPlacement = 'floating';
   let state: ChipState = 'idle';
   let errorNeedsOptions = false;
   let errorText = '';
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let lastHref = '';
+  let lastKey: string | null = null;
   let generation = 0;
+  let lookedUp = -1;
+
+  // The identity of the profile the address bar shows right now, or null off a profile page.
+  const currentKey = (): string | null => {
+    try {
+      return config.profileKey(new URL(location.href));
+    } catch {
+      return null;
+    }
+  };
 
   const render = (next: ChipState, text?: string) => {
     state = next;
@@ -70,6 +124,8 @@ export function startChip(config: ChipConfig): void {
     if (!button) return;
     button.dataset.state = next;
     button.textContent = next === 'error' ? errorText : LABELS[next];
+    if (next === 'inCrm') button.setAttribute('aria-disabled', 'true');
+    else button.removeAttribute('aria-disabled');
   };
 
   const reset = () => {
@@ -86,46 +142,81 @@ export function startChip(config: ChipConfig): void {
     button = null;
   };
 
-  const mount = () => {
-    if (host?.isConnected) return;
-    host = document.createElement('div');
-    host.id = 'agentcrm-capture-host';
-    const root = host.attachShadow({ mode: 'closed' });
+  const findAnchor = (): Element | null => {
+    try {
+      return config.findAnchor(document);
+    } catch {
+      return null;
+    }
+  };
+
+  const build = (where: ChipPlacement): HTMLDivElement => {
+    const el = document.createElement('div');
+    el.id = 'agentcrm-capture-host';
+    for (const [name, value] of HOST_STYLES[where]) el.style.setProperty(name, value, 'important');
+    const root = el.attachShadow({ mode: 'closed' });
     const style = document.createElement('style');
     style.textContent = STYLE;
     button = document.createElement('button');
     button.type = 'button';
     button.className = 'chip';
+    button.dataset.placement = where;
     button.setAttribute('aria-live', 'polite');
-    button.addEventListener('click', () => void onClick());
+    button.addEventListener('click', (event) => {
+      // The inline chip can sit inside a heading or link on the page; the click is ours alone.
+      event.preventDefault();
+      event.stopPropagation();
+      void onClick();
+    });
+    // Key presses on the chip are the chip's alone: the page's handlers never see them.
+    for (const type of ['keydown', 'keyup'] as const) button.addEventListener(type, (event) => event.stopPropagation());
     root.append(style, button);
-    render(state);
-    (document.body ?? document.documentElement).append(host);
+    return el;
   };
 
-  const settle = (next: ChipState, ms: number) => {
-    timer = setTimeout(() => render('idle'), ms);
-    render(next);
+  // True when the live host already sits where the current page wants it.
+  const inPlace = (anchor: Element | null): boolean => {
+    if (!host || !host.isConnected) return false;
+    if (anchor === null) return placement === 'floating';
+    return placement === 'inline' && host.parentNode === insertionPoint(anchor).parentNode;
+  };
+
+  const mount = () => {
+    const anchor = findAnchor();
+    if (inPlace(anchor)) return;
+    // Never two hosts: the old one goes before the new one is built, whether it was detached or misplaced.
+    unmount();
+    placement = anchor ? 'inline' : 'floating';
+    host = build(placement);
+    render(state);
+    if (anchor) insertionPoint(anchor).after(host);
+    else (document.body ?? document.documentElement).append(host);
   };
 
   const onClick = async () => {
-    if (state === 'sending' || state === 'added' || state === 'existing') return;
+    if (state === 'sending' || state === 'added' || state === 'inCrm') return;
     if (state === 'error') {
       await send({ kind: 'openOptions' });
       return;
     }
     const mine = generation;
+    const key = currentKey();
     render('sending');
     let response: CaptureResponse | undefined;
     try {
       const url = new URL(location.href);
-      response = await send({ kind: 'capture', payload: config.build(document, url) });
+      response = await send<CaptureResponse>({ kind: 'capture', payload: config.build(document, url) });
     } catch {
       response = undefined;
     }
-    if (mine !== generation) return;
+    if (mine !== generation || currentKey() !== key) return;
     if (response?.ok) {
-      settle(response.outcome === 'existing' ? 'existing' : 'added', 2500);
+      if (response.outcome === 'existing') {
+        render('inCrm');
+      } else {
+        render('added');
+        timer = setTimeout(() => render('inCrm'), 2500);
+      }
       return;
     }
     const failure = messageFor(response);
@@ -134,23 +225,41 @@ export function startChip(config: ChipConfig): void {
     if (!errorNeedsOptions) timer = setTimeout(() => render('idle'), 6000);
   };
 
+  // One lookup per profile page. Every failure is silent: capture stays the authority and the chip stays idle.
+  const lookup = async (url: URL, key: string) => {
+    const mine = generation;
+    const response = await send<LookupResponse>({
+      kind: 'lookup',
+      payload: { source: config.source, url: url.origin + url.pathname },
+    });
+    // Checked at reply time against the address bar, so a reply for one profile never paints another, even
+    // between two poll ticks.
+    if (mine !== generation || currentKey() !== key) return;
+    // A capture the user started meanwhile owns the state.
+    if (state === 'idle' && response?.ok === true && response.exists === true) render('inCrm');
+  };
+
   const check = () => {
-    const href = location.href;
-    if (href !== lastHref) {
-      lastHref = href;
+    const key = currentKey();
+    if (key !== lastKey) {
+      lastKey = key;
       reset();
     }
-    let profile = false;
-    try {
-      profile = config.isProfile(new URL(href));
-    } catch {
-      profile = false;
+    if (key === null) {
+      unmount();
+      return;
     }
-    if (profile) mount();
-    else unmount();
+    mount();
+    if (lookedUp !== generation) {
+      lookedUp = generation;
+      void lookup(new URL(location.href), key);
+    }
   };
 
   check();
-  window.addEventListener('popstate', check);
+  // A page script can dispatch a synthetic popstate; only the browser's own (trusted) ones count. The poll covers the rest.
+  window.addEventListener('popstate', (event) => {
+    if (event.isTrusted) check();
+  });
   setInterval(check, 800);
 }

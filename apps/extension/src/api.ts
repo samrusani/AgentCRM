@@ -1,5 +1,5 @@
 import { CONFIG_MESSAGE, DEFAULT_BASE_URL } from './messages';
-import type { CapturePayload, CaptureResponse } from './messages';
+import type { CapturePayload, CaptureResponse, LookupPayload, LookupResponse } from './messages';
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -67,6 +67,37 @@ export async function sendCapture(
       const body = (await res.json()) as { outcome?: unknown; person?: { name?: unknown } };
       const outcome = body.outcome === 'existing' ? 'existing' : 'created';
       return { ok: true, outcome, personName: typeof body.person?.name === 'string' ? body.person.name : '' };
+    } catch {
+      return { ok: false, code: 'http', message: 'The server sent a reply the extension could not read.' };
+    }
+  }
+  return readError(res);
+}
+
+/**
+ * One lookup request: is this profile already in the CRM? Never throws. A 404 (an older server without the
+ * endpoint), a 401, or a network failure all come back as ok: false, and the chip treats every one as silent.
+ */
+export async function sendLookup(
+  settings: { baseUrl?: unknown; token?: unknown },
+  payload: LookupPayload,
+  fetchImpl: FetchLike = fetch,
+): Promise<LookupResponse> {
+  const token = typeof settings.token === 'string' ? settings.token.trim() : '';
+  if (token === '') return { ok: false, code: 'unconfigured', message: CONFIG_MESSAGE };
+  let res: Response;
+  try {
+    // Only the two fields the endpoint accepts are sent, whatever the caller passed in.
+    const body = { source: payload.source, url: payload.url };
+    res = await postJson(normalizeBaseUrl(settings.baseUrl), '/api/capture/lookup', token, body, fetchImpl);
+  } catch {
+    return { ok: false, code: 'network', message: NETWORK_MESSAGE };
+  }
+  if (res.status === 200) {
+    try {
+      // The reply is { exists } and nothing else; anything beyond a literal true counts as not found.
+      const body = (await res.json()) as { exists?: unknown };
+      return { ok: true, exists: body.exists === true };
     } catch {
       return { ok: false, code: 'http', message: 'The server sent a reply the extension could not read.' };
     }

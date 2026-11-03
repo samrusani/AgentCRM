@@ -10,6 +10,7 @@ export {
   capturePerson,
   generateCaptureToken,
   getCaptureSettings,
+  lookupCapture,
   removeCaptureToken,
   verifyCaptureToken,
 } from './capture.js';

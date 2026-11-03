@@ -85,3 +85,11 @@ export function extractXProfile(doc: Document, url: URL): XProfile {
     website: attempt(() => cleanText(doc.querySelector('[data-testid="UserUrl"]')?.textContent, 500)),
   });
 }
+
+/**
+ * The element the chip sits next to: the name row in the profile header, the same UserName test id the
+ * header layer above reads. Pure over the document. Null when the header has not rendered.
+ */
+export function findXNameAnchor(doc: Document): Element | null {
+  return doc.querySelector('[data-testid="UserName"]');
+}

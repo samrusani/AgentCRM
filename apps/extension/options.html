@@ -45,7 +45,7 @@
 <body>
   <main>
     <h1>AgentCRM capture</h1>
-    <p>Captures the one LinkedIn or X profile you are viewing, when you click. It sends it only to the server below.</p>
+    <p>Captures the one LinkedIn or X profile you are viewing, and only when you click. Viewing a profile checks it against your CRM so the button can say In CRM, and that check only ever talks to a local server address. Nothing else runs in the background.</p>
     <label for="baseUrl">Server address</label>
     <input id="baseUrl" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://localhost:4720" aria-describedby="addressNote">
     <p id="addressNote" class="hint caution" role="status" aria-live="polite" hidden>This address is not on this computer. The token will be sent there.</p>

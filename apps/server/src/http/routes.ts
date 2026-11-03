@@ -5,6 +5,7 @@ import {
   addSuppression,
   bearerToken,
   capturePerson,
+  lookupCapture,
   configureAgentmailConnector,
   configureAnthropicConnector,
   completeGmailOAuth,
@@ -163,7 +164,7 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   app.get('/api/templates', async () => ({ items: listTemplates(db, workspaceId()), nextCursor: null }));
   app.post('/api/workspace/template', async (request) => switchTemplate(context(), request.body));
 
-  // The two capture routes are the only ones that need a token. The guard runs before the body is parsed.
+  // The capture routes (verify, lookup, capture) are the only ones that need a token. The guard runs before the body is parsed.
   const captureGuard = async (request: FastifyRequest): Promise<void> => {
     verifyCaptureToken(db, workspaceId(), bearerToken(request.headers.authorization));
   };
@@ -177,6 +178,9 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
     return reply.status(204).send();
   });
   app.post('/api/capture/verify', { onRequest: captureGuard }, async () => ({ ok: true, workspace: requireWorkspace(db).name }));
+  app.post('/api/capture/lookup', { onRequest: captureGuard }, async (request) =>
+    lookupCapture({ db, workspaceId: workspaceId() }, request.body),
+  );
   app.post('/api/capture', { onRequest: captureGuard }, async (request, reply) => {
     const result = capturePerson(context(), request.body);
     reply.status(result.outcome === 'created' ? 201 : 200);

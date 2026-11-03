@@ -21,7 +21,7 @@ import {
   errorMessage,
   type MenuItem,
 } from '../components/common';
-import { SheetSection, Timeline } from '../components/record';
+import { NoteForm, SheetSection, Timeline } from '../components/record';
 import { VirtualTable, type Column } from '../components/VirtualTable';
 import { describeDue, formatAmount, humanize } from '../lib/format';
 import { useUI } from '../lib/ui';
@@ -553,7 +553,8 @@ function OpportunitySheet({
         </form>
       </SheetSection>
 
-      <SheetSection title="Activity">
+      <SheetSection title="Notes and activity">
+        <NoteForm entityType="opportunity" entityId={opportunity.id} />
         {activities.isPending ? <Loading what="activity" /> : null}
         {activities.isError ? <ErrorState what="activity" error={activities.error} onRetry={() => void activities.refetch()} /> : null}
         {activities.data ? <Timeline activities={activities.data} /> : null}

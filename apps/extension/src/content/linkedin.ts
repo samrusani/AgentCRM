@@ -1,9 +1,11 @@
-import { extractLinkedinProfile, isProfilePath } from '../extract/linkedin';
+import { extractLinkedinProfile, findLinkedinNameAnchor, isProfilePath } from '../extract/linkedin';
 import { compact } from '../extract/common';
 import { startChip } from './chip';
 
 startChip({
-  isProfile: (url) => isProfilePath(url.pathname) !== null,
+  source: 'linkedin',
+  findAnchor: findLinkedinNameAnchor,
+  profileKey: (url) => isProfilePath(url.pathname),
   build: (doc, url) => {
     const profile = extractLinkedinProfile(doc, url);
     return compact({

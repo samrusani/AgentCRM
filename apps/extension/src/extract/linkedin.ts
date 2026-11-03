@@ -154,3 +154,11 @@ export function extractLinkedinProfile(doc: Document, url: URL): LinkedinProfile
     email: pick('email'),
   });
 }
+
+/**
+ * The element the chip sits next to: the profile name heading, the same first h1 the heading layer above reads.
+ * Pure over the document. Null when the page has no h1 yet (profile pages render the header late).
+ */
+export function findLinkedinNameAnchor(doc: Document): Element | null {
+  return doc.querySelector('h1');
+}

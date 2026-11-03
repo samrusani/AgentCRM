@@ -153,6 +153,12 @@ export function PersonSheet({
             onToggle={toggleClaim}
           />
 
+          <SheetSection title="Notes and activity">
+            <NoteForm entityType="person" entityId={id} />
+            <PersonFollowupLine personId={id} />
+            <Timeline activities={person.activities} prepareSend />
+          </SheetSection>
+
           <SheetSection title="Opportunities">
             <OpportunityList opportunities={person.opportunities} />
           </SheetSection>
@@ -167,12 +173,6 @@ export function PersonSheet({
                 ))}
               </ul>
             )}
-          </SheetSection>
-
-          <SheetSection title="Activity">
-            <PersonFollowupLine personId={id} />
-            <NoteForm entityType="person" entityId={id} />
-            <Timeline activities={person.activities} prepareSend />
           </SheetSection>
           <p className="muted sheet__foot">Updated {formatAgo(person.updatedAt)}, version <span className="num">{person.version}</span></p>
         </>
@@ -267,13 +267,13 @@ export function OrganizationSheet({
             )}
           </SheetSection>
 
-          <SheetSection title="Opportunities">
-            <OpportunityList opportunities={organization.opportunities} />
-          </SheetSection>
-
-          <SheetSection title="Activity">
+          <SheetSection title="Notes and activity">
             <NoteForm entityType="organization" entityId={id} />
             <Timeline activities={organization.activities} />
+          </SheetSection>
+
+          <SheetSection title="Opportunities">
+            <OpportunityList opportunities={organization.opportunities} />
           </SheetSection>
           <p className="muted sheet__foot">
             Updated {formatAgo(organization.updatedAt)}, version <span className="num">{organization.version}</span>

@@ -199,8 +199,9 @@ export function BrowserExtensionCard() {
           ) : null}
 
           <p className="muted">
-            The extension captures the one profile you are viewing when you click, sends it only to this computer, and
-            never runs in the background.
+            The extension captures a profile only when you click. Viewing a profile checks it against your CRM so the
+            button can say In CRM, and that check only ever talks to a local server address. Nothing else runs in the
+            background.
           </p>
         </div>
       ) : null}
