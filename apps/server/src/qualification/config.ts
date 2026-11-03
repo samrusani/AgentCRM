@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Db } from '../db.js';
+import { defaultTemplate, getTemplate } from '../templates.js';
 
 export const criterionTargets = ['person', 'organization'] as const;
 export const criterionFields = ['title', 'location', 'tags', 'email', 'name', 'kind', 'domain'] as const;
@@ -79,52 +80,6 @@ export const configSchema = z
     }
   });
 
-// The startup fundraising template defaults. People can edit or replace them in Settings.
-export function defaultQualificationConfig(): QualificationConfig {
-  return {
-    exclusions: [
-      {
-        id: 'excl-do-not-contact',
-        label: 'Tagged do not contact',
-        target: 'person',
-        field: 'tags',
-        operator: 'contains',
-        values: ['do-not-contact'],
-        enabled: true,
-      },
-    ],
-    criteria: [
-      {
-        id: 'crit-org-fund',
-        label: 'Organization is a fund',
-        target: 'organization',
-        field: 'kind',
-        operator: 'equals',
-        values: ['fund'],
-        enabled: true,
-      },
-      {
-        id: 'crit-title-investing-role',
-        label: 'Title is partner, principal, scout, or head of',
-        target: 'person',
-        field: 'title',
-        operator: 'contains',
-        values: ['partner', 'principal', 'scout', 'head of'],
-        enabled: true,
-      },
-      {
-        id: 'crit-tag-seed',
-        label: 'Tagged seed',
-        target: 'person',
-        field: 'tags',
-        operator: 'contains',
-        values: ['seed'],
-        enabled: true,
-      },
-    ],
-  };
-}
-
 export function readSettings(db: Db, workspaceId: string): Record<string, unknown> {
   const row = db.prepare('SELECT settings FROM workspace WHERE id = ?').get(workspaceId) as { settings: string | null } | undefined;
   if (!row || !row.settings) return {};
@@ -148,5 +103,16 @@ export function readQualificationConfig(db: Db, workspaceId: string): ReadConfig
     const parsed = configSchema.safeParse(saved);
     if (parsed.success) return parsed.data;
   }
-  return { ...defaultQualificationConfig(), defaulted: true };
+  return { ...currentTemplateDefaults(db, workspaceId), defaulted: true };
+}
+
+// The defaults of the workspace's current template. A template id this build does not know falls back to startup fundraising.
+export function currentTemplateDefaults(db: Db, workspaceId: string): QualificationConfig {
+  const row = db.prepare('SELECT template FROM workspace WHERE id = ?').get(workspaceId) as { template: string } | undefined;
+  return (getTemplate(row?.template ?? defaultTemplate) ?? getTemplate(defaultTemplate)!).defaultQualificationConfig();
+}
+
+// The startup fundraising defaults. The template registry owns them; this stays for callers that import it from here.
+export function defaultQualificationConfig(): QualificationConfig {
+  return getTemplate(defaultTemplate)!.defaultQualificationConfig();
 }

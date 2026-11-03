@@ -5,7 +5,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { api } from './client';
+import { ApiError, api } from './client';
 import { useEventConnection } from './events';
 import type {
   AgentMessageInput,
@@ -19,6 +19,7 @@ import type {
   Opportunity,
   QualificationConfig,
   StageSendInput,
+  TemplateSwitchInput,
 } from './types';
 import { isRunActive } from '../lib/format';
 import { useUI } from '../lib/ui';
@@ -27,6 +28,51 @@ const PAGE_SIZE = 200;
 
 export function useWorkspace() {
   return useQuery({ queryKey: ['workspace'], queryFn: api.workspace, staleTime: 60_000 });
+}
+
+export function useTemplates() {
+  return useQuery({ queryKey: ['templates'], queryFn: api.templates, staleTime: 60_000 });
+}
+
+// Opportunity counts per stage id for one pipeline, across every status.
+export function useStageCounts(pipelineId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['stage-counts', pipelineId ?? ''],
+    queryFn: () => api.opportunities.countByStage(pipelineId as string),
+    enabled: enabled && Boolean(pipelineId),
+    staleTime: 0,
+  });
+}
+
+export function useSwitchTemplate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: TemplateSwitchInput) => api.switchTemplate(input),
+    onSuccess: () => {
+      for (const key of [
+        'workspace',
+        'templates',
+        'pipelines',
+        'opportunities',
+        'stage-counts',
+        'qualification',
+        'activities',
+        'people',
+        'person',
+        'today',
+      ]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.code === 'version_conflict') {
+        void queryClient.invalidateQueries({ queryKey: ['workspace'] });
+        void queryClient.invalidateQueries({ queryKey: ['pipelines'] });
+        void queryClient.invalidateQueries({ queryKey: ['opportunities'] });
+        void queryClient.invalidateQueries({ queryKey: ['stage-counts'] });
+      }
+    },
+  });
 }
 
 export function useHealth() {

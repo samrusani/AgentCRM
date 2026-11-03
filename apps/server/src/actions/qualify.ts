@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { configSchema, defaultQualificationConfig, readQualificationConfig, readSettings, type QualificationConfig } from '../qualification/config.js';
+import { configSchema, currentTemplateDefaults, readQualificationConfig, readSettings, type QualificationConfig } from '../qualification/config.js';
 import { evaluatePerson, type ClaimFact, type PersonFacts } from '../qualification/evaluate.js';
 import { getRun, listRunSteps } from '../queries/runs.js';
 import type { Row, RunCounts } from '../records.js';
@@ -22,7 +22,7 @@ export function scheduleQualifyRun(tx: Tx, runId: string, runAt: string): void {
   enqueueJobIn(tx, qualifyJobKind, { runId, workspaceId: tx.workspaceId }, runAt);
 }
 
-function writeConfigIn(tx: Tx, config: QualificationConfig): void {
+export function writeConfigIn(tx: Tx, config: QualificationConfig): void {
   const settings = { ...readSettings(tx.db, tx.workspaceId), qualification: config };
   tx.db.prepare('UPDATE workspace SET settings = ? WHERE id = ?').run(JSON.stringify(settings), tx.workspaceId);
   tx.audit('qualification.update', 'workspace', tx.workspaceId, {
@@ -43,7 +43,7 @@ export function saveQualificationConfig(ctx: ActionContext, input: unknown): Qua
 
 // Writes the template defaults when no config is saved yet. Used by the seed.
 export function saveDefaultQualificationConfig(ctx: ActionContext): QualificationConfig {
-  return saveQualificationConfig(ctx, defaultQualificationConfig());
+  return saveQualificationConfig(ctx, currentTemplateDefaults(ctx.db, ctx.workspaceId));
 }
 
 interface QualifyScope {

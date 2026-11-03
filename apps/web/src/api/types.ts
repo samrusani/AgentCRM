@@ -7,6 +7,25 @@ export interface Workspace {
   id: string;
   name: string;
   template: string;
+  // The workspace version, used as expectedVersion when switching templates.
+  version?: number;
+}
+
+export interface WorkspaceTemplate {
+  id: string;
+  name: string;
+  description: string;
+  pipelineName: string;
+  stageNames: string[];
+  current: boolean;
+}
+
+export interface TemplateSwitchInput {
+  template: string;
+  // Existing stage id to a stage name of the target template. A stage left out is removed.
+  stageMapping: Record<string, string>;
+  replaceQualification: boolean;
+  expectedVersion: number;
 }
 
 export interface Health {

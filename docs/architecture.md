@@ -184,6 +184,28 @@ Counts for draft runs: `processed`, `found` (drafted), `flagged` (skipped or fai
 
 API facts the implementation must follow (current as of this writing): thinking is always on for these models, so the `thinking` parameter is omitted; depth is controlled with `output_config.effort` (`low` for chat, `medium` for drafting). Forced `tool_choice` `any` or `tool` returns a 400 on these models; tools use `auto` with `strict: true` schemas. Structured outputs use `output_config.format`. Refusals surface as HTTP 200 with `stop_reason: "refusal"`; server side fallbacks are enabled with `fallbacks: "default"` plus the beta header `server-side-fallback-2026-07-01`. The stable system prompt carries a `cache_control` breakpoint so batch drafting reuses the prompt cache.
 
+## Mail providers
+
+Sending and inbound sync run through one adapter interface so every provider obeys the same approval, suppression, cap, and honesty rules. A mail provider implements: `submit(intent, message)` returning provider message and thread ids or throwing a typed error; `reconcileUnknown(intent)`, called on the reconcile schedule after an unknown outcome, returning accepted (with ids), not found, or unavailable; `listInbound(cursor)` returning normalized messages (`providerMessageId`, `from`, `to`, `subject`, `text`, the `Message-ID`, `In-Reply-To` and `References` headers, `receivedAt`) plus the next cursor; and an account check. The send intent state machine, preflight, recheck before submit, daily caps, suppression, reply and opt out handling, and the rule that agents can never send are provider independent and live outside the adapters.
+
+Connector kinds `agentmail` and `gmail` are mail connectors (migration 011 widens the connector CHECK and adds `send_intent.provider`, default `agentmail`, plus `send_intent.message_id_header`). Several mail connectors may be configured; exactly one is in use for sending and inbound sync, stored as `workspace.settings.mailProvider`, set automatically on first connect and switchable in Settings with the same "Use this provider" pattern as model providers. Mail readiness means: the in use connector is connected and has a sending address. Preflight and submit recheck read the in use connector; removing it blocks open intents with the existing reason. Intents carry the provider that staged them and are submitted and reconciled only by that provider; switching providers does not re-route open intents, and queued intents staged for a removed or switched away provider block with the connector_removed reason rather than silently sending from another account.
+
+Duplicate send protection is per provider, declared by the adapter:
+
+- `agentmail`: provider idempotency keys (the intent id). Reconcile may retry the same request with the same key within the provider's roughly one day window, which cannot double send.
+- `gmail`: no provider idempotency exists, so the app relies on a self generated `Message-ID` (`<ac-{intentId}-{random}@{sender domain}>`) persisted on the intent in its own transaction before the submit request leaves the process. Reconcile after an unknown outcome is READ ONLY: it searches Gmail with `rfc822msgid:` for that header; found means accepted (ids recorded), not found keeps the intent unknown and re-checked on the schedule for a day, after which it stays unknown with a task telling the user to check Gmail's sent mail. A Gmail submit is never retried, because a second POST could send a second email.
+
+## Gmail connector
+
+Connector kind `gmail`. Each user creates their own Google Cloud OAuth client (Desktop app type) and pastes its client id and client secret into the Gmail card; the walkthrough lives in docs/connect-gmail.md and the card links it. This is the honest self hosted pattern: the app never ships a shared client, mailbox access stays first party between the user and Google, and the card states the two consequences plainly: a client left in Testing status expires its consent every seven days (add yourself as a test user and sign in again weekly), and publishing it as In production without verification shows Google's unverified app warning during sign in. Scopes requested, both named on the card: `gmail.send` (sending) and `gmail.readonly` (replies, bounces, and the duplicate protection search; Google classes it restricted, which is fine for a client you own). Tokens are stored unencrypted in the local database like every other secret, with the same sentence on the card.
+
+- OAuth: authorization code with PKCE (S256) and a state nonce, authorization URL `https://accounts.google.com/o/oauth2/v2/auth`, token endpoint `https://oauth2.googleapis.com/token`, redirect `http://127.0.0.1:<api port>/api/connectors/gmail/oauth/callback` (loopback, allowed for Desktop clients). `PUT /api/connectors/gmail` stores `{ clientId, clientSecret }`; `POST /api/connectors/gmail/oauth/start` returns the authorization URL and persists the pending state and verifier; the callback exchanges the code, reads the account's address and current `historyId` from `users.getProfile`, stores tokens, address, and the history cursor, and redirects the browser to the connectors page. `DELETE` behaves like removing AgentMail. Access tokens are refreshed ahead of use; `invalid_grant` marks the connector error with the sentence about Testing mode consents expiring after seven days.
+- Base URLs `https://accounts.google.com`, `https://oauth2.googleapis.com`, and `https://gmail.googleapis.com`, each overridable (`AGENTCRM_GOOGLE_AUTH_BASE`, `AGENTCRM_GOOGLE_TOKEN_BASE`, `AGENTCRM_GMAIL_BASE`) for tests.
+- Submit: the app composes a plain text RFC 2822 message (From, To, Subject, Date, Message-ID, MIME-Version, Content-Type text/plain charset utf-8, and In-Reply-To plus References when replying in a known thread), base64url encodes it, and POSTs `users/me/messages/send` with `{ raw }` (plus `threadId` for replies). The response ids map to `provider_message_id` and `provider_thread_id`. A 401 refreshes the token once and retries, which is safe because Google rejected the request before accepting any mail; a definitive 4xx fails the intent with the reason; a timeout or 5xx is an unknown outcome handled by the read only reconcile above.
+- Inbound: poll `users.history.list` from the stored cursor with `historyTypes=messageAdded` and `labelId=INBOX`, fetch each new message with `users.messages.get` (format full), normalize, and advance the cursor only after the batch is stored. A 404 on the cursor (expired history) resets the cursor to the account's current `historyId` and writes an honest connector status note that a sync gap may have skipped replies in between. Polling uses the existing mail poll interval and backoff rules.
+- Bounces: Gmail has no bounce API. Inbound messages from a mailer daemon are parsed conservatively: only when the report carries the original self generated `Message-ID` (References or an embedded original header) is the matching intent marked bounced, with the usual suppression row and task; anything less certain stays an ordinary inbound message.
+- Caps: the app's own 50 accepted sends per inbox per day applies unchanged, and the card notes Google's own daily limits (consumer accounts around 500 recipients per day, Workspace higher) without promising them.
+
 ## Email: the AgentMail connector and sending
 
 Email is the only place AgentCRM touches the outside world on the user's behalf, so it carries the strictest rules in the product. Nothing is ever submitted to the provider without a human approving the exact frozen message, and an unknown outcome is surfaced, never resolved by guessing.
@@ -225,7 +247,9 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 | Method and path | Purpose |
 | --- | --- |
 | GET `/api/health` | `{ ok, version, dbPath }` with dbPath relative to repo root |
-| GET `/api/workspace` | The single demo workspace `{ id, name, template }` |
+| GET `/api/workspace` | The single demo workspace `{ id, name, template, version }` |
+| GET `/api/templates` | The template registry `{ items: [{ id, name, description, pipelineName, stageNames, current }] }` |
+| POST `/api/workspace/template` | Switch the template (see Templates); returns the updated workspace |
 | GET `/api/today` | `{ tasksDue, approvalsPending, runsActive, counts, dayStart, dayEnd }` for the Today screen |
 | GET `/api/people?q=&cursor=&limit=` | Search by name, email, organization name |
 | GET `/api/people/:id` | Person plus `organization`, `affiliationsSummary`, `claims`, `activities`, `tasks`, `opportunities` |
@@ -287,6 +311,29 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 
 MCP tools call the same actions as the HTTP routes. No tool can decide an approval.
 
+## Templates
+
+A template defines the vocabulary of a workspace: the pipeline name, the ordered stage names, and the default qualification config. Three templates ship, defined in code in one registry (`templates.ts`), versioned with the app:
+
+| Id | Name | Pipeline | Stages |
+| --- | --- | --- | --- |
+| `startup-fundraising` | Startup fundraising | Fundraising | Research, Qualified, Introduction or outreach, Meeting, Diligence, Commitment, Closed |
+| `fund-lp` | Fund LP fundraising | LP fundraising | Research, Qualified, Introduction or outreach, Meeting, Due diligence, Soft commitment, Subscribed |
+| `client-sales` | Client sales | Sales | Research, Qualified, Outreach, Discovery, Proposal, Negotiation, Closed |
+
+Default qualification configs per template follow the same shape as the startup one: `fund-lp` qualifies people at funds, family offices, and other allocators (organization kind `fund`; titles partner, principal, chief investment officer, head of, director, family office; tag `lp`), `client-sales` qualifies buyers at companies (organization kind `company`; titles founder, chief executive officer, chief operating officer, vp, head of, director; tag `prospect`). The do not contact exclusion is in every template. Records, tags, claims, tasks, and history never belong to a template.
+
+- `GET /api/templates` lists `{ id, name, description, pipelineName, stageNames, current }`.
+- `POST /api/workspace/template` switches the workspace template in one transaction. Body: `{ template, stageMapping, replaceQualification, expectedVersion }` where `expectedVersion` is the workspace version and `stageMapping` maps every EXISTING stage id to a new stage name from the target template. Every old stage that holds at least one opportunity must be mapped; the server rejects the request naming the unmapped stages otherwise (a stage with no opportunities may be omitted and simply disappears). The transaction renames the pipeline, creates the new stage set in order, moves every opportunity per the mapping writing one `stage_change` activity each (actor `system:template`), deletes the old stages, replaces the qualification config with the target template's defaults when `replaceQualification` is true (otherwise the existing config stays as it is, even where it names tags the new template does not use), updates `workspace.template`, bumps the workspace version (migration 011 adds `workspace.version`), writes one audit event (`workspace.template_change` with from, to, per stage moved counts, and the count of stage history events that pointed at removed empty stages), and emits `record_updated` for the workspace and each moved opportunity. Stage history rows that reference a mapped stage are re-pointed to its replacement; rows pointing only at a removed empty stage are dropped and counted in the audit detail, while the `stage_change` activities keep the real before and after names in text. When `replaceQualification` is false and no config was ever saved, the old template's defaults are saved first so the rules in force do not silently change. A version mismatch is the usual 409.
+- Switching back and forth is allowed; nothing is remembered from the previous template beyond the stage history on each opportunity.
+
+## Backup and restore
+
+Two CLI commands (and root npm scripts `backup` and `restore`), documented in the README:
+
+- `crm backup [directory]` writes a consistent snapshot of the live database with better-sqlite3's online backup API (safe under WAL while the server runs) to `<directory or data/backups>/agentcrm-backup-<UTC timestamp>.db`, never overwriting an existing file, and prints the path and size. The backup contains everything, connector tokens included, and the command says so. Relative paths given to backup and restore resolve against the folder npm was run from, so the root scripts work from the repository root.
+- `crm restore <file>` replaces the local database with the snapshot. Safety order: it refuses while the API server answers on the configured port (stop the server first); it opens the snapshot read only and checks it is an AgentCRM database whose applied migrations are a subset of the ones this build knows (a snapshot from a newer build is refused by name); it moves the current database files (db, wal, shm) to `data/agentcrm.pre-restore-<UTC timestamp>.db` aside rather than deleting them, then copies the snapshot into place. The next server start runs any pending migrations forward. The command prints what it moved where.
+
 ## CLI
 
 Binary name `crm`, implemented in the server workspace, JSON output with `--json`.
@@ -301,6 +348,8 @@ crm runs get <id> [--json]
 crm import <file.csv> [--preview] [--json]
 crm approvals list [--json]
 crm approvals decide <id> approve|reject [--note <text>] [--json]
+crm backup [directory]
+crm restore <file>
 crm mcp
 ```
 

@@ -17,6 +17,8 @@ Commands:
   approvals list         List approvals, newest first
   approvals decide <id> approve|reject
                          Decide an approval as the local user
+  backup [directory]     Write a snapshot of the database (default: data/backups)
+  restore <file>         Replace the database with a snapshot, after the server is stopped
   mcp                    Start the MCP server over stdio
 
 Options:
@@ -341,6 +343,26 @@ async function approvalsCommand(parsed: Parsed): Promise<number> {
   throw new UsageError('Use "crm approvals list" or "crm approvals decide <id> approve|reject".');
 }
 
+async function backupCommand(parsed: Parsed): Promise<number> {
+  const { backupDatabase } = await import('./backup.js');
+  const { resolveDatabasePath } = await import('./paths.js');
+  const directory = parsed.positionals[1];
+  const result = await backupDatabase({ databasePath: resolveDatabasePath(), ...(directory ? { directory } : {}) });
+  print(parsed, { path: result.displayPath, bytes: result.bytes }, () => result.message);
+  return 0;
+}
+
+async function restoreCommand(parsed: Parsed): Promise<number> {
+  const file = parsed.positionals[1];
+  if (!file) throw new UsageError('Give a backup file, for example: crm restore data/backups/agentcrm-backup-20260301T090000Z.db');
+  const { restoreDatabase } = await import('./backup.js');
+  const { apiPort } = await import('./config.js');
+  const { resolveDatabasePath } = await import('./paths.js');
+  const result = await restoreDatabase({ snapshot: file, databasePath: resolveDatabasePath(), port: apiPort() });
+  print(parsed, { restored: true, moved: result.moved.map((entry) => ({ from: path.basename(entry.from), to: path.basename(entry.to) })) }, () => result.message);
+  return 0;
+}
+
 export async function main(argv: string[]): Promise<number> {
   let parsed: Parsed;
   try {
@@ -372,6 +394,10 @@ export async function main(argv: string[]): Promise<number> {
         return await importCommand(parsed);
       case 'approvals':
         return await approvalsCommand(parsed);
+      case 'backup':
+        return await backupCommand(parsed);
+      case 'restore':
+        return await restoreCommand(parsed);
       case 'serve': {
         const { startServer, runUntilSignal } = await import('./server.js');
         runUntilSignal(await startServer());

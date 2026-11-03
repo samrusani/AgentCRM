@@ -44,6 +44,8 @@ Open http://127.0.0.1:5173 in your browser. The API listens on http://127.0.0.1:
 | Evidence: field claims with source and verification status | Working, synthetic sources |
 | Apify imports: run any store Actor, staged rows, dedupe, review before anything is saved | Working, verified against a stubbed Apify API; bring your own Apify account |
 | CSV import: column mapping, staged rows, same dedupe and review as Apify | Working, UI and CLI |
+| Templates: startup fundraising, fund LP fundraising, client sales, with a guided switch that maps stages | Working |
+| Backup and restore: consistent snapshots and a guarded restore | Working, CLI |
 | LinkedIn lead capture: paste a post URL, read the people and organizations named in the post text, scrape reactions and comments, enrich new people, one review | Working, verified against stubbed Apify and model APIs; runs on your own Apify account and model key |
 | Qualification: editable criteria, per criterion verdicts with evidence, fit sort | Working; unknown never counts as a match |
 | MCP server over stdio | Working, read and propose tools; can start qualify runs, allowlisted Apify runs, allowlisted lead captures, and budgeted draft runs |

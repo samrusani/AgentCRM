@@ -20,6 +20,7 @@ export {
   saveQualificationConfig,
 } from './qualify.js';
 export * from './runs.js';
+export { listTemplates, switchTemplate } from './templates.js';
 export * from './workspace.js';
 export { syncMail, syncMailIfDue } from './mailSync.js';
 export {

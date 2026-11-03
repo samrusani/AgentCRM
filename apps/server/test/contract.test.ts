@@ -584,4 +584,40 @@ describe('web client contract', () => {
 
     expect((await call('DELETE', '/api/connectors/agentmail')).status).toBe(204);
   });
+
+  it('lists templates and switches the workspace template', async () => {
+    const workspace = await call('GET', '/api/workspace');
+    expect(Object.keys(workspace.body).sort()).toEqual(['id', 'name', 'template', 'version']);
+    const templatesResponse = await call('GET', '/api/templates');
+    expect(templatesResponse.status).toBe(200);
+    expect(templatesResponse.body.items.map((item: { id: string; current: boolean }) => [item.id, item.current])).toEqual([
+      ['startup-fundraising', true],
+      ['fund-lp', false],
+      ['client-sales', false],
+    ]);
+    const pipelines = await call('GET', '/api/pipelines');
+    const stageNames = ['Research', 'Qualified', 'Outreach', 'Discovery', 'Proposal', 'Negotiation', 'Closed'];
+    const stageMapping = Object.fromEntries(
+      pipelines.body.items[0].stages.map((stage: { id: string; seq: number }) => [stage.id, stageNames[stage.seq - 1]]),
+    );
+    const switched = await call('POST', '/api/workspace/template', {
+      template: 'client-sales',
+      stageMapping,
+      replaceQualification: true,
+      expectedVersion: workspace.body.version,
+    });
+    expect(switched.status).toBe(200);
+    expect(switched.body).toEqual({ ...workspace.body, template: 'client-sales', version: workspace.body.version + 1 });
+    const after = await call('GET', '/api/pipelines');
+    expect(after.body.items[0].name).toBe('Sales');
+    expect(after.body.items[0].stages.map((stage: { name: string }) => stage.name)).toEqual(stageNames);
+    const conflict = await call('POST', '/api/workspace/template', {
+      template: 'fund-lp',
+      stageMapping: {},
+      replaceQualification: false,
+      expectedVersion: workspace.body.version,
+    });
+    expect(conflict.status).toBe(409);
+    expect(conflict.body.error).toMatchObject({ code: 'version_conflict', current: switched.body });
+  });
 });

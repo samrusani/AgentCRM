@@ -1,19 +1,12 @@
 import type { Db } from '../db.js';
 import { findWorkspace } from '../queries/workspace.js';
 import { type IdPrefix, randomId } from '../ids.js';
+import { defaultTemplate, requireTemplate } from '../templates.js';
 
+export { defaultTemplate };
 export const defaultWorkspaceName = 'Demo workspace';
-export const defaultTemplate = 'startup-fundraising';
-export const pipelineName = 'Fundraising';
-export const stageNames = [
-  'Research',
-  'Qualified',
-  'Introduction or outreach',
-  'Meeting',
-  'Diligence',
-  'Commitment',
-  'Closed',
-] as const;
+export const pipelineName = requireTemplate(defaultTemplate).pipelineName;
+export const stageNames = requireTemplate(defaultTemplate).stageNames;
 
 export interface BootstrapOptions {
   now?: () => string;
@@ -26,6 +19,7 @@ export function ensureWorkspace(db: Db, options: BootstrapOptions = {}) {
   if (existing) return existing;
   const now = options.now ?? (() => new Date().toISOString());
   const newId = options.newId ?? randomId;
+  const template = requireTemplate(defaultTemplate);
   db.transaction(() => {
     const timestamp = now();
     const workspaceId = newId('wsp');
@@ -33,16 +27,16 @@ export function ensureWorkspace(db: Db, options: BootstrapOptions = {}) {
       workspaceId,
       timestamp,
       defaultWorkspaceName,
-      defaultTemplate,
+      template.id,
     );
     const pipelineId = newId('pip');
     db.prepare('INSERT INTO pipeline (id, created_at, workspace_id, name) VALUES (?, ?, ?, ?)').run(
       pipelineId,
       timestamp,
       workspaceId,
-      pipelineName,
+      template.pipelineName,
     );
-    stageNames.forEach((name, index) => {
+    template.stageNames.forEach((name, index) => {
       db.prepare('INSERT INTO stage (id, created_at, pipeline_id, name, seq) VALUES (?, ?, ?, ?, ?)').run(
         newId('stg'),
         timestamp,

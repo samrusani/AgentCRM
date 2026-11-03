@@ -18,6 +18,8 @@
     "test": "vitest run",
     "seed": "tsx src/cli.ts seed",
     "doctor": "tsx src/cli.ts doctor",
+    "backup": "tsx src/cli.ts backup",
+    "restore": "tsx src/cli.ts restore",
     "mcp": "tsx src/cli.ts mcp",
     "typecheck": "tsc -p tsconfig.test.json"
   },

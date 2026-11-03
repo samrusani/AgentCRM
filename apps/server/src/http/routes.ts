@@ -25,6 +25,7 @@ import {
   getApifyActor,
   getModelProvider,
   liftSuppression,
+  listTemplates,
   listAgentmailInboxes,
   listOllamaModels,
   moveOpportunityStage,
@@ -36,6 +37,7 @@ import {
   setModelProvider,
   stageCsvImport,
   startRun,
+  switchTemplate,
   updateOpportunity,
   updateOrganization,
   updatePerson,
@@ -131,9 +133,12 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   }));
 
   app.get('/api/workspace', async () => {
-    const { id, name, template } = requireWorkspace(db);
-    return { id, name, template };
+    const { id, name, template, version } = requireWorkspace(db);
+    return { id, name, template, version };
   });
+
+  app.get('/api/templates', async () => ({ items: listTemplates(db, workspaceId()), nextCursor: null }));
+  app.post('/api/workspace/template', async (request) => switchTemplate(context(), request.body));
 
   app.get('/api/today', async () => getToday(db, workspaceId()));
 

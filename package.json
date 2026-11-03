@@ -14,7 +14,9 @@
     "seed": "npm run seed --prefix apps/server",
     "build": "npm run build --prefix apps/server && npm run build --prefix apps/web",
     "test": "npm run test --prefix apps/server",
-    "doctor": "npm run doctor --prefix apps/server"
+    "doctor": "npm run doctor --prefix apps/server",
+    "backup": "npm run backup --prefix apps/server --",
+    "restore": "npm run restore --prefix apps/server --"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

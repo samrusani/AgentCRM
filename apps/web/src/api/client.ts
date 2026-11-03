@@ -54,7 +54,9 @@ import type {
   Suppression,
   Task,
   TodayData,
+  TemplateSwitchInput,
   Workspace,
+  WorkspaceTemplate,
 } from './types';
 
 export class ApiError extends Error {
@@ -701,6 +703,9 @@ export interface ListParams {
 export const api = {
   health: () => request<Health>('GET', '/health'),
   workspace: () => request<Workspace>('GET', '/workspace'),
+  templates: async () => asPage<WorkspaceTemplate>(await request<unknown>('GET', '/templates')).items,
+  switchTemplate: (input: TemplateSwitchInput) =>
+    request<Workspace>('POST', '/workspace/template', { body: input }),
 
   today: async (): Promise<TodayData> => {
     const data = await request<Partial<TodayData>>('GET', '/today');
@@ -745,6 +750,20 @@ export const api = {
   opportunities: {
     list: async (params: { pipelineId?: string; stageId?: string; status?: string }) =>
       asPage<Opportunity>(await request<unknown>('GET', '/opportunities', { query: { ...params, limit: 200 } })).items,
+    // Counts every opportunity of a pipeline by stage, any status, following the paging cursor.
+    countByStage: async (pipelineId: string): Promise<Record<string, number>> => {
+      const counts: Record<string, number> = {};
+      let cursor: string | null = null;
+      for (let guard = 0; guard < 500; guard += 1) {
+        const page: Page<Opportunity> = asPage<Opportunity>(
+          await request<unknown>('GET', '/opportunities', { query: { pipelineId, limit: 200, cursor } }),
+        );
+        for (const item of page.items) counts[item.stageId] = (counts[item.stageId] ?? 0) + 1;
+        if (!page.nextCursor) break;
+        cursor = page.nextCursor;
+      }
+      return counts;
+    },
     moveStage: (id: string, stageId: string, expectedVersion: number) =>
       request<Opportunity>('POST', `/opportunities/${id}/stage`, { body: { stageId, expectedVersion } }),
     patch: (id: string, expectedVersion: number, fields: Record<string, unknown>) =>

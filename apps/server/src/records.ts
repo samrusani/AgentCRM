@@ -49,6 +49,7 @@ export function toWorkspace(row: Row) {
     id: String(row.id),
     name: String(row.name),
     template: String(row.template),
+    version: Number(row.version ?? 1),
     createdAt: String(row.created_at),
   };
 }

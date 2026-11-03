@@ -1893,3 +1893,54 @@ textarea.input {
   gap: 8px;
   color: var(--danger);
 }
+
+/* Template switch sheet */
+.template-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.template-option {
+  align-items: flex-start;
+}
+.template-option__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.template-option__name {
+  font-weight: 600;
+}
+.stage-map {
+  display: flex;
+  flex-direction: column;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.stage-map__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+.stage-map__row:first-child {
+  border-top: 0;
+}
+.stage-map__stage {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.stage-map__row .input--select {
+  width: 100%;
+}
+.template-check {
+  white-space: normal;
+  color: var(--ink);
+}

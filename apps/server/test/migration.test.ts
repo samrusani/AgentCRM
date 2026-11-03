@@ -170,7 +170,7 @@ describe('migration 003', () => {
       expect(batchesBefore).toEqual([...batches].sort((a, b) => a.id.localeCompare(b.id)));
       expect(rowsBefore).toEqual([...rows].sort((a, b) => a.id.localeCompare(b.id)));
 
-      expect(applyMigrations(db)).toEqual(['003_csv_qualify.sql', '004_lookup_indexes.sql', '005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql']);
+      expect(applyMigrations(db)).toEqual(['003_csv_qualify.sql', '004_lookup_indexes.sql', '005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql']);
 
       expect(snapshot(db, 'import_batch')).toEqual(batchesBefore);
       expect(snapshot(db, 'import_row')).toEqual(rowsBefore);
@@ -269,7 +269,7 @@ describe('migration 005', () => {
       insert(db, 'connector', connector);
       expect(() => insert(db, 'connector', { ...connector, id: 'con_x', kind: 'anthropic' })).toThrow(/CHECK/);
 
-      expect(applyMigrations(db)).toEqual(['005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql']);
+      expect(applyMigrations(db)).toEqual(['005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql']);
       expect(snapshot(db, 'connector')).toEqual([connector]);
       expect(db.pragma('foreign_key_check')).toEqual([]);
       expect(tableSql(db, 'connector')).not.toContain('_new');
@@ -349,7 +349,7 @@ describe('migration 007', () => {
       expect(() => insert(db, 'activity', { ...activity, id: 'act_x', kind: 'email_out' })).toThrow(/CHECK/);
       expect(() => insert(db, 'connector', { ...connector, id: 'con_x', kind: 'agentmail' })).toThrow(/CHECK/);
 
-      expect(applyMigrations(db)).toEqual(['007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql']);
+      expect(applyMigrations(db)).toEqual(['007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql']);
       expect(snapshot(db, 'connector')).toEqual([connector]);
       expect(snapshot(db, 'activity')).toEqual([activity]);
       expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -471,7 +471,7 @@ describe('migration 008', () => {
       insert(db, 'send_intent', intent('snd_3a', 'act_3', 'cancelled', '2026-01-03T00:00:00.000Z', { error: 'Outcome unknown. Acknowledged by a person. Whether this email was sent was never confirmed.' }));
       insert(db, 'send_intent', intent('snd_3b', 'act_3', 'cancelled', '2026-01-04T00:00:00.000Z', { error: 'The send was rejected.' }));
 
-      expect(applyMigrations(db)).toEqual(['008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql']);
+      expect(applyMigrations(db)).toEqual(['008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql']);
       expect(db.pragma('foreign_key_check')).toEqual([]);
 
       const statuses = Object.fromEntries((db.prepare('SELECT id, status FROM send_intent').all() as { id: string; status: string }[]).map((row) => [row.id, row.status]));
@@ -549,7 +549,7 @@ describe('migration 009', () => {
       for (const call of calls) insert(db, 'model_call', call);
       expect(() => insert(db, 'connector', { ...connectors[1], id: 'con_x', kind: 'ollama' })).toThrow(/CHECK/);
 
-      expect(applyMigrations(db)).toEqual(['009_model_providers.sql', '010_lead_capture.sql']);
+      expect(applyMigrations(db)).toEqual(['009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql']);
       expect(snapshot(db, 'connector')).toEqual(connectors);
       expect(snapshot(db, 'model_call')).toEqual(calls.map((call) => ({ ...call, provider: 'anthropic' })));
       expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -606,7 +606,7 @@ describe('migration 010', () => {
       const rowsBefore = snapshot(db, 'import_row');
 
       const applied = applyMigrations(db);
-      expect(applied[applied.length - 1]).toBe('010_lead_capture.sql');
+      expect(applied).toContain('010_lead_capture.sql');
       expect(snapshot(db, 'import_batch')).toEqual(batchesBefore);
       expect(snapshot(db, 'import_row')).toEqual(rowsBefore);
       expect(db.pragma('foreign_key_check')).toEqual([]);
