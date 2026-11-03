@@ -27,7 +27,7 @@ export function Settings() {
   const modelAttention = Boolean(active && providerAttention(active));
   const connectorAttention = Boolean(
     connectors.data?.some(
-      (entry) => (entry.kind === 'apify' || entry.kind === 'agentmail' || entry.kind === 'gmail') && entry.status === 'error',
+      (entry) => (entry.kind === 'apify' || entry.kind === 'agentmail' || entry.kind === 'gmail' || entry.kind === 'microsoft') && entry.status === 'error',
     ),
   );
 

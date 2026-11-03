@@ -1,19 +1,23 @@
 import {
   completeGmailOAuth,
+  completeMicrosoftOAuth,
   configureAgentmailConnector,
   configureGmailConnector,
+  configureMicrosoftConnector,
   createActivityIn,
   createPerson,
   decideApproval,
   mutate,
   prepareSendIntents,
   startGmailOAuth,
+  startMicrosoftOAuth,
 } from '../src/actions/index.js';
 import { processMailJobs } from '../src/jobs/worker.js';
 import { getSendIntent } from '../src/queries/sendIntents.js';
 import type { TestEnvironment } from './helpers.js';
 import { stubAgentmailKey, stubInboxId } from './agentmailStub.js';
 import { type GoogleStub, stubGoogleClientId, stubGoogleClientSecret } from './googleStub.js';
+import { type MicrosoftStub, stubMicrosoftClientId } from './microsoftStub.js';
 
 export async function connectMail(env: TestEnvironment): Promise<void> {
   await configureAgentmailConnector(env.ctx, { token: stubAgentmailKey, inboxId: stubInboxId });
@@ -25,6 +29,18 @@ export async function connectGmail(env: TestEnvironment, google: GoogleStub): Pr
   const { url } = startGmailOAuth(env.ctx);
   const callback = new URL(google.approve(url));
   const outcome = await completeGmailOAuth(env.ctx, {
+    code: callback.searchParams.get('code') ?? undefined,
+    state: callback.searchParams.get('state') ?? undefined,
+  });
+  if (!outcome.ok) throw new Error(`The stub sign in failed: ${outcome.errorCode}`);
+}
+
+// Saves the application id, then walks the whole sign in against the stub: start, consent, callback.
+export async function connectMicrosoft(env: TestEnvironment, microsoft: MicrosoftStub): Promise<void> {
+  configureMicrosoftConnector(env.ctx, { clientId: stubMicrosoftClientId });
+  const { url } = startMicrosoftOAuth(env.ctx);
+  const callback = new URL(microsoft.approve(url));
+  const outcome = await completeMicrosoftOAuth(env.ctx, {
     code: callback.searchParams.get('code') ?? undefined,
     state: callback.searchParams.get('state') ?? undefined,
   });

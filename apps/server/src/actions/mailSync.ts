@@ -1,4 +1,4 @@
-import { mailPollMilliseconds } from '../config.js';
+import { mailPollMilliseconds, minimumMailPollMilliseconds } from '../config.js';
 import {
   bounceTaskTitle,
   findOptOutWording,
@@ -13,7 +13,6 @@ import {
 } from '../mail/rules.js';
 import { messageIdTokens } from '../providers/gmail.js';
 import { MailProviderError, type MailProviderKind, type NormalizedInbound } from '../providers/mailTypes.js';
-import { getGmailInternals } from '../queries/connectors.js';
 import { getActiveMailConnector, mailAccountOf } from '../queries/mailProvider.js';
 import { type ActionContext, mutate, type Tx } from './context.js';
 import { createMailAdapter, type MailAdapter, markMailProviderRejected } from './mailProviders.js';
@@ -28,6 +27,7 @@ import {
 
 // Small pages keep the number of full message fetches per poll low. A backlog drains over several polls.
 const maxMessagePages = 4;
+const maxEvidenceFetchesPerPoll = 10;
 const activitySnippetLength = 500;
 
 export interface SyncResult {
@@ -49,7 +49,19 @@ interface SyncTarget {
 type SettingsPatch = Record<string, string | null>;
 
 function cursorKeyOf(kind: MailProviderKind): string {
-  return kind === 'agentmail' ? 'lastMessageTimestamp' : 'historyId';
+  return kind === 'agentmail' ? 'lastMessageTimestamp' : kind === 'microsoft' ? 'deltaLink' : 'historyId';
+}
+
+// The saved position of the mail provider in use, read from the connector settings.
+function savedCursor(ctx: ActionContext, kind: MailProviderKind): string | null {
+  const row = ctx.db.prepare('SELECT settings FROM connector WHERE workspace_id = ? AND kind = ?').get(ctx.workspaceId, kind) as { settings: string } | undefined;
+  if (!row) return null;
+  try {
+    const value = (JSON.parse(row.settings) as Record<string, unknown>)[cursorKeyOf(kind)];
+    return typeof value === 'string' && value !== '' ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 // Cursor and status writes do not touch the connector's updated_at and are not audited: they happen on every poll
@@ -70,7 +82,7 @@ function patchSettingsIn(tx: Tx, target: Pick<SyncTarget, 'kind' | 'accountId'>,
 function errorSentence(error: unknown, adapter: MailAdapter): string {
   const label = adapter.provider.label;
   if (error instanceof MailProviderError) {
-    if (error.kind === 'unauthorized') return adapter.account.kind === 'agentmail' ? 'AgentMail rejected the saved API key.' : 'Gmail no longer accepts the saved sign in.';
+    if (error.kind === 'unauthorized') return adapter.account.kind === 'agentmail' ? 'AgentMail rejected the saved API key.' : `${label} no longer accepts the saved sign in.`;
     if (error.kind === 'rate_limited') return `${label} is rate limiting requests. The next poll will try again.`;
     if (error.kind === 'timeout') return `${label} did not answer in time. The next poll will try again.`;
   }
@@ -209,6 +221,7 @@ interface BouncedIntent {
 }
 
 const maxBounceTokens = 100;
+const intentHeaderLine = /^\s*x-agentcrm-intent:\s*(\S+)\s*$/gim;
 
 // Words in a subject or the first lines of a report that say the message could not be delivered at all.
 const failureWording =
@@ -247,14 +260,18 @@ function findBouncedIntent(tx: Tx, message: NormalizedInbound, senderAddress: st
   if (!reportsFailure(message)) return null;
   const haystack = [message.references.join(' '), message.inReplyTo ?? '', message.text ?? '', message.evidenceText].join('\n');
   const tokens = [...new Set(messageIdTokens(haystack).map((token) => token.toLowerCase()))].slice(0, maxBounceTokens);
-  if (tokens.length === 0) return null;
+  // A Microsoft send also carries the intent id in a header of its own, which survives in the returned original.
+  const intentIds = [...new Set([...haystack.matchAll(intentHeaderLine)].map((match) => match[1]!))].slice(0, maxBounceTokens);
+  if (tokens.length === 0 && intentIds.length === 0) return null;
   const row = tx.db
     .prepare(
-      `SELECT id, person_id, to_email, status FROM send_intent WHERE workspace_id = ? AND message_id_header IS NOT NULL
-         AND lower(message_id_header) IN (${tokens.map(() => '?').join(', ')}) AND status IN ('accepted', 'replied', 'unknown')
+      `SELECT id, person_id, to_email, status FROM send_intent WHERE workspace_id = ?
+         AND ((message_id_header IS NOT NULL AND lower(message_id_header) IN (${tokens.map(() => '?').join(', ') || "''"}))
+              OR (provider = 'microsoft' AND id IN (${intentIds.map(() => '?').join(', ') || "''"})))
+         AND status IN ('accepted', 'replied', 'unknown')
          ORDER BY submitted_at DESC, id DESC LIMIT 1`,
     )
-    .get(tx.workspaceId, ...tokens) as BouncedIntent | undefined;
+    .get(tx.workspaceId, ...tokens, ...intentIds) as BouncedIntent | undefined;
   return row ?? null;
 }
 
@@ -334,8 +351,10 @@ function isStored(ctx: ActionContext, providerMessageId: string): boolean {
 
 async function pollMessages(ctx: ActionContext, target: SyncTarget): Promise<number> {
   let stored = 0;
+  // Fetching a bounce report takes extra requests. A poll makes at most this many, however many pages it reads.
+  const evidenceBudget = { remaining: maxEvidenceFetchesPerPoll };
   for (let pages = 0; pages < maxMessagePages; pages += 1) {
-    const batch = await target.adapter.provider.listInbound(target.cursor, { isKnown: (id) => isStored(ctx, id) });
+    const batch = await target.adapter.provider.listInbound(target.cursor, { isKnown: (id) => isStored(ctx, id), evidenceBudget });
     if (batch.failure !== undefined) {
       // What was fetched before the failure is kept, but the cursor stays where it was, so the failing message
       // and everything after it are tried again on the next poll.
@@ -346,7 +365,9 @@ async function pollMessages(ctx: ActionContext, target: SyncTarget): Promise<num
     const result = storeMessages(ctx, target, batch.messages, batch.nextCursor, batch.reset?.note ?? null);
     stored += result.stored;
     target.cursor = result.cursor;
-    if (!batch.more) break;
+    // The poll's budget of evidence fetches is spent. What was read is stored, the cursor stays, and the next poll reads
+    // the rest.
+    if (batch.deferred || !batch.more) break;
   }
   return stored;
 }
@@ -410,10 +431,7 @@ export async function syncMail(ctx: ActionContext): Promise<SyncResult> {
     kind: account.kind,
     accountId: account.accountId,
     address: normalizeEmail(account.address),
-    cursor:
-      connector.kind === 'agentmail'
-        ? connector.settings.lastMessageTimestamp
-        : ((getGmailInternals(ctx.db, ctx.workspaceId)?.settings.historyId as string | null | undefined) ?? null),
+    cursor: connector.kind === 'agentmail' ? connector.settings.lastMessageTimestamp : savedCursor(ctx, connector.kind),
     seenEventId: connector.kind === 'agentmail' ? connector.settings.seenEventId : null,
   };
   try {
@@ -426,6 +444,12 @@ export async function syncMail(ctx: ActionContext): Promise<SyncResult> {
   } catch (error) {
     if (error instanceof MailProviderError && error.kind === 'unauthorized') markMailProviderRejected(ctx, adapter);
     const sentence = errorSentence(error, adapter);
+    // A provider that says how long to wait (Retry-After) moves the next poll out by that long.
+    if (error instanceof MailProviderError && error.retryAfterMilliseconds !== null) {
+      // A tiny or zero value is raised to the shortest poll interval, so a server cannot make the app poll in a tight loop.
+      const wait = Math.max(error.retryAfterMilliseconds, minimumMailPollMilliseconds);
+      lastAttempt.set(ctx.workspaceId, Date.now() + wait - mailPollMilliseconds());
+    }
     mutate(ctx, (tx) => {
       patchSettingsIn(tx, target, { lastSyncError: sentence });
     });

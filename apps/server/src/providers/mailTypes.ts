@@ -1,20 +1,22 @@
 // The mail provider interface. Sending and inbound sync run through it, so every provider obeys the same approval,
 // suppression, cap, and honesty rules. The send intent state machine lives in the callers, never in an adapter.
 
-export const mailProviderKinds = ['agentmail', 'gmail'] as const;
+export const mailProviderKinds = ['agentmail', 'gmail', 'microsoft'] as const;
 export type MailProviderKind = (typeof mailProviderKinds)[number];
 
 export function isMailProviderKind(value: unknown): value is MailProviderKind {
   return typeof value === 'string' && (mailProviderKinds as readonly string[]).includes(value);
 }
 
-export const mailProviderLabels: Record<MailProviderKind, string> = { agentmail: 'AgentMail', gmail: 'Gmail' };
+export const mailProviderLabels: Record<MailProviderKind, string> = { agentmail: 'AgentMail', gmail: 'Gmail', microsoft: 'Microsoft' };
 
 export type MailErrorKind =
   | 'unauthorized'
   | 'not_found'
   | 'conflict'
   | 'rate_limited'
+  // The provider says a sync position is gone (HTTP 410). Only inbound sync uses it.
+  | 'gone'
   | 'rejected'
   | 'unavailable'
   | 'timeout'
@@ -28,13 +30,21 @@ export class MailProviderError extends Error {
   readonly status: number | null;
   // True when the failure happened before any request that could send mail left the process.
   readonly sentNothing: boolean;
+  // How long the provider asked callers to wait (a Retry-After header), when it said.
+  readonly retryAfterMilliseconds: number | null;
 
-  constructor(kind: MailErrorKind, message: string, status: number | null = null, options: { sentNothing?: boolean } = {}) {
+  constructor(
+    kind: MailErrorKind,
+    message: string,
+    status: number | null = null,
+    options: { sentNothing?: boolean; retryAfterMilliseconds?: number | null } = {},
+  ) {
     super(message);
     this.name = 'MailProviderError';
     this.kind = kind;
     this.status = status;
     this.sentNothing = options.sentNothing ?? false;
+    this.retryAfterMilliseconds = options.retryAfterMilliseconds ?? null;
   }
 
   // The provider answered with a definitive refusal, or nothing was sent at all, so the request did not produce an
@@ -55,7 +65,10 @@ export type DuplicateProtection =
   // The provider remembers an idempotency key for about a day. A retry with the same key returns the original result.
   | 'idempotency_key'
   // The app persists a self generated Message-ID before submitting and later searches for it. Never retried.
-  | 'message_id_search';
+  | 'message_id_search'
+  // The message is first saved as a draft with an id the provider keeps, and that id is persisted before the draft is
+  // sent. A check reads the draft. Sending the same draft again cannot produce a second email.
+  | 'draft_first';
 
 // The persisted facts of one frozen message, as an adapter needs them.
 export interface MailIntent {
@@ -66,10 +79,37 @@ export interface MailIntent {
   to: string;
   subject: string;
   body: string;
-  // Set for providers whose duplicate protection is message_id_search. Persisted before submit.
+  // Set for providers whose duplicate protection is message_id_search (persisted before submit). For draft_first
+  // providers it holds the internetMessageId once the draft exists.
   messageIdHeader: string | null;
+  // The immutable id of the saved draft, for draft_first providers. Null until the draft was created and persisted.
+  providerDraftId?: string | null;
   // Set when the message continues a known thread.
   replyTo: { threadId: string; inReplyTo: string; references: string[] } | null;
+}
+
+// What a submit may ask its caller to do. saveDraft must commit the ids in a transaction of their own and return true,
+// before the adapter sends anything. When it returns false the adapter must not send.
+export interface SubmitHooks {
+  saveDraft?: (draft: { draftId: string; internetMessageId: string | null }) => boolean;
+  // Draft first providers only. Called immediately before the request that sends the draft, after the token and the
+  // account were confirmed. The caller checks every guard of a first send again and records the time of the attempt in
+  // a transaction of its own. It returns null to go ahead, or the reason to stop, in which case nothing is sent. It runs
+  // again before a repeat after a 401, which Microsoft rejects before it accepts any mail.
+  beforeSend?: () => string | null;
+  // The adopt scan found a draft of this intent that no longer matches what was approved. It was left alone.
+  noteStrayDraft?: (draft: { draftId: string }) => void;
+}
+
+export interface ReconcileOptions {
+  // True when every check that guards a first send still passes now (approval, suppression, replies, daily cap) and
+  // enough time has passed since the last send attempt. Only a draft_first provider reads it, and only to decide
+  // whether it may send its unsent draft again.
+  mayResend: boolean;
+  // Called immediately before the request that sends the draft again, after the draft's content was verified. It
+  // checks the guards again and records the time of the attempt, and returns null to go ahead or the reason to stop.
+  // Without it nothing is sent again.
+  beforeResend?: () => string | null;
 }
 
 export interface MailSubmitResult {
@@ -82,7 +122,11 @@ export type ReconcileResult =
   // The provider answered and the message is not there. This never proves that it was not sent.
   | { outcome: 'not_found' }
   // The check itself failed. error.definitive tells the caller whether trying again can help.
-  | { outcome: 'unavailable'; error: MailProviderError };
+  | { outcome: 'unavailable'; error: MailProviderError }
+  // The provider answered, and what it found means a person has to look. Nothing was sent. `draft_changed`: the saved
+  // draft was edited after approval, so it is not sent. `not_in_sent_items`: the message is no longer a draft but is
+  // not in Sent Items either (for example it sits in Deleted Items), which does not show that it was sent.
+  | { outcome: 'needs_person'; reason: 'draft_changed' | 'not_in_sent_items'; sentence: string };
 
 export interface NormalizedInbound {
   providerMessageId: string;
@@ -120,11 +164,16 @@ export interface InboundBatch {
   failure?: unknown;
   // Set when the provider's cursor was no longer valid and was reset to the present.
   reset?: { note: string };
+  // Set when this poll used up its budget of evidence fetches. `messages` are stored, the cursor stays where it was,
+  // and the rest are read on the next poll. It is not an error.
+  deferred?: boolean;
 }
 
 export interface ListInboundOptions {
   // True for a message the app already stored, so its full text is not fetched again.
   isKnown: (providerMessageId: string) => boolean;
+  // How many more bounce evidence fetches this poll may make. One object is shared by every page of a poll.
+  evidenceBudget?: { remaining: number };
 }
 
 export interface BounceEvidence {
@@ -142,9 +191,10 @@ export interface MailProvider {
   readonly label: string;
   readonly duplicateProtection: DuplicateProtection;
   // Returns provider message and thread ids, or throws a MailProviderError.
-  submit(intent: MailIntent): Promise<MailSubmitResult>;
-  // Called on the reconcile schedule after an unknown outcome. Gmail's version is read only.
-  reconcileUnknown(intent: MailIntent): Promise<ReconcileResult>;
+  submit(intent: MailIntent, hooks?: SubmitHooks): Promise<MailSubmitResult>;
+  // Called on the reconcile schedule after an unknown outcome. Gmail's version is read only. Microsoft's is read only
+  // too, except that it may send its own still unsent draft again, which cannot produce a second email.
+  reconcileUnknown(intent: MailIntent, options?: ReconcileOptions): Promise<ReconcileResult>;
   // One page of new messages after the cursor. The adapter keeps paging state for the length of one poll.
   listInbound(cursor: string | null, options: ListInboundOptions): Promise<InboundBatch>;
   // The address behind the credentials. Throws a MailProviderError.

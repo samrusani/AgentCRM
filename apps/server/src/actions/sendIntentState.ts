@@ -33,6 +33,7 @@ export interface IntentPatch {
   providerMessageId?: string;
   providerThreadId?: string | null;
   // The self generated Message-ID of a Gmail send, written in the same transaction that marks the intent submitting.
+  // For Microsoft it is the internetMessageId Outlook gave the draft.
   messageIdHeader?: string;
   submittedAt?: string;
   // Set when a person acknowledges an intent whose outcome was unknown.
@@ -229,14 +230,14 @@ export function createEmailActivityIn(tx: Tx, input: { personId: string; kind: '
 
 export const mailReconcileJobKind = 'mail_reconcile';
 
-// The Gmail account is signed in and working again. A message whose outcome was unknown for that same address goes
-// back on the reconcile schedule, so the read only search for its Message-ID starts again on the next tick. Messages
-// a person already acknowledged are cancelled, so they are not unknown any more and are not touched. A message that
-// already has a reconcile job waiting is left alone.
-export function resumeGmailReconcilesIn(tx: Tx, address: string): number {
+// A Gmail or Microsoft account is signed in and working again. A message whose outcome was unknown for that same
+// address goes back on the reconcile schedule, so the check starts again on the next tick. Messages a person already
+// acknowledged are cancelled, so they are not unknown any more and are not touched. A message that already has a
+// reconcile job waiting is left alone.
+export function resumeReconcilesIn(tx: Tx, provider: 'gmail' | 'microsoft', address: string): number {
   const rows = tx.db
-    .prepare("SELECT id FROM send_intent WHERE workspace_id = ? AND provider = 'gmail' AND status = 'unknown' AND lower(inbox_id) = ?")
-    .all(tx.workspaceId, address.toLowerCase()) as { id: string }[];
+    .prepare('SELECT id FROM send_intent WHERE workspace_id = ? AND provider = ? AND status = \'unknown\' AND lower(inbox_id) = ?')
+    .all(tx.workspaceId, provider, address.toLowerCase()) as { id: string }[];
   let resumed = 0;
   for (const row of rows) {
     const waiting = tx.db
@@ -248,4 +249,8 @@ export function resumeGmailReconcilesIn(tx: Tx, address: string): number {
     resumed += 1;
   }
   return resumed;
+}
+
+export function resumeGmailReconcilesIn(tx: Tx, address: string): number {
+  return resumeReconcilesIn(tx, 'gmail', address);
 }

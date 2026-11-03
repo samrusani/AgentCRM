@@ -26,6 +26,7 @@ import type {
   LeadCaptureInput,
   LeadCaptureSettings,
   GmailCredentialsInput,
+  MicrosoftCredentialsInput,
   MailInbox,
   MailProviderKind,
   MailProviderSelection,
@@ -882,6 +883,19 @@ export const api = {
       return url;
     },
     removeGmail: () => request<unknown>('DELETE', '/connectors/gmail'),
+    // Saving the client id does no network check. Signing in is a separate step.
+    saveMicrosoft: async (input: MicrosoftCredentialsInput) =>
+      normalizeConnector(await request<unknown>('PUT', '/connectors/microsoft', { body: input })),
+    // Returns the Microsoft authorization address. The browser opens it in a new tab.
+    startMicrosoftOAuth: async (): Promise<string> => {
+      const data = objectOrEmpty(await request<unknown>('POST', '/connectors/microsoft/oauth/start'));
+      const url = textOrNull(data.url);
+      if (!url || !/^https?:\/\//i.test(url)) {
+        throw new ApiError(500, 'internal', 'The server did not return a Microsoft sign in address. Nothing was opened.');
+      }
+      return url;
+    },
+    removeMicrosoft: () => request<unknown>('DELETE', '/connectors/microsoft'),
   },
 
   mail: {

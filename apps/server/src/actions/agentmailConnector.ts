@@ -42,6 +42,7 @@ export function mapAgentmailError(error: unknown): AppError {
       return new AppError('internal', 'Could not reach AgentMail. Check your connection and try again.', { status: 502 });
     case 'bad_response':
       return new AppError('internal', 'AgentMail sent a response this app could not read.', { status: 502 });
+    case 'gone':
     case 'unexpected_status':
       return new AppError('internal', 'AgentMail answered in a way this app did not expect. Try again.', { status: 502 });
   }

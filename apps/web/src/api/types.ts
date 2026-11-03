@@ -291,7 +291,7 @@ export interface ApiErrorEnvelope {
 export type ConnectorStatus = 'connected' | 'error' | string;
 
 export type ModelProviderKind = 'anthropic' | 'openai' | 'deepseek' | 'zai' | 'ollama';
-export type MailProviderKind = 'agentmail' | 'gmail';
+export type MailProviderKind = 'agentmail' | 'gmail' | 'microsoft';
 export type ConnectorKind = 'apify' | MailProviderKind | ModelProviderKind;
 
 // The one mail connector sending and inbound sync use. The server answers null when none is configured.
@@ -307,6 +307,11 @@ export interface MailProviderSelection {
 export interface GmailCredentialsInput {
   clientId: string;
   clientSecret: string;
+}
+
+// Microsoft is a public client: the Entra client id is the only credential, there is no secret.
+export interface MicrosoftCredentialsInput {
+  clientId: string;
 }
 
 // The one provider chat and drafting use. The server answers null when none is configured.
@@ -373,10 +378,10 @@ export interface Connector {
   // AgentMail only: the selected sending inbox from settings.
   inboxId: string | null;
   inboxEmail: string | null;
-  // Gmail only: the OAuth client id (masked or whole, as the server sends it), the signed in account, and the last inbound sync.
+  // Gmail and Microsoft: the OAuth client id (masked or whole, as the server sends it), the signed in account, and the last inbound sync.
   clientId: string | null;
   emailAddress: string | null;
-  // Gmail only: when a Google sign in last finished. It changes only on success, so the card can tell a failed
+  // Gmail and Microsoft: when a sign in last finished. It changes only on success, so the card can tell a failed
   // attempt from a finished one.
   oauthCompletedAt: string | null;
   lastSyncAt: string | null;

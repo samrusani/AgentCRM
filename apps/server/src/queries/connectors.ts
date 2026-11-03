@@ -6,7 +6,7 @@ import { type Row } from '../records.js';
 
 export type ModelConnectorKind = ModelProviderKind;
 export type KeyedModelKind = 'anthropic' | 'openai' | 'deepseek' | 'zai';
-export type ConnectorKind = 'apify' | 'agentmail' | 'gmail' | ModelConnectorKind;
+export type ConnectorKind = 'apify' | 'agentmail' | 'gmail' | 'microsoft' | ModelConnectorKind;
 
 // Actor ids for the LinkedIn lead capture run. Settings hold only the ids a person changed; reads fill in the defaults.
 export interface LeadCaptureActors {
@@ -65,7 +65,8 @@ export interface GmailPendingAuth {
   returnOrigin: string | null;
 }
 
-// Safe to send to the browser: no secret, no token, no verifier.
+// Safe to send to the browser: no secret, no token, no verifier. The Microsoft connector has the same shape, because
+// it is a public client with no client secret.
 export interface GmailConnectorSettings {
   clientId: string | null;
   // The signed in account. Null until the sign in finishes.
@@ -105,6 +106,7 @@ const errorMessages: Record<ConnectorKind, string> = {
   ollama: 'The Ollama server rejected the request.',
   agentmail: 'AgentMail rejected the saved API key.',
   gmail: 'Google no longer accepts the saved sign in.',
+  microsoft: 'Microsoft no longer accepts the saved sign in.',
 };
 
 interface ConnectorBase {
@@ -129,6 +131,9 @@ export type AgentmailConnector = WithToken & { kind: 'agentmail'; settings: Agen
 // Gmail keeps a client secret and tokens as one JSON secret. Only the masked client secret is ever shown.
 export type GmailConnector = ConnectorBase & { kind: 'gmail'; clientSecretMasked: string | null; settings: GmailConnectorSettings };
 
+// Microsoft is a public client: the only credential is the application id, and the secret column holds the tokens.
+export type MicrosoftConnector = ConnectorBase & { kind: 'microsoft'; settings: GmailConnectorSettings };
+
 export interface ConnectorByKind {
   apify: ApifyConnector;
   anthropic: AnthropicConnector;
@@ -138,6 +143,7 @@ export interface ConnectorByKind {
   ollama: OllamaConnector;
   agentmail: AgentmailConnector;
   gmail: GmailConnector;
+  microsoft: MicrosoftConnector;
 }
 
 export type Connector = ConnectorByKind[ConnectorKind];
@@ -162,6 +168,18 @@ export function parseGmailSecret(value: unknown): GmailSecret | null {
   const clientSecret = string('clientSecret');
   if (!clientSecret) return null;
   return { clientSecret, accessToken: string('accessToken'), refreshToken: string('refreshToken'), expiresAt: string('expiresAt') };
+}
+
+export interface MicrosoftSecret {
+  accessToken: string | null;
+  refreshToken: string | null;
+  expiresAt: string | null;
+}
+
+export function parseMicrosoftSecret(value: unknown): MicrosoftSecret {
+  const parsed = parseObject(value);
+  const string = (key: string): string | null => (typeof parsed[key] === 'string' && parsed[key] !== '' ? (parsed[key] as string) : null);
+  return { accessToken: string('accessToken'), refreshToken: string('refreshToken'), expiresAt: string('expiresAt') };
 }
 
 function isPendingAuth(value: unknown): value is GmailPendingAuth {
@@ -191,6 +209,18 @@ export function getGmailInternals(
     | { id: string; status: 'connected' | 'error'; settings: string; secret: string }
     | undefined;
   return row ? { id: row.id, status: row.status, settings: parseObject(row.settings), secret: parseGmailSecret(row.secret) } : null;
+}
+
+// The stored settings and secret of the Microsoft connector, for the code that runs the sign in and the sync. Never send
+// the result to a client.
+export function getMicrosoftInternals(
+  db: Db,
+  workspaceId: string,
+): { id: string; status: 'connected' | 'error'; settings: Record<string, unknown>; secret: MicrosoftSecret } | null {
+  const row = db.prepare("SELECT id, status, settings, secret FROM connector WHERE workspace_id = ? AND kind = 'microsoft'").get(workspaceId) as
+    | { id: string; status: 'connected' | 'error'; settings: string; secret: string }
+    | undefined;
+  return row ? { id: row.id, status: row.status, settings: parseObject(row.settings), secret: parseMicrosoftSecret(row.secret) } : null;
 }
 
 export function toConnector(row: Row): Connector {
@@ -237,6 +267,27 @@ export function toConnector(row: Row): Connector {
         emailAddress,
         address: emailAddress,
         signedIn: Boolean(emailAddress && secret?.refreshToken),
+        oauthPending: isPendingAuth(stored.pending),
+        oauthCompletedAt: field('oauthCompletedAt'),
+        lastSyncAt: field('lastSyncAt'),
+        lastSyncError: field('lastSyncError'),
+      },
+    };
+  }
+  if (kind === 'microsoft') {
+    const field = (key: string): string | null => (typeof stored[key] === 'string' && stored[key] !== '' ? (stored[key] as string) : null);
+    const secret = parseMicrosoftSecret(row.secret);
+    const emailAddress = field('emailAddress');
+    return {
+      ...base,
+      kind,
+      // A note about a possible sync gap is shown on a connected account too, so the message is not limited to errors.
+      statusMessage: field('statusMessage') ?? (status === 'error' ? errorMessages.microsoft : null),
+      settings: {
+        clientId: field('clientId'),
+        emailAddress,
+        address: emailAddress,
+        signedIn: Boolean(emailAddress && secret.refreshToken),
         oauthPending: isPendingAuth(stored.pending),
         oauthCompletedAt: field('oauthCompletedAt'),
         lastSyncAt: field('lastSyncAt'),

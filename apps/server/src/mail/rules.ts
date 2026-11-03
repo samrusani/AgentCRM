@@ -115,9 +115,20 @@ export const duplicateProtectionExpiredSentence =
 export const gmailSearchWindowEndedSentence =
   "This message was not found in Gmail within a day, so the app stopped checking. Check Gmail's sent mail.";
 
+// Microsoft keeps a draft until it is sent, so the check can run for a day too. After that it stops and asks a person.
+export const microsoftCheckWindowEndedSentence =
+  "This message was not confirmed in Outlook within a day, so the app stopped checking. Check the Sent Items folder in Outlook.";
+
 // An approval older than this is not trusted to start a send.
 export const approvalMaxAgeMilliseconds = 24 * 60 * 60 * 1000;
 export const approvalTooOldSentence = 'Approved more than a day ago. Review and approve again.';
+
+// Microsoft may send its saved draft again after an unknown outcome. These are the reasons it will not, each with the
+// task that asks a person to look in Outlook.
+export const microsoftResendApprovalTooOldSentence =
+  'Approved more than a day ago, so this app will not send the saved draft again. It stays unknown until a person looks in Outlook and acknowledges it.';
+export const microsoftNoResendSentence =
+  'The Microsoft connector was removed while this message was unknown, so from now on this app only reads Outlook and will not send the saved draft again. It stays unknown until a person looks in Outlook and acknowledges it.';
 
 export const acknowledgedUnknownSentence =
   "A previous send attempt for this draft has an unknown outcome. Check the provider's sent mail first.";

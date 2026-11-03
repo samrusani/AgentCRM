@@ -2,7 +2,7 @@ import type { Db } from '../db.js';
 import { dailySendCap } from '../config.js';
 import { notFound, validationError } from '../errors.js';
 import type { Row } from '../records.js';
-import type { MailProviderKind } from '../providers/mailTypes.js';
+import { isMailProviderKind, type MailProviderKind } from '../providers/mailTypes.js';
 import { getActiveMailConnector, mailAccountOf } from './mailProvider.js';
 import { optOutTaskTitle, readOptOutSource, replyTaskTitle } from '../mail/rules.js';
 import { paginate, type Page } from './pagination.js';
@@ -78,7 +78,7 @@ export function toSendIntent(row: Row): SendIntent {
     personId: String(row.person_id),
     personName: String(row.person_name ?? ''),
     draftActivityId: text(row.draft_activity_id),
-    provider: (row.provider === 'gmail' ? 'gmail' : 'agentmail') as MailProviderKind,
+    provider: (isMailProviderKind(row.provider) ? row.provider : 'agentmail') as MailProviderKind,
     inboxId: String(row.inbox_id),
     address: addressFromApproval(row.approval_payload, String(row.id)),
     to: String(row.to_email),

@@ -13,6 +13,7 @@ import { normalizeActorId } from '../lib/imports';
 import { DEFAULT_LEAD_ACTORS } from '../lib/leads';
 import { AgentMailConnectorCard } from './AgentMailConnectorCard';
 import { GmailConnectorCard } from './GmailConnectorCard';
+import { MicrosoftConnectorCard } from './MicrosoftConnectorCard';
 
 function ApifyRemoveControl() {
   const remove = useRemoveApifyConnector();
@@ -309,13 +310,21 @@ function ApifyCard({ connector }: { connector: Connector | null }) {
 export function ConnectorSettings() {
   const { query, connector } = useApifyConnector();
   const agentmail = query.data?.find((entry) => entry.kind === 'agentmail') ?? null;
-  // Google's callback sends the browser back here, with gmail_error=<code> when sign in did not finish.
+  // Google's and Microsoft's callbacks send the browser back here, with gmail_error=<code> or microsoft_error=<code> when sign in did not finish.
   const [params, setParams] = useSearchParams();
   const gmailError = params.get('gmail_error');
   const dismissGmailError = () => {
     if (!params.has('gmail_error')) return;
     const next = new URLSearchParams(params);
     next.delete('gmail_error');
+    setParams(next, { replace: true });
+  };
+
+  const microsoftError = params.get('microsoft_error');
+  const dismissMicrosoftError = () => {
+    if (!params.has('microsoft_error')) return;
+    const next = new URLSearchParams(params);
+    next.delete('microsoft_error');
     setParams(next, { replace: true });
   };
 
@@ -331,6 +340,7 @@ export function ConnectorSettings() {
           <ApifyCard connector={connector} />
           <AgentMailConnectorCard connector={agentmail} />
           <GmailConnectorCard oauthError={gmailError} onDismissOauthError={dismissGmailError} />
+          <MicrosoftConnectorCard oauthError={microsoftError} onDismissOauthError={dismissMicrosoftError} />
         </div>
       ) : null}
     </section>

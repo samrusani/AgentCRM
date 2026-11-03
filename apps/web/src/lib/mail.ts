@@ -22,7 +22,7 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
-const PROVIDER_NAMES: Record<string, string> = { agentmail: 'AgentMail', gmail: 'Gmail' };
+const PROVIDER_NAMES: Record<string, string> = { agentmail: 'AgentMail', gmail: 'Gmail', microsoft: 'Microsoft 365' };
 
 export function mailProviderName(kind: string | null | undefined): string {
   if (!kind) return 'the mail provider';

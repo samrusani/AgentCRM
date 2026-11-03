@@ -3,6 +3,7 @@ import {
   agentmailRequestTimeoutMilliseconds,
   dailySendCap,
   gmailRequestTimeoutMilliseconds,
+  graphRequestTimeoutMilliseconds,
   mailReconcileDelays,
   maxIntentsPerApproval,
 } from '../config.js';
@@ -14,9 +15,12 @@ import {
   bodyMaxLength,
   duplicateProtectionExpiredSentence,
   gmailSearchWindowEndedSentence,
+  microsoftCheckWindowEndedSentence,
   idempotencyWindowMilliseconds,
   isDemoAddress,
   isValidEmail,
+  microsoftNoResendSentence,
+  microsoftResendApprovalTooOldSentence,
   normalizeEmail,
   parseDraftActivity,
   reasonCodes,
@@ -24,7 +28,7 @@ import {
   unknownSendTaskTitle,
 } from '../mail/rules.js';
 import { generateMessageIdHeader } from '../providers/gmail.js';
-import { type MailIntent, MailProviderError, mailProviderLabels, type MailProviderKind } from '../providers/mailTypes.js';
+import { type MailIntent, MailProviderError, mailProviderKinds, mailProviderLabels, type MailProviderKind, type SubmitHooks } from '../providers/mailTypes.js';
 import { getActiveMailAccount, getMailAccount } from '../queries/mailProvider.js';
 import { getRun } from '../queries/runs.js';
 import {
@@ -394,7 +398,7 @@ const reviewPayloadSchema = z.object({
       body: z.string(),
       inboxEmail: z.string(),
       // Payloads prepared before the provider was recorded do not carry it. Those were all AgentMail.
-      provider: z.enum(['agentmail', 'gmail']).optional(),
+      provider: z.enum(mailProviderKinds).optional(),
     }),
   ),
 });
@@ -423,6 +427,11 @@ interface IntentRow {
   submitted_at: string | null;
   provider: MailProviderKind;
   message_id_header: string | null;
+  provider_draft_id: string | null;
+  // When the request that sends the draft was last about to leave, for Microsoft. Null when none was recorded.
+  send_attempted_at: string | null;
+  // 1 when the Microsoft connector was removed while the outcome was unknown: from then on the draft is only read.
+  no_resend: number;
 }
 
 // Both hashes must agree: the approved text and the row's current text. A row edited after review fails this.
@@ -615,8 +624,9 @@ export function controlSendIntent(ctx: ActionContext, intentId: string, input: u
 // Checks that run immediately before a submit, and again before a reconciliation retry. All of them read the
 // database, so the result is as fresh as the claim that follows it. Returns the reason to block, or null.
 // `mode` says what the check guards: a first submit, a retry of the same send (AgentMail), or a read only search
-// (Gmail). A read only check cannot send anything, so it asks only whether the account can still be read.
-type RecheckMode = 'submit' | 'retry_send' | 'read_only';
+// (Gmail and Microsoft). A read only check cannot send anything, so it asks only whether the account can still be read.
+// `resend` guards Microsoft sending its own unsent draft again: it asks everything a first submit asks.
+type RecheckMode = 'submit' | 'resend' | 'retry_send' | 'read_only';
 
 function recheckIntent(tx: Tx, row: IntentRow, options: { mode: RecheckMode }): string | null {
   if (row.provider_message_id) return 'This message already has a provider message id, so it is not submitted again.';
@@ -624,8 +634,10 @@ function recheckIntent(tx: Tx, row: IntentRow, options: { mode: RecheckMode }): 
     ? (tx.db.prepare('SELECT * FROM approval WHERE id = ? AND workspace_id = ?').get(row.approval_id, tx.workspaceId) as Row | undefined)
     : undefined;
   if (!approval || approval.status !== 'approved') return 'The approval for this message is not in place.';
-  // Only a first submit needs a fresh approval. A retry of an unknown send carries the same message and key.
-  if (options.mode === 'submit' && approval.decided_at && Date.parse(tx.now()) - Date.parse(String(approval.decided_at)) > approvalMaxAgeMilliseconds) {
+  // Only a first submit, or a draft sent again, needs a fresh approval. A retry of an unknown send carries the same
+  // message and key.
+  const startsASend = options.mode === 'submit' || options.mode === 'resend';
+  if (startsASend && approval.decided_at && Date.parse(tx.now()) - Date.parse(String(approval.decided_at)) > approvalMaxAgeMilliseconds) {
     return approvalTooOldSentence;
   }
   let message: ReviewMessage | undefined;
@@ -642,9 +654,11 @@ function recheckIntent(tx: Tx, row: IntentRow, options: { mode: RecheckMode }): 
   const account = getMailAccount(tx.db, tx.workspaceId, row.provider);
   if (!account) return reasonCodes.connectorRemoved;
   // A first submit leaves only from the provider in use. Switching away blocks it, like removing the connector.
-  if (options.mode === 'submit' && getActiveMailAccount(tx.db, tx.workspaceId)?.kind !== row.provider) return reasonCodes.connectorRemoved;
+  if (startsASend && getActiveMailAccount(tx.db, tx.workspaceId)?.kind !== row.provider) return reasonCodes.connectorRemoved;
   if (account.status !== 'connected') {
-    return row.provider === 'agentmail' ? 'AgentMail rejected the saved API key.' : (account.statusMessage ?? 'Gmail no longer accepts the saved sign in.');
+    return row.provider === 'agentmail'
+      ? 'AgentMail rejected the saved API key.'
+      : (account.statusMessage ?? `${mailProviderLabels[row.provider]} no longer accepts the saved sign in.`);
   }
   if (account.accountId !== row.inbox_id || account.address !== message.inboxEmail) {
     return 'The sending inbox changed after approval.';
@@ -660,6 +674,7 @@ function recheckIntent(tx: Tx, row: IntentRow, options: { mode: RecheckMode }): 
 interface Claim {
   intent: IntentRow;
   adapter: MailAdapter;
+  mayResend?: boolean;
 }
 
 function toMailIntent(row: IntentRow, adapter: MailAdapter): MailIntent {
@@ -671,6 +686,7 @@ function toMailIntent(row: IntentRow, adapter: MailAdapter): MailIntent {
     subject: row.subject,
     body: row.body,
     messageIdHeader: row.message_id_header,
+    providerDraftId: row.provider_draft_id,
     replyTo: null,
   };
 }
@@ -782,13 +798,72 @@ function recordUnknown(ctx: ActionContext, intentId: string, provider: MailProvi
   });
 }
 
+// Microsoft saves a draft before it sends. The draft's immutable id and its internetMessageId are committed here, in a
+// transaction of their own, and the adapter sends nothing until this has returned true. It writes only while the intent
+// is still submitting, and never replaces a different draft id that is already saved.
+function saveDraftFor(ctx: ActionContext, intentId: string): NonNullable<SubmitHooks['saveDraft']> {
+  return (draft) =>
+    mutate(ctx, (tx) => {
+      const row = tx.db.prepare('SELECT status, provider_draft_id FROM send_intent WHERE id = ? AND workspace_id = ?').get(intentId, tx.workspaceId) as
+        | { status: string; provider_draft_id: string | null }
+        | undefined;
+      if (!row || row.status !== 'submitting') return false;
+      if (row.provider_draft_id && row.provider_draft_id !== draft.draftId) return false;
+      tx.db
+        .prepare('UPDATE send_intent SET provider_draft_id = ?, message_id_header = COALESCE(?, message_id_header), updated_at = ? WHERE id = ? AND workspace_id = ?')
+        .run(draft.draftId, draft.internetMessageId, tx.now(), intentId, tx.workspaceId);
+      tx.audit('send_intent.draft_saved', 'send_intent', intentId, { adopted: row.provider_draft_id === draft.draftId });
+      return true;
+    });
+}
+
+// Microsoft creates its draft some time after the claim, and a draft can take a while to make. Everything that guards a
+// first send is checked again here, in a transaction of its own, immediately before the request that sends the draft.
+// When it fails the intent is blocked and nothing is sent; the draft stays in Outlook and the audit record says so.
+// When it passes, the time of the attempt is written in the same transaction, so a later check can tell how long ago a
+// request may have left. It runs again before a repeat after a 401, which Microsoft rejects before accepting any mail.
+function beforeSendFor(ctx: ActionContext, intentId: string): NonNullable<SubmitHooks['beforeSend']> {
+  return () =>
+    mutate(ctx, (tx) => {
+      const row = tx.db.prepare('SELECT * FROM send_intent WHERE id = ? AND workspace_id = ?').get(intentId, tx.workspaceId) as IntentRow | undefined;
+      if (!row || row.status !== 'submitting') return 'This message is no longer being sent.';
+      const reason = recheckIntent(tx, row, { mode: 'submit' });
+      if (reason) {
+        transitionIntentIn(tx, row.id, ['submitting'], 'blocked', { error: reason }, 'block', {
+          reason,
+          stage: 'before_send',
+          strayDraftId: row.provider_draft_id,
+          note: 'The draft stays in Outlook drafts and was not sent.',
+        });
+        return reason;
+      }
+      tx.db.prepare('UPDATE send_intent SET send_attempted_at = ? WHERE id = ? AND workspace_id = ?').run(tx.now(), row.id, tx.workspaceId);
+      return null;
+    });
+}
+
+// The adopt scan met a draft of this intent that was edited after approval. It is not adopted, and the record says so.
+function noteStrayDraftFor(ctx: ActionContext, intentId: string): NonNullable<SubmitHooks['noteStrayDraft']> {
+  return (draft) =>
+    mutate(ctx, (tx) => {
+      tx.audit('send_intent.stray_draft', 'send_intent', intentId, {
+        draftId: draft.draftId,
+        note: 'A draft in Outlook was edited after approval, so it was not adopted. It was left in Outlook drafts.',
+      });
+    });
+}
+
 // Submits one queued intent. Returns false when there was nothing to do.
 export async function submitNextIntent(ctx: ActionContext): Promise<boolean> {
   const claim = claimNextQueued(ctx);
   if (!claim) return false;
   const { intent, adapter } = claim;
   try {
-    const result = await adapter.provider.submit(toMailIntent(intent, adapter));
+    const result = await adapter.provider.submit(toMailIntent(intent, adapter), {
+      saveDraft: saveDraftFor(ctx, intent.id),
+      beforeSend: beforeSendFor(ctx, intent.id),
+      noteStrayDraft: noteStrayDraftFor(ctx, intent.id),
+    });
     recordAccepted(ctx, intent.id, ['submitting'], result, 'submit');
   } catch (error) {
     if (error instanceof MailProviderError && error.definitive) {
@@ -810,13 +885,20 @@ function duplicateProtectionExpired(row: { submitted_at: string | null; created_
 }
 
 function windowEndedSentence(provider: MailProviderKind): string {
+  if (provider === 'microsoft') return microsoftCheckWindowEndedSentence;
   return provider === 'gmail' ? gmailSearchWindowEndedSentence : duplicateProtectionExpiredSentence;
 }
 
 function stillUnknownSentence(provider: MailProviderKind, checks: number): string {
+  if (provider === 'microsoft') return `Still unknown after ${checks} checks. Look in Sent Items and Drafts of the Microsoft account before sending again.`;
   return provider === 'gmail'
     ? `Still unknown after ${checks} checks. Look in the sent mail of the Gmail account before sending again.`
     : `Still unknown after ${checks} checks. Look in the sent folder of the AgentMail inbox before sending again.`;
+}
+
+// Gmail and Microsoft checks read the provider instead of repeating the request, so they need only a working account.
+function checksAreReadOnly(provider: MailProviderKind): boolean {
+  return provider !== 'agentmail';
 }
 
 function endSentence(value: string): string {
@@ -824,35 +906,101 @@ function endSentence(value: string): string {
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
-// An unknown intent that can no longer be checked safely stays unknown, says why once, and has a task for a person.
-function stopCheckingIn(tx: Tx, row: IntentRow, sentence: string, reason: string): void {
+// An unknown intent that needs a person to look says why once and has a task for a person.
+function noteUnknownIn(tx: Tx, row: IntentRow, sentence: string, action: string, reason: string): void {
   const alreadySaid = row.error?.includes(sentence) ?? false;
   if (!alreadySaid) {
-    transitionIntentIn(tx, row.id, ['unknown'], 'unknown', { appendError: sentence }, 'reconcile_stopped', { reason });
+    transitionIntentIn(tx, row.id, ['unknown'], 'unknown', { appendError: sentence }, action, { reason });
   }
   ensureTaskIn(tx, { title: unknownSendTaskTitle(personNameOf(tx, row.person_id)), personId: row.person_id });
 }
+
+// An unknown intent that can no longer be checked safely stays unknown, says why once, and has a task for a person.
+function stopCheckingIn(tx: Tx, row: IntentRow, sentence: string, reason: string): void {
+  noteUnknownIn(tx, row, sentence, 'reconcile_stopped', reason);
+}
+
+// A request that timed out may still be processed by Outlook a little later. A draft is therefore sent again only after
+// the last attempt is older than two request timeouts plus thirty seconds.
+function resendWaitMilliseconds(): number {
+  return 2 * graphRequestTimeoutMilliseconds() + 30_000;
+}
+
+// Fails closed: a missing or unreadable time is never enough to send again.
+function resendWaitReason(row: Pick<IntentRow, 'send_attempted_at'>, now: string): string | null {
+  if (!row.send_attempted_at) return 'No time was recorded for the last send attempt.';
+  const attempted = Date.parse(row.send_attempted_at);
+  const current = Date.parse(now);
+  if (!Number.isFinite(attempted) || !Number.isFinite(current)) return 'The time of the last send attempt could not be read.';
+  return current - attempted > resendWaitMilliseconds() ? null : 'The last send attempt is too recent.';
+}
+
+// Why Microsoft may not send its saved draft again right now, or null when it may.
+//  marker: the connector was removed while the outcome was unknown, so the draft is only ever read.
+//  approval_age: the approval is more than a day old, the rule for a first send.
+//  recheck: a guard of a first send fails (suppression, reply, cap, connector, account, provider in use).
+//  wait: the last send attempt is too recent, or has no readable time.
+interface ResendBlock {
+  kind: 'marker' | 'approval_age' | 'recheck' | 'wait';
+  reason: string;
+}
+
+function microsoftResendBlock(tx: Tx, row: IntentRow, checkWait: boolean): ResendBlock | null {
+  if (row.no_resend === 1) return { kind: 'marker', reason: microsoftNoResendSentence };
+  const reason = recheckIntent(tx, row, { mode: 'resend' });
+  if (reason === approvalTooOldSentence) return { kind: 'approval_age', reason: microsoftResendApprovalTooOldSentence };
+  if (reason) return { kind: 'recheck', reason };
+  if (checkWait) {
+    const wait = resendWaitReason(row, tx.now());
+    if (wait) return { kind: 'wait', reason: wait };
+  }
+  return null;
+}
+
+// Intents being checked right now in this process. The mail lane is single flight today (one worker tick at a time), so
+// two checks of one intent never overlap; this keeps it true if a second caller is ever added, because two checks
+// racing could each decide to send the same draft.
+const reconciling = new Set<string>();
 
 // Checks an intent whose outcome is unknown, through the provider that staged it.
 // AgentMail: retries the same request with the same key. The full recheck applies, so a suppression or a reply that
 // arrived since stops the retry instead of risking a first send. A key older than 23 hours is never reused, because
 // the provider forgets keys after a day and the retry could send a second email.
 // Gmail: a read only search for the saved Message-ID. Nothing is ever sent from here, so only the account is rechecked.
+// Microsoft: reads the saved draft. It may send that same draft again, but only when every guard of a first send passes
+// (also the one day approval age and the wait since the last attempt), the draft still holds exactly the approved
+// message, and the guards pass once more immediately before the request.
 export async function reconcileIntent(ctx: ActionContext, payload: Record<string, unknown>): Promise<void> {
+  const key = `${ctx.workspaceId}:${String(payload.intentId)}`;
+  if (reconciling.has(key)) return;
+  reconciling.add(key);
+  try {
+    await reconcileIntentOnce(ctx, payload);
+  } finally {
+    reconciling.delete(key);
+  }
+}
+
+interface ReconcileClaim extends Claim {
+  // Why a Microsoft draft may not be sent again, or null when it may.
+  block: ResendBlock | null;
+}
+
+async function reconcileIntentOnce(ctx: ActionContext, payload: Record<string, unknown>): Promise<void> {
   const intentId = String(payload.intentId);
   const attempt = Number(payload.attempt ?? 0);
-  const claim = mutate(ctx, (tx): Claim | null => {
+  const claim = mutate(ctx, (tx): ReconcileClaim | null => {
     const row = tx.db.prepare('SELECT * FROM send_intent WHERE id = ? AND workspace_id = ?').get(intentId, tx.workspaceId) as IntentRow | undefined;
     if (!row || row.status !== 'unknown') return null;
     if (duplicateProtectionExpired(row, tx.now())) {
-      stopCheckingIn(tx, row, windowEndedSentence(row.provider), row.provider === 'gmail' ? 'search_window_ended' : 'idempotency_expired');
+      stopCheckingIn(tx, row, windowEndedSentence(row.provider), checksAreReadOnly(row.provider) ? 'search_window_ended' : 'idempotency_expired');
       return null;
     }
-    const reason = recheckIntent(tx, row, { mode: row.provider === 'gmail' ? 'read_only' : 'retry_send' });
-    if (reason && row.provider === 'gmail') {
+    const reason = recheckIntent(tx, row, { mode: checksAreReadOnly(row.provider) ? 'read_only' : 'retry_send' });
+    if (reason && checksAreReadOnly(row.provider)) {
       // The read only search cannot run (the sign in failed, was removed, or is for a different account). Say so now,
       // once, with a task for a person, instead of waiting quietly. The search resumes when the same account is ready.
-      stopCheckingIn(tx, row, `Checking again stopped: ${endSentence(reason === reasonCodes.connectorRemoved ? 'The Gmail connector was removed' : reason)} It stays unknown until the same Gmail account is signed in again or a person acknowledges it.`, 'cannot_check');
+      stopCheckingIn(tx, row, `Checking again stopped: ${endSentence(reason === reasonCodes.connectorRemoved ? `The ${mailProviderLabels[row.provider]} connector was removed` : reason)} It stays unknown until the same ${mailProviderLabels[row.provider]} account is signed in again or a person acknowledges it.`, 'cannot_check');
       return null;
     }
     if (reason) {
@@ -868,13 +1016,57 @@ export async function reconcileIntent(ctx: ActionContext, payload: Record<string
       return null;
     }
     const adapter = createMailAdapter(ctx, row.provider);
-    return adapter ? { intent: row, adapter } : null;
+    if (!adapter) return null;
+    // Microsoft may send its own unsent draft again, so it is told whether it may: every guard of a first send passes
+    // (suppression, a reply since approval, the daily cap, the provider still in use, an approval under a day old), the
+    // connector was not removed in the meantime, and the last send attempt is long enough ago. When one fails it can
+    // still learn that the message went out, but it cannot send.
+    const block = row.provider === 'microsoft' ? microsoftResendBlock(tx, row, true) : null;
+    return { intent: row, adapter, mayResend: row.provider === 'microsoft' && block === null, block };
   });
   if (!claim) return;
   const { intent, adapter } = claim;
-  const result = await adapter.provider.reconcileUnknown(toMailIntent(intent, adapter));
+  let block = claim.block;
+  // Runs inside the adapter, immediately before the request that sends the draft again. The guards are read again then,
+  // and the time of the attempt is recorded before the request leaves.
+  let firstResendRequest = true;
+  const beforeResend = (): string | null =>
+    mutate(ctx, (tx) => {
+      const row = tx.db.prepare('SELECT * FROM send_intent WHERE id = ? AND workspace_id = ?').get(intent.id, tx.workspaceId) as IntentRow | undefined;
+      if (!row || row.status !== 'unknown') return 'This message is no longer unknown.';
+      // A repeat after a 401 happens moments after the first request was stamped, so only the first one waits.
+      const found = microsoftResendBlock(tx, row, firstResendRequest);
+      if (found) {
+        block = found;
+        return found.reason;
+      }
+      firstResendRequest = false;
+      tx.db.prepare('UPDATE send_intent SET send_attempted_at = ? WHERE id = ? AND workspace_id = ?').run(tx.now(), row.id, tx.workspaceId);
+      return null;
+    });
+  const result = await adapter.provider.reconcileUnknown(toMailIntent(intent, adapter), {
+    mayResend: claim.mayResend ?? false,
+    ...(intent.provider === 'microsoft' ? { beforeResend } : {}),
+  });
   if (result.outcome === 'accepted') {
     recordAccepted(ctx, intent.id, ['unknown', 'cancelled'], { messageId: result.messageId, threadId: result.threadId }, 'reconcile');
+    return;
+  }
+  // The saved draft was edited after approval. It is never sent, the checks stop, and a person gets a task.
+  if (result.outcome === 'needs_person' && result.reason === 'draft_changed') {
+    mutate(ctx, (tx) => {
+      const row = tx.db.prepare('SELECT * FROM send_intent WHERE id = ? AND workspace_id = ?').get(intent.id, tx.workspaceId) as IntentRow | undefined;
+      if (row?.status === 'unknown') stopCheckingIn(tx, row, result.sentence, 'draft_changed');
+    });
+    return;
+  }
+  // Nothing found shows the draft is still a draft. An approval over a day old will not send it, so checking stops.
+  if (result.outcome === 'not_found' && block?.kind === 'approval_age') {
+    const sentence = block.reason;
+    mutate(ctx, (tx) => {
+      const row = tx.db.prepare('SELECT * FROM send_intent WHERE id = ? AND workspace_id = ?').get(intent.id, tx.workspaceId) as IntentRow | undefined;
+      if (row?.status === 'unknown') stopCheckingIn(tx, row, sentence, 'approval_too_old');
+    });
     return;
   }
   if (result.outcome === 'unavailable' && result.error.definitive) {
@@ -894,9 +1086,21 @@ export async function reconcileIntent(ctx: ActionContext, payload: Record<string
     });
     return;
   }
+  // Checks go on, but a person needs to know. A message that is neither a draft nor in Sent Items, and a draft that may
+  // never be sent again because the connector was removed, each keep the intent unknown with a task.
+  const note =
+    result.outcome === 'needs_person'
+      ? { sentence: result.sentence, reason: result.reason }
+      : result.outcome === 'not_found' && block?.kind === 'marker'
+        ? { sentence: block.reason, reason: 'no_resend' }
+        : null;
   mutate(ctx, (tx) => {
     const next = attempt + 1;
-    const reason = result.outcome === 'unavailable' ? result.error.message : 'The message was not found yet.';
+    const reason = result.outcome === 'unavailable' ? result.error.message : note ? note.sentence : 'The message was not found yet.';
+    if (note) {
+      const row = tx.db.prepare('SELECT * FROM send_intent WHERE id = ? AND workspace_id = ?').get(intent.id, tx.workspaceId) as IntentRow | undefined;
+      if (row?.status === 'unknown') noteUnknownIn(tx, row, note.sentence, 'reconcile_note', note.reason);
+    }
     if (scheduleReconcileIn(tx, intent.id, next, intent.provider)) {
       transitionIntentIn(tx, intent.id, ['unknown'], 'unknown', {}, 'reconcile_retry', { attempt: next, reason });
       return;
@@ -949,14 +1153,27 @@ export function recoverSubmittingIntents(ctx: ActionContext, olderThanMillisecon
 }
 
 // A submit that has been "submitting" longer than this is treated as interrupted. It must outlast a live submit, or a
-// second process could mark a request that is still on the wire as unknown. The worst case is a Gmail send that needs
-// a token refresh, is refused with a 401, refreshes again, and sends again: four requests, each allowed the full
-// request timeout. The margin covers the database writes around them. With the default timeouts this is 90 seconds.
+// second process could mark a request that is still on the wire as unknown. Each request is allowed the full request
+// timeout. The margin covers the database writes around them.
+// Gmail and AgentMail: the worst case is a send that needs a token refresh, is refused with a 401, refreshes again, and
+// sends again: four requests. With the default timeouts that is 90 seconds.
+// Microsoft: a submit makes up to five Graph calls: a draft create, a drafts scan, a second create, a second scan, and
+// the send. Each call can send its request twice (a 401 repeats it) and can renew the token twice (before the request
+// and after the 401), and a renewal that meets a finished sign in makes a second token request. That is
+// 5 * (2 + 2 * 2) = 30 requests, 8 minutes with the default timeout.
 const worstCaseSubmitRequests = 4;
+const worstCaseMicrosoftGraphCalls = 5;
+const worstCaseMicrosoftRequestsPerCall = 2 + 2 * 2;
+const worstCaseMicrosoftSubmitRequests = worstCaseMicrosoftGraphCalls * worstCaseMicrosoftRequestsPerCall;
 const staleSubmitMarginMilliseconds = 30_000;
 
 export function staleSubmittingMilliseconds(): number {
-  return Math.max(agentmailRequestTimeoutMilliseconds(), gmailRequestTimeoutMilliseconds()) * worstCaseSubmitRequests + staleSubmitMarginMilliseconds;
+  return (
+    Math.max(
+      Math.max(agentmailRequestTimeoutMilliseconds(), gmailRequestTimeoutMilliseconds()) * worstCaseSubmitRequests,
+      graphRequestTimeoutMilliseconds() * worstCaseMicrosoftSubmitRequests,
+    ) + staleSubmitMarginMilliseconds
+  );
 }
 
 // Submits queued intents one at a time, oldest first, up to `limit` per call.

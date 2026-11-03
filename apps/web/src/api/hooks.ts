@@ -14,6 +14,7 @@ import type {
   CsvImportInput,
   DraftOutreachInput,
   GmailCredentialsInput,
+  MicrosoftCredentialsInput,
   LeadCaptureInput,
   MailProviderKind,
   ModelProviderInput,
@@ -617,6 +618,38 @@ export function useRemoveGmailConnector() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => api.connectors.removeGmail(),
+    onSettled: () => {
+      invalidateGmail(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ['send-intents'] });
+      void queryClient.invalidateQueries({ queryKey: ['approvals'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+    },
+  });
+}
+
+// Same waiting behavior as Gmail: refetch while a sign in is open in another tab.
+export function useMicrosoftConnector(waiting = false) {
+  const query = useConnectors({ refetchInterval: waiting ? 3000 : false });
+  const connector = query.data?.find((entry) => entry.kind === 'microsoft') ?? null;
+  return { query, connector };
+}
+
+export function useSaveMicrosoftConnector() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: MicrosoftCredentialsInput) => api.connectors.saveMicrosoft(input),
+    onSettled: () => invalidateGmail(queryClient),
+  });
+}
+
+export function useStartMicrosoftOAuth() {
+  return useMutation({ mutationFn: () => api.connectors.startMicrosoftOAuth() });
+}
+
+export function useRemoveMicrosoftConnector() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.connectors.removeMicrosoft(),
     onSettled: () => {
       invalidateGmail(queryClient);
       void queryClient.invalidateQueries({ queryKey: ['send-intents'] });

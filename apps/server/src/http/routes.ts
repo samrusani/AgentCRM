@@ -6,8 +6,10 @@ import {
   configureAgentmailConnector,
   configureAnthropicConnector,
   completeGmailOAuth,
+  completeMicrosoftOAuth,
   configureApifyConnector,
   configureGmailConnector,
+  configureMicrosoftConnector,
   configureModelConnector,
   configureOllamaConnector,
   controlRun,
@@ -24,6 +26,7 @@ import {
   disconnectAnthropicConnector,
   disconnectApifyConnector,
   disconnectGmailConnector,
+  disconnectMicrosoftConnector,
   disconnectModelConnector,
   getApifyActor,
   getMailProvider,
@@ -41,6 +44,7 @@ import {
   setMailProvider,
   setModelProvider,
   startGmailOAuth,
+  startMicrosoftOAuth,
   stageCsvImport,
   startRun,
   switchTemplate,
@@ -323,6 +327,35 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
       request.query,
     );
     const outcome = await completeGmailOAuth(context(), { code: query.code, state: query.state, error: query.error });
+    return reply.redirect(outcome.redirect, 303);
+  });
+  app.put('/api/connectors/microsoft', async (request, reply) => {
+    const { connector, created } = configureMicrosoftConnector(context(), request.body);
+    reply.status(created ? 201 : 200);
+    return connector;
+  });
+  app.delete('/api/connectors/microsoft', async (_request, reply) => {
+    disconnectMicrosoftConnector(context());
+    return reply.status(204).send();
+  });
+  // Returns the Microsoft consent URL. The browser opens it; Microsoft sends it back to the callback below.
+  app.post('/api/connectors/microsoft/oauth/start', async (request) => {
+    const origin = request.headers.origin;
+    return startMicrosoftOAuth(context(), { returnOrigin: typeof origin === 'string' ? origin : null });
+  });
+  app.get('/api/connectors/microsoft/oauth/callback', async (request, reply) => {
+    const query = parseInput(
+      z
+        .object({ code: z.string().optional(), state: z.string().optional(), error: z.string().optional(), error_description: z.string().optional() })
+        .passthrough(),
+      request.query,
+    );
+    const outcome = await completeMicrosoftOAuth(context(), {
+      code: query.code,
+      state: query.state,
+      error: query.error,
+      errorDescription: query.error_description,
+    });
     return reply.redirect(outcome.redirect, 303);
   });
   app.get('/api/mail-provider', async (_request, reply) => reply.send(getMailProvider(context()) ?? null));

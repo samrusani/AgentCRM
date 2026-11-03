@@ -24,7 +24,7 @@ function writeChoiceIn(tx: Tx, kind: MailProviderKind | null): void {
   tx.emit({ type: 'record_updated', entityType: 'mail_provider', entityId: tx.workspaceId });
 }
 
-// Called when a mail connector becomes ready to send: AgentMail with an inbox chosen, or Gmail with a finished sign in.
+// Called when a mail connector becomes ready to send: AgentMail with an inbox chosen, or Gmail or Microsoft with a finished sign in.
 // Connecting a second provider never moves sending. When no provider is stored yet (a workspace that predates the
 // setting, or a choice that points at a removed connector), the provider already sending is stored first, using the
 // same fallback the queries use: the first other connector that is ready. Only a workspace with no other ready mail
@@ -58,8 +58,9 @@ function notReadySentence(kind: MailProviderKind, account: MailAccount): string 
   if (account.status === 'error') {
     return `${label} needs attention before it can be used: ${account.statusMessage ?? 'it no longer accepts the saved credentials.'}`;
   }
-  return kind === 'agentmail'
-    ? 'AgentMail has no inbox selected. Select an inbox in Settings before making it the mail provider in use.'
+  if (kind === 'agentmail') return 'AgentMail has no inbox selected. Select an inbox in Settings before making it the mail provider in use.';
+  return kind === 'microsoft'
+    ? 'Microsoft needs a sign in. Sign in with Microsoft in Settings before making it the mail provider in use.'
     : 'Gmail needs a sign in. Sign in with Google in Settings before making it the mail provider in use.';
 }
 

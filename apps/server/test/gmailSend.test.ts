@@ -580,14 +580,26 @@ describe('the reconcile schedule and the stale submit limit', () => {
   });
 
   it('allows a submit at least 90 seconds with the default timeouts, and derives it from the request timeout', () => {
-    const saved = { gmail: process.env.AGENTCRM_GMAIL_TIMEOUT_MS, agentmail: process.env.AGENTCRM_AGENTMAIL_TIMEOUT_MS };
+    const saved = { gmail: process.env.AGENTCRM_GMAIL_TIMEOUT_MS, agentmail: process.env.AGENTCRM_AGENTMAIL_TIMEOUT_MS, microsoft: process.env.AGENTCRM_MS_TIMEOUT_MS };
     delete process.env.AGENTCRM_GMAIL_TIMEOUT_MS;
     delete process.env.AGENTCRM_AGENTMAIL_TIMEOUT_MS;
+    // A Microsoft submit can make up to 30 requests (five Graph calls, each with a repeat after a 401 and two token
+    // renewals of up to two requests), so it sets the limit unless its timeout is short.
+    process.env.AGENTCRM_MS_TIMEOUT_MS = '1000';
     try {
       expect(staleSubmittingMilliseconds()).toBeGreaterThanOrEqual(90_000);
       process.env.AGENTCRM_GMAIL_TIMEOUT_MS = '20000';
       expect(staleSubmittingMilliseconds()).toBe(20_000 * 4 + 30_000);
+      // With the default Microsoft timeout of 15 seconds the Microsoft worst case is the longest: 30 * 15 + 30 seconds.
+      delete process.env.AGENTCRM_GMAIL_TIMEOUT_MS;
+      delete process.env.AGENTCRM_MS_TIMEOUT_MS;
+      expect(staleSubmittingMilliseconds()).toBe(15_000 * 30 + 30_000);
+      // A slower Microsoft timeout moves the limit with it, 30 requests at a time.
+      process.env.AGENTCRM_MS_TIMEOUT_MS = '20000';
+      expect(staleSubmittingMilliseconds()).toBe(20_000 * 30 + 30_000);
     } finally {
+      if (saved.microsoft === undefined) delete process.env.AGENTCRM_MS_TIMEOUT_MS;
+      else process.env.AGENTCRM_MS_TIMEOUT_MS = saved.microsoft;
       if (saved.gmail === undefined) delete process.env.AGENTCRM_GMAIL_TIMEOUT_MS;
       else process.env.AGENTCRM_GMAIL_TIMEOUT_MS = saved.gmail;
       if (saved.agentmail === undefined) delete process.env.AGENTCRM_AGENTMAIL_TIMEOUT_MS;

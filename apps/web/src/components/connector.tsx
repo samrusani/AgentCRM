@@ -19,6 +19,7 @@ export const CONNECTOR_MARKS: Record<string, string> = {
   apify: 'Ap',
   agentmail: 'Am',
   gmail: 'Gm',
+  microsoft: 'Ms',
 };
 
 // The card header is a disclosure: collapsed it still names the card, a short summary, and its state.

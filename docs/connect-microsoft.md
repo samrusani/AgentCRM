@@ -6,15 +6,16 @@ AgentCRM connects to Microsoft mail through an app registration that you create 
 
 1. Open https://entra.microsoft.com/ (or portal.azure.com) and sign in. Go to Identity, Applications, App registrations, New registration.
 2. Name it anything. Under Supported account types choose "Accounts in any organizational directory and personal Microsoft accounts". This is the option that works for both work mailboxes and personal outlook.com addresses.
-3. Register, then open Authentication. Add a platform, choose "Mobile and desktop applications", and enter `http://localhost` as the redirect URI. Microsoft matches loopback redirects regardless of port, so this one entry covers the app.
+3. Register, then open Authentication. Add a platform, choose "Mobile and desktop applications", and enter `http://localhost/api/connectors/microsoft/oauth/callback` as the redirect URI. Microsoft ignores the port for loopback redirects but matches the path, so this one entry covers the app on any port.
 4. Still under Authentication, set "Allow public client flows" to Yes and save. No client secret is needed; the app signs in with PKCE like a desktop application.
 5. Copy the Application (client) id from the Overview page and paste it into the Microsoft card in AgentCRM Settings, Connectors, then select Sign in with Microsoft.
 
 ## Permissions requested
 
 - `Mail.Send`: submit the messages you approve.
-- `Mail.ReadWrite`: create the draft that makes sending reconcilable (the app sends by creating a draft first, so an unclear outcome can be checked instead of risking a duplicate), thread replies, and read incoming mail for replies and bounce reports.
+- `Mail.ReadWrite`: create the draft that makes sending reconcilable (the app sends by creating a draft first, so an unclear outcome can be checked instead of risking a duplicate) and read incoming mail for replies and bounce reports.
 - `offline_access`: stay signed in between sessions.
+- `User.Read`: read your account's email address at sign in, nothing else.
 
 Tokens are stored unencrypted in the local database file, like every other secret in AgentCRM.
 

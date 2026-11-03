@@ -1,15 +1,15 @@
 import type { Db } from '../db.js';
 import { isMailProviderKind, type MailProviderKind } from '../providers/mailTypes.js';
 import { readSettings } from '../qualification/config.js';
-import { type AgentmailConnector, type GmailConnector, listConnectors } from './connectors.js';
+import { type AgentmailConnector, type GmailConnector, listConnectors, type MicrosoftConnector } from './connectors.js';
 
-export type MailConnector = AgentmailConnector | GmailConnector;
+export type MailConnector = AgentmailConnector | GmailConnector | MicrosoftConnector;
 
 export function isMailConnector(connector: { kind: string }): connector is MailConnector {
   return isMailProviderKind(connector.kind);
 }
 
-// The account a connector sends from. AgentMail has an inbox id and an address. Gmail's account id is its address.
+// The account a connector sends from. AgentMail has an inbox id and an address. Gmail's and Microsoft's account id is the address.
 export interface MailAccount {
   kind: MailProviderKind;
   connectorId: string;

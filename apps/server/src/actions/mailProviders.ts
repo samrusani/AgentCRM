@@ -1,11 +1,13 @@
 import { createAgentmailMailProvider } from '../providers/agentmail.js';
 import { createGmailMailProvider } from '../providers/gmail.js';
+import { createMicrosoftMailProvider } from '../providers/microsoft.js';
 import type { MailProvider, MailProviderKind } from '../providers/mailTypes.js';
 import { getConnectorSecret } from '../queries/connectors.js';
 import { getMailAccount, type MailAccount } from '../queries/mailProvider.js';
 import { markAgentmailError } from './agentmailConnector.js';
 import type { ActionContext } from './context.js';
 import { createGmailTokenStore, markGmailError } from './gmailConnector.js';
+import { createMicrosoftTokenStore, markMicrosoftError } from './microsoftConnector.js';
 
 export interface MailAdapter {
   provider: MailProvider;
@@ -34,6 +36,17 @@ export function createMailAdapter(ctx: ActionContext, kind: MailProviderKind): M
       }),
     };
   }
+  if (kind === 'microsoft') {
+    return {
+      account,
+      credential: '',
+      provider: createMicrosoftMailProvider({
+        address: account.address,
+        store: createMicrosoftTokenStore(ctx),
+        now: () => Date.parse(ctx.now()),
+      }),
+    };
+  }
   return {
     account,
     credential: '',
@@ -48,5 +61,6 @@ export function createMailAdapter(ctx: ActionContext, kind: MailProviderKind): M
 // A provider said its credentials are not accepted. The connector flips to "error" so Settings can ask for a new one.
 export function markMailProviderRejected(ctx: ActionContext, adapter: Pick<MailAdapter, 'account' | 'credential'>): void {
   if (adapter.account.kind === 'agentmail') markAgentmailError(ctx, adapter.credential);
+  else if (adapter.account.kind === 'microsoft') markMicrosoftError(ctx, 'unauthorized');
   else markGmailError(ctx, 'unauthorized');
 }
