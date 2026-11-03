@@ -46,3 +46,47 @@ export function attempt<T>(layer: () => T): T | undefined {
     return undefined;
   }
 }
+
+// Elements that start and end a visual line in `innerText`. Used only by the layout free fallback below.
+const BLOCK_TAGS = new Set([
+  'ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'BR', 'DD', 'DETAILS', 'DIALOG', 'DIV', 'DL', 'DT', 'FIELDSET',
+  'FIGCAPTION', 'FIGURE', 'FOOTER', 'FORM', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HEADER', 'HR', 'LI', 'MAIN',
+  'NAV', 'OL', 'P', 'PRE', 'SECTION', 'SUMMARY', 'TABLE', 'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'UL',
+]);
+const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD']);
+
+/**
+ * The visible text of an element as trimmed, non empty lines. Uses `innerText` (which follows the page's layout, so
+ * it survives obfuscated class names) and falls back to a block aware walk of the text nodes where the environment
+ * has no layout (jsdom has no `innerText`). Never throws on a plain element; a hostile deeply nested tree can throw
+ * a RangeError, which callers wrap in `attempt`.
+ */
+export function textLines(el: Element): string[] {
+  const inner = (el as HTMLElement).innerText;
+  if (typeof inner === 'string') {
+    return inner.split(/\r?\n/).map((line) => line.replace(/\s+/g, ' ').trim()).filter((line) => line !== '');
+  }
+  const lines: string[] = [];
+  let current = '';
+  const flush = () => {
+    const text = current.replace(/\s+/g, ' ').trim();
+    if (text !== '') lines.push(text);
+    current = '';
+  };
+  const walk = (node: Node) => {
+    if (node.nodeType === 3) {
+      current += node.textContent ?? '';
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    const child = node as HTMLElement;
+    if (SKIP_TAGS.has(child.tagName) || child.hasAttribute('hidden') || child.style?.display === 'none') return;
+    const block = BLOCK_TAGS.has(child.tagName);
+    if (block) flush();
+    for (let next = child.firstChild; next; next = next.nextSibling) walk(next);
+    if (block) flush();
+  };
+  walk(el);
+  flush();
+  return lines;
+}

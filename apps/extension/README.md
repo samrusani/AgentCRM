@@ -10,7 +10,7 @@ A Chrome extension (Manifest V3) that adds an "Add to AgentCRM" button to Linked
 
 ## Limits
 
-The extension captures only the profile you are viewing, and only when you click the button. Viewing a profile checks it against your CRM so the button can say In CRM, and that check only ever talks to a local server address; nothing else runs in the background. It never crawls or reads feeds. LinkedIn changes its markup often, so a capture can degrade to the name and the profile URL. X profiles carry less data than LinkedIn profiles. Capturing someone who is already in your CRM adds nothing new; edit that record in the app.
+The extension captures only the profile you are viewing, and only when you click the button. Viewing a profile checks it against your CRM so the button can say In CRM, and that check only ever talks to a local server address; nothing else runs in the background. It never crawls or reads feeds. On LinkedIn, if you have the Contact info dialog open when you click, the capture also reads the email, phone, and website it shows (it never opens the dialog itself, and it reads the dialog only when the address bar is on its `/overlay/contact-info/` path). The dialog is read in English only: a localized dialog is simply not read. The button is a small icon next to the profile name (hover for its label), or a labeled chip in the corner when the name is not found. LinkedIn changes its markup often, so a capture can degrade to the name and the profile URL. X profiles carry less data than LinkedIn profiles. Capturing someone who is already in your CRM adds nothing new; edit that record in the app.
 
 ## Development
 

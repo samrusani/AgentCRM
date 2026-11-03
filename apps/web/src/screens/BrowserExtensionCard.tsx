@@ -203,6 +203,10 @@ export function BrowserExtensionCard() {
             button can say In CRM, and that check only ever talks to a local server address. Nothing else runs in the
             background.
           </p>
+          <p className="muted">
+            Open a profile's Contact info overlay before clicking and the capture also reads the email, phone, and
+            website it shows.
+          </p>
         </div>
       ) : null}
     </article>

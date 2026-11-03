@@ -7,6 +7,7 @@ const STYLE = `
 :host { all: initial; }
 .chip {
   --accent: #15685B; --on-accent: #FFFFFF; --danger: #B42318; --ink-muted: #5B6472; --surface: #FFFFFF; --line: #E3E6EB;
+  --mark: #E7F2EF; --warn-bg: #FEF3C7; --warn-ink: #92400E; --warn-line: #D97706;
   position: static; box-sizing: border-box; margin: 0; white-space: nowrap;
   font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
   display: inline-block; min-width: 11em; text-align: center;
@@ -20,8 +21,24 @@ const STYLE = `
 .chip[data-state="error"] { background: var(--danger); }
 .chip[data-state="inCrm"] { background: transparent; color: var(--ink-muted); border-color: var(--line); box-shadow: none; cursor: default; }
 .chip[data-state="inCrm"][data-placement="floating"] { background: var(--surface); }
+/* The inline presentation is a compact icon button: one 22px square in every state, the capture mark drawn as SVG. */
+.chip[data-placement="inline"] {
+  display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;
+  position: relative; width: 22px; height: 22px; min-width: 22px; padding: 0; line-height: 0; font-size: 0;
+  color: var(--mark);
+}
+/* The state label for assistive tech: hidden visually, zero layout impact, so the live region announces changes. */
+.chip[data-placement="inline"] .sr {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+}
+.chip[data-placement="inline"] svg { display: block; width: 100%; height: 100%; pointer-events: none; }
+.chip[data-placement="inline"][data-state="sending"] { background: var(--surface); color: var(--ink-muted); }
+.chip[data-placement="inline"][data-state="error"] { background: var(--warn-bg); color: var(--warn-ink); border-color: var(--warn-line); box-shadow: none; }
+.chip[data-placement="inline"][data-state="inCrm"] { background: transparent; color: var(--ink-muted); border-color: var(--ink-muted); box-shadow: none; }
 @media (prefers-color-scheme: dark) {
-  .chip { --accent: #43B39C; --on-accent: #15211E; --danger: #F0756A; --ink-muted: #959DAB; --surface: #1F232A; --line: #262B33; }
+  .chip { --accent: #43B39C; --on-accent: #15211E; --danger: #F0756A; --ink-muted: #959DAB; --surface: #1F232A; --line: #262B33;
+    --mark: #15211E; --warn-bg: #3B2A0A; --warn-ink: #FBBF24; --warn-line: #F59E0B; }
 }
 `;
 
@@ -34,6 +51,47 @@ const LABELS: Record<Exclude<ChipState, 'error'>, string> = {
   added: 'Added',
   inCrm: 'In CRM',
 };
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** One filled rect in the 100 unit icon box. */
+function rect(x: number, y: number, w: number, h: number): SVGRectElement {
+  const el = document.createElementNS(SVG_NS, 'rect');
+  for (const [name, value] of [['x', x], ['y', y], ['width', w], ['height', h]] as const) el.setAttribute(name, String(value));
+  return el;
+}
+
+/**
+ * The extension's capture mark (see scripts/icons.mjs): four corner brackets at 20% and 80% with arm 22% and
+ * thickness 9%, and a centered 20% square dot. The field behind it is the button's own background. The `added`
+ * state swaps the brackets for a check so the confirmation reads at a glance, in the same box.
+ */
+export function buildIcon(kind: 'mark' | 'check'): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 100 100');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  svg.setAttribute('fill', 'currentColor');
+  if (kind === 'check') {
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', 'M24 52 L43 70 L77 31');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', 'currentColor');
+    path.setAttribute('stroke-width', '11');
+    path.setAttribute('stroke-linecap', 'square');
+    svg.append(path);
+    return svg;
+  }
+  const lo = 20, hi = 80, arm = 22, t = 9;
+  for (const [cx, sx] of [[lo, 1], [hi, -1]] as const) {
+    for (const [cy, sy] of [[lo, 1], [hi, -1]] as const) {
+      svg.append(rect(sx > 0 ? cx : cx - arm, sy > 0 ? cy : cy - t, arm, t));
+      svg.append(rect(sx > 0 ? cx : cx - t, sy > 0 ? cy : cy - arm, t, arm));
+    }
+  }
+  svg.append(rect(40, 40, 20, 20));
+  return svg;
+}
 
 // The host carries inline styles only, set with !important so a site reset or a broad selector cannot zero it out.
 const HOST_STYLES: Record<ChipPlacement, Array<[string, string]>> = {
@@ -123,7 +181,22 @@ export function startChip(config: ChipConfig): void {
     if (text !== undefined) errorText = text;
     if (!button) return;
     button.dataset.state = next;
-    button.textContent = next === 'error' ? errorText : LABELS[next];
+    const label = next === 'error' ? errorText : LABELS[next];
+    if (placement === 'floating') {
+      // The floating chip is the full labeled chip: its text is its name.
+      button.textContent = label;
+      button.removeAttribute('aria-label');
+      button.removeAttribute('title');
+    } else {
+      // The inline chip is an icon: the state lives in its accessible name, native tooltip, and a visually hidden
+      // text node (so the live region announces a change), never in its size.
+      const hidden = document.createElement('span');
+      hidden.className = 'sr';
+      hidden.textContent = label;
+      button.replaceChildren(buildIcon(next === 'added' ? 'check' : 'mark'), hidden);
+      button.setAttribute('aria-label', label);
+      button.title = label;
+    }
     if (next === 'inCrm') button.setAttribute('aria-disabled', 'true');
     else button.removeAttribute('aria-disabled');
   };

@@ -83,6 +83,14 @@ describe('extractXProfile', () => {
     expect(extractXProfile(page('', '(2) Jane Doe (@jane) / X'), url('/jane'))).toEqual({ name: 'Jane Doe', handle: 'jane' });
   });
 
+  it('tolerates a leading notification count of any size in the title', () => {
+    expect(extractXProfile(page('', '(1) Satya Nadella (@satyanadella) / X'), url('/satyanadella'))).toEqual({ name: 'Satya Nadella', handle: 'satyanadella' });
+    expect(extractXProfile(page('', '(20+) Jane Doe (@jane) / X'), url('/jane')).name).toBe('Jane Doe');
+    expect(extractXProfile(page('', '(1,204) Jane Doe (@jane) / X'), url('/jane')).name).toBe('Jane Doe');
+    expect(extractXProfile(page('', '(12) Jane Doe (@jane) / X'), url('/jane')).name).toBe('Jane Doe');
+    expect(extractXProfile(page('', '(1) Satya Nadella (@satyanadella) / X'), url('/other')).name).toBe('other');
+  });
+
   it('floors the name to the handle when the title has no match', () => {
     expect(extractXProfile(page('', 'X'), url('/jane'))).toEqual({ name: 'jane', handle: 'jane' });
   });

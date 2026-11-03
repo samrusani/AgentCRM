@@ -175,6 +175,7 @@ describe('capture a person', () => {
     bio: 'Writes the first programs.',
     website: 'https://example.com/ada',
     email: 'Ada@Example.com',
+    phone: '+1 555 010 1234',
   };
 
   it('creates a person with claims, tags, a note, an audit row, and a record event', async () => {
@@ -211,6 +212,7 @@ describe('capture a person', () => {
       ['linkedinUrl', canonical],
       ['location', 'London, UK'],
       ['name', 'Ada Lovelace'],
+      ['phone', '+1 555 010 1234'],
       ['title', 'Founder at Analytical Engines'],
       ['website', 'https://example.com/ada'],
     ]);
@@ -404,6 +406,7 @@ describe('capture a person', () => {
       ['a name over 200', { ...base, name: 'n'.repeat(201) }],
       ['a url over 500', { ...base, url: `https://x.com/validname?${'q'.repeat(500)}` }],
       ['a handle over 30', { ...base, handle: 'h'.repeat(31) }],
+      ['a phone over 40', { ...base, phone: '5'.repeat(41) }],
     ];
     for (const [label, payload] of bad) {
       it(`rejects ${label}`, async () => {

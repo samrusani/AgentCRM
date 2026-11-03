@@ -35,7 +35,7 @@ export function isProfileView(pathname: string): string | null {
 
 /** The name from "Name (@handle) / X", only when the title's handle is the one in the address bar. */
 function nameFromTitle(doc: Document, handle: string): string | undefined {
-  const match = /^(?:\(\d+\)\s*)?(.+?)\s*\(@([A-Za-z0-9_]+)\)/.exec(doc.title);
+  const match = /^(?:\(\d[\d,.]*\+?\)\s*)?(.+?)\s*\(@([A-Za-z0-9_]+)\)/.exec(doc.title);
   if (!match || match[2]!.toLowerCase() !== handle.toLowerCase()) return undefined;
   return cleanText(match[1]);
 }

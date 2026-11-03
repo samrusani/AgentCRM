@@ -4,7 +4,7 @@ import { startChip } from './chip';
 
 startChip({
   source: 'linkedin',
-  findAnchor: findLinkedinNameAnchor,
+  findAnchor: (doc) => findLinkedinNameAnchor(doc, new URL(location.href)),
   profileKey: (url) => isProfilePath(url.pathname),
   build: (doc, url) => {
     const profile = extractLinkedinProfile(doc, url);
@@ -16,6 +16,8 @@ startChip({
       company: profile.company,
       location: profile.location,
       email: profile.email,
+      phone: profile.phone,
+      website: profile.website,
     });
   },
 });

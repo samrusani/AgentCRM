@@ -11,6 +11,7 @@ export interface CapturePayload {
   bio?: string;
   website?: string;
   email?: string;
+  phone?: string;
 }
 
 /** Same shape as a capture minus the extracted fields: the server only needs the source and the profile URL. */

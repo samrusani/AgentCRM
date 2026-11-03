@@ -203,6 +203,11 @@ const captureSchema = z
     bio: z.preprocess(scrubbed(true), optionalText(2000)),
     website: scrubbedText(optionalText(500)),
     email: scrubbedText(optionalEmail),
+    phone: scrubbedText(
+      optionalText(40).refine((value) => value === undefined || /\d/.test(value), {
+        message: 'A phone needs at least one digit.',
+      }),
+    ),
   })
   .strict();
 
@@ -353,6 +358,7 @@ export function capturePerson(ctx: ActionContext, input: unknown): CaptureResult
       ['location', data.location],
       ['email', data.email],
       ['website', data.website],
+      ['phone', data.phone],
       [data.source === 'linkedin' ? 'linkedinUrl' : 'xUrl', canonical.url],
     ];
     for (const [field, value] of claims) {
