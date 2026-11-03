@@ -21,6 +21,7 @@
     "backup": "tsx src/cli.ts backup",
     "restore": "tsx src/cli.ts restore",
     "mcp": "tsx src/cli.ts mcp",
+    "bench": "tsx bench/bench.ts",
     "typecheck": "tsc -p tsconfig.test.json"
   },
   "dependencies": {
