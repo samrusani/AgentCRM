@@ -10,18 +10,20 @@ export type ConnectorKind = 'apify' | 'agentmail' | ModelConnectorKind;
 
 // Actor ids for the LinkedIn lead capture run. Settings hold only the ids a person changed; reads fill in the defaults.
 export interface LeadCaptureActors {
+  postActor: string;
   reactionsActor: string;
   commentsActor: string;
   profileActor: string;
 }
 
 export const defaultLeadCaptureActors: LeadCaptureActors = {
+  postActor: 'apimaestro/linkedin-post-detail',
   reactionsActor: 'harvestapi/linkedin-post-reactions',
   commentsActor: 'harvestapi/linkedin-post-comments',
   profileActor: 'harvestapi/linkedin-profile-scraper',
 };
 
-export const leadCaptureActorFields = ['reactionsActor', 'commentsActor', 'profileActor'] as const;
+export const leadCaptureActorFields = ['postActor', 'reactionsActor', 'commentsActor', 'profileActor'] as const;
 
 export interface ApifyConnectorSettings {
   allowlist: string[];

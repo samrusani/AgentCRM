@@ -23,6 +23,28 @@ export function ImportCountsRow({ counts, accepted }: { counts: ImportCounts; ac
   );
 }
 
+// The Name cell of a staged row. An organization shows its company name with an "Organization" marker, so a
+// fund named in a post is never shown as a person.
+export function RowNameCell({
+  kind,
+  name,
+  company,
+}: {
+  kind: 'person' | 'organization';
+  name: string | null;
+  company: string | null;
+}) {
+  if (kind === 'organization') {
+    const label = company ?? name;
+    return (
+      <td className={label ? 'cell-name' : 'muted'}>
+        {label ?? 'No name'} <span className="muted row-kind">Organization</span>
+      </td>
+    );
+  }
+  return <td className={name ? 'cell-name' : 'muted'}>{name ?? 'No name'}</td>;
+}
+
 export function batchHref(batchId: string, runId: string | null): string {
   const params = new URLSearchParams();
   if (runId) params.set('run', runId);
@@ -64,10 +86,16 @@ export function ImportReviewBody({ approval, review }: { approval: Approval; rev
             <tbody>
               {sample.map((row, index) => (
                 <tr key={index}>
-                  <td className={row.name ? 'cell-name' : 'muted'}>{row.name ?? 'No name'}</td>
-                  <td className={row.email ? '' : 'muted'}>{row.email ?? 'No email'}</td>
+                  <RowNameCell kind={row.kind} name={row.name} company={row.company} />
+                  <td className={row.email && row.kind === 'person' ? '' : 'muted'}>
+                    {row.kind === 'person' ? (row.email ?? 'No email') : 'No email'}
+                  </td>
                   <td className={row.company ? '' : 'muted'}>{row.company ?? 'No company'}</td>
-                  {showPeople ? <td className={row.title ? '' : 'muted'}>{row.title ?? 'No title'}</td> : null}
+                  {showPeople ? (
+                    <td className={row.title && row.kind === 'person' ? '' : 'muted'}>
+                      {row.kind === 'person' ? (row.title ?? 'No title') : 'No title'}
+                    </td>
+                  ) : null}
                   {showPeople ? (
                     <td className={row.linkedinUrl ? '' : 'muted'} title={row.linkedinUrl ?? undefined}>
                       {row.linkedinUrl ? profileLabel(row.linkedinUrl) : 'No profile'}

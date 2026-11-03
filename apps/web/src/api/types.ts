@@ -297,8 +297,9 @@ export interface OllamaModel {
   name: string;
 }
 
-// The three actors lead capture runs. The server always sends effective values, with defaults applied.
+// The four actors lead capture runs. The server always sends effective values, with defaults applied.
 export interface LeadCaptureSettings {
+  postActor: string;
   reactionsActor: string;
   commentsActor: string;
   profileActor: string;
@@ -311,7 +312,7 @@ export interface ApifyConnectorInput {
   leadCapture?: Partial<LeadCaptureSettings>;
 }
 
-export type LeadSource = 'reactions' | 'comments';
+export type LeadSource = 'post' | 'reactions' | 'comments';
 
 export interface LeadCaptureInput {
   postUrl: string;
@@ -388,6 +389,8 @@ export interface ImportRow {
   mapped: Record<string, unknown>;
   matchEntityType: string | null;
   matchEntityId: string | null;
+  // Lead capture rows named in a post text: the snippet of the post that names the row, as evidence.
+  postQuote: string | null;
 }
 
 export interface ImportBatchPage {
@@ -403,6 +406,8 @@ export interface ImportSampleRow {
   // Lead capture reviews also show the title and the LinkedIn profile.
   title: string | null;
   linkedinUrl: string | null;
+  // Lead capture reviews can stage organizations named in a post. Other imports are always people.
+  kind: 'person' | 'organization';
 }
 
 export interface ImportReviewPayload {

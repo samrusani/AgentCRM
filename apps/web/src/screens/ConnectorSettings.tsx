@@ -116,6 +116,7 @@ function Allowlist({ connector }: { connector: Connector }) {
 }
 
 const LEAD_FIELDS: Array<{ key: keyof LeadCaptureSettings; label: string }> = [
+  { key: 'postActor', label: 'Post text' },
   { key: 'reactionsActor', label: 'Reactions' },
   { key: 'commentsActor', label: 'Comments' },
   { key: 'profileActor', label: 'Profile enrichment' },

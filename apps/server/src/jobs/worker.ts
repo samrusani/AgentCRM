@@ -112,6 +112,10 @@ export function processJobs(ctx: ActionContext): number {
   return jobs.length;
 }
 
+// Lead capture shares this lane with Apify imports. Its extraction step (step 5) makes one model call that can take up
+// to two minutes, and while it runs this lane does not poll any Apify run. A job has one kind for the whole run, so
+// moving step 5 to the draft lane would need a second job kind, routing in scheduleRunJob, pause and resume, and
+// cancel handling for both kinds. The tradeoff is accepted: polling pauses for the length of that one call.
 export async function processApifyJobs(ctx: ActionContext): Promise<number> {
   const jobs = claimDueJobs(ctx, 10, { kinds: [apifyJobKind, leadCaptureJobKind] });
   for (const job of jobs) await runApifyJob(ctx, job);

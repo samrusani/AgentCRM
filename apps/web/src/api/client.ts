@@ -282,11 +282,12 @@ function messageFrom(...candidates: unknown[]): string | null {
   return null;
 }
 
-// Apify connectors always carry the three actors. An older server that omits them gets the documented defaults.
+// Apify connectors always carry the four actors. An older server that omits them gets the documented defaults.
 function normalizeLeadCapture(kind: unknown, raw: unknown): LeadCaptureSettings | null {
   if (textOrNull(kind) !== 'apify') return null;
   const record = objectOrEmpty(raw);
   return {
+    postActor: textOrNull(record.postActor) ?? DEFAULT_LEAD_ACTORS.postActor,
     reactionsActor: textOrNull(record.reactionsActor) ?? DEFAULT_LEAD_ACTORS.reactionsActor,
     commentsActor: textOrNull(record.commentsActor) ?? DEFAULT_LEAD_ACTORS.commentsActor,
     profileActor: textOrNull(record.profileActor) ?? DEFAULT_LEAD_ACTORS.profileActor,
@@ -545,6 +546,20 @@ function normalizeImportBatch(raw: Record<string, unknown>): ImportBatch {
   };
 }
 
+// A row that was named in a post text keeps the snippet in raw.sources as { kind: 'post', quote }.
+function postQuoteOf(raw: unknown): string | null {
+  const sources = objectOrEmpty(raw).sources;
+  if (!Array.isArray(sources)) return null;
+  for (const entry of sources) {
+    const record = objectOrEmpty(entry);
+    if (record.kind === 'post') {
+      const quote = textOrNull(record.quote);
+      if (quote) return quote;
+    }
+  }
+  return null;
+}
+
 function normalizeImportRow(raw: unknown): ImportRow {
   const record = objectOrEmpty(raw);
   return {
@@ -554,6 +569,7 @@ function normalizeImportRow(raw: unknown): ImportRow {
     mapped: objectOrEmpty(record.mapped),
     matchEntityType: textOrNull(record.matchEntityType),
     matchEntityId: textOrNull(record.matchEntityId),
+    postQuote: postQuoteOf(record.raw),
   };
 }
 
@@ -874,9 +890,10 @@ export const api = {
       ),
     csvStage: async (input: CsvImportInput) =>
       normalizeRun(await request<Run>('POST', '/imports/csv', { body: input })),
+    // The rows come with their raw source so a row named in a post can show the quote that names it.
     get: async (id: string, params: { cursor?: string | null; limit?: number; status?: string }) =>
       normalizeImportPage(
-        await request<unknown>('GET', `/imports/${encodeURIComponent(id)}`, { query: { ...params } }),
+        await request<unknown>('GET', `/imports/${encodeURIComponent(id)}`, { query: { ...params, withRaw: 'true' } }),
       ),
   },
 

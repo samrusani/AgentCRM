@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { useApifyConnector, useStartLeadCapture } from '../api/hooks';
+import { useApifyConnector, useModelProvider, useStartLeadCapture } from '../api/hooks';
 import type { LeadSource, Run } from '../api/types';
 import { errorMessage } from '../components/common';
 import {
@@ -18,6 +18,12 @@ import {
 export function LeadCaptureCard({ onStarted }: { onStarted: (run: Run) => void }) {
   const { query, connector } = useApifyConnector();
   const start = useStartLeadCapture();
+  const provider = useModelProvider();
+  // Reading the post uses the model provider, so the post source needs a ready one. While the provider is still
+  // loading, or when none is ready, the box is off and disabled. Once ready it defaults on until the person unticks it.
+  const providerReady = provider.data?.ready === true;
+  const [postChoice, setPostChoice] = useState<boolean | null>(null);
+  const post = providerReady && (postChoice ?? true);
   const [url, setUrl] = useState('');
   const [reactions, setReactions] = useState(true);
   const [comments, setComments] = useState(true);
@@ -54,8 +60,8 @@ export function LeadCaptureCard({ onStarted }: { onStarted: (run: Run) => void }
     );
   } else if (typed && !urlOk) {
     reason = `This does not look like a LinkedIn post. Use a link such as ${ACCEPTED_POST_SHAPES}.`;
-  } else if (!reactions && !comments) {
-    reason = 'Choose reactions, comments, or both.';
+  } else if (!post && !reactions && !comments) {
+    reason = 'Choose at least one source.';
   } else if (people === null) {
     reason = `People per source must be a whole number from 1 to ${MAX_PEOPLE}.`;
   } else if (enrich && cap === null) {
@@ -69,6 +75,7 @@ export function LeadCaptureCard({ onStarted }: { onStarted: (run: Run) => void }
     event.preventDefault();
     if (!canStart || people === null) return;
     const sources: LeadSource[] = [];
+    if (post) sources.push('post');
     if (reactions) sources.push('reactions');
     if (comments) sources.push('comments');
     start.mutate(
@@ -111,6 +118,16 @@ export function LeadCaptureCard({ onStarted }: { onStarted: (run: Run) => void }
           </span>
           <div className="lead-capture__row">
             <label className="toggle">
+              <input
+                type="checkbox"
+                checked={post}
+                disabled={!providerReady}
+                aria-describedby={providerReady ? undefined : 'lead-capture-post-reason'}
+                onChange={(event) => setPostChoice(event.target.checked)}
+              />
+              <span>People named in the post</span>
+            </label>
+            <label className="toggle">
               <input type="checkbox" checked={reactions} onChange={(event) => setReactions(event.target.checked)} />
               <span>People who reacted</span>
             </label>
@@ -119,6 +136,19 @@ export function LeadCaptureCard({ onStarted }: { onStarted: (run: Run) => void }
               <span>People who commented</span>
             </label>
           </div>
+          {provider.isError ? (
+            <p className="muted" id="lead-capture-post-reason">
+              Could not check the model provider.
+            </p>
+          ) : !provider.isPending && !providerReady ? (
+            <p className="muted" id="lead-capture-post-reason">
+              Connect a{' '}
+              <Link className="link" to="/settings/models">
+                model provider
+              </Link>{' '}
+              to read people from the post text.
+            </p>
+          ) : null}
         </div>
 
         <div className="lead-capture__field">
@@ -178,8 +208,9 @@ export function LeadCaptureCard({ onStarted }: { onStarted: (run: Run) => void }
         ) : null}
       </form>
       <p className="muted lead-capture__note">
-        Runs on your own Apify account. Store prices for the default actors as of November 2026: engagement from $1.50
-        per 1,000 results, profile details from $4.00 per 1,000. Item caps bind only pay per result actors; the run
+        Runs on your own Apify account. Store prices for the default actors as of November 2026: post text from $5.00 per
+        1,000 results, engagement from $1.50 per 1,000, profile details from $4.00 per 1,000. Reading the post also
+        uses your model provider; costs shown are estimates. Item caps bind only pay per result actors; the run
         timeout limits the rest.
       </p>
     </section>

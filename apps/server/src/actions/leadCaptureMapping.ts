@@ -71,7 +71,7 @@ const emptyRow: MappedRow = {
 };
 
 // Keeps the value only when it parses as an http or https URL on linkedin.com or one of its subdomains.
-function linkedinOnly(value: unknown): string | null {
+export function linkedinOnly(value: unknown): string | null {
   const text = clean(value, 500);
   if (!text) return null;
   try {
@@ -184,4 +184,64 @@ export function fillEmptyFields(target: MappedRow, source: MappedRow): Mergeable
     }
   }
   return filled;
+}
+
+// What the post actor takes as input: the bare activity id for a /feed/update/urn:li:activity:<digits> link,
+// otherwise the link as given.
+export function postActorTarget(postUrl: string): string {
+  try {
+    const path = safeDecode(new URL(postUrl).pathname);
+    const match = /^\/feed\/update\/urn:li:activity:(\d+)\/?$/.exec(path);
+    if (match?.[1]) return match[1];
+  } catch {
+    // Fall through to the link as given.
+  }
+  return postUrl;
+}
+
+export interface ExtractedEntry {
+  kind: 'person' | 'organization';
+  name: string;
+  title: string | null;
+  company: string | null;
+  location: string | null;
+  linkedinUrl: string | null;
+  // Organization entries only. Left out by the model, it means company.
+  orgKind?: 'fund' | 'company' | null | undefined;
+  quote: string;
+}
+
+// Person entries become person fields. Organization entries put their name in company and carry no person name.
+export function mapExtractedEntry(entry: ExtractedEntry): MappedRow {
+  if (entry.kind === 'organization') {
+    return {
+      ...emptyRow,
+      kind: 'organization',
+      orgKind: entry.orgKind === 'fund' ? 'fund' : 'company',
+      company: clean(entry.name, 200),
+      location: clean(entry.location, 200),
+    };
+  }
+  const name = clean(entry.name, 200);
+  const split = name ? splitName(name) : null;
+  return {
+    ...emptyRow,
+    name,
+    firstName: split ? split.firstName : null,
+    lastName: split ? split.lastName : null,
+    title: clean(entry.title, 200),
+    company: clean(entry.company, 200),
+    location: clean(entry.location, 200),
+    linkedinUrl: linkedinOnly(entry.linkedinUrl),
+  };
+}
+
+// The post item from the post actor: text (with two fallbacks) and the structured author.
+export function readPostItem(raw: unknown): { text: string | null; author: Item | null } {
+  const item: Item = isItem(raw) ? raw : {};
+  const post = isItem(item.post) ? item.post : {};
+  const text = [post.text, item.text, item.commentary]
+    .map((value) => (typeof value === 'string' && value.trim() !== '' ? value : null))
+    .find((value) => value !== null) ?? null;
+  return { text, author: isItem(item.author) ? item.author : null };
 }

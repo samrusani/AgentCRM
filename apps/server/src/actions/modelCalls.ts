@@ -111,3 +111,18 @@ export function recordModelCall(
 ): number {
   return mutate(ctx, (tx) => recordModelCallIn(tx, input));
 }
+
+// Finalizes a start marker with the first response and gives any further response (a repair retry) its own row.
+// Without a marker, every response gets its own row. A marker with no response was never billed, so it is removed.
+export function settleModelCallReportsIn(
+  tx: Tx,
+  input: { purpose: ModelCallPurpose; runId: string; pendingId: string | null; reports: ModelCallReport[] },
+): void {
+  const [first, ...rest] = input.reports;
+  if (input.pendingId) {
+    settlePendingModelCallIn(tx, { pendingId: input.pendingId, purpose: input.purpose, runId: input.runId, report: first ?? null });
+  } else if (first) {
+    recordModelCallIn(tx, { purpose: input.purpose, runId: input.runId, report: first });
+  }
+  for (const report of rest) recordModelCallIn(tx, { purpose: input.purpose, runId: input.runId, report });
+}

@@ -29,6 +29,8 @@ export interface StubState {
   actorStatuses: Record<string, string[]>;
   // Start answer for one registered actor. Falls back to startStatus.
   actorStartStatus: Record<string, number>;
+  // Dataset read answer for the runs of one registered actor. Falls back to 200.
+  datasetStatus: Record<string, number>;
   // The actor of each start request, in order, lowercased.
   startActors: string[];
   // Registered actor runs by Apify run id.
@@ -81,6 +83,7 @@ function freshState(): StubState {
     actorItems: {},
     actorStatuses: {},
     actorStartStatus: {},
+    datasetStatus: {},
     startActors: [],
     runs: {},
     datasets: {},
@@ -182,6 +185,11 @@ export async function startApifyStub(): Promise<ApifyStub> {
       if (datasetMatch) {
         state.datasetCalls += 1;
         state.datasetReads.push(datasetMatch[1]!);
+        const owner = Object.values(state.runs).find((run) => run.datasetId === datasetMatch[1]!);
+        const readStatus = owner ? (state.datasetStatus[owner.actor] ?? 200) : 200;
+        if (readStatus !== 200) {
+          return send(response, readStatus, { error: { type: 'stub-failure', message: 'Stub dataset failure.' } });
+        }
         const offset = Number(url.searchParams.get('offset') ?? 0);
         const limit = Number(url.searchParams.get('limit') ?? 100);
         const source = state.datasets[datasetMatch[1]!] ?? state.items;

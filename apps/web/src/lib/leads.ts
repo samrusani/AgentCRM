@@ -10,6 +10,7 @@ export const MAX_ENRICH_LIMIT = 200;
 
 // The actors the server uses when a field is empty. The server returns the effective ids; these are the fallback.
 export const DEFAULT_LEAD_ACTORS: LeadCaptureSettings = {
+  postActor: 'apimaestro/linkedin-post-detail',
   reactionsActor: 'harvestapi/linkedin-post-reactions',
   commentsActor: 'harvestapi/linkedin-post-comments',
   profileActor: 'harvestapi/linkedin-profile-scraper',

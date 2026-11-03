@@ -327,6 +327,19 @@ textarea.input {
 .cell-name {
   font-weight: 550;
 }
+.row-kind {
+  font-weight: 400;
+  font-size: 12px;
+  margin-left: 4px;
+}
+.row-quote {
+  display: block;
+  max-width: 36ch;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .cell-text {
   color: var(--ink);
 }
@@ -1193,6 +1206,10 @@ textarea.input {
   width: 100%;
   border-collapse: collapse;
   text-align: left;
+}
+/* Narrow panes scroll the batch table sideways instead of crushing every column. */
+.data-table {
+  min-width: 760px;
 }
 .mini-table th,
 .data-table th {

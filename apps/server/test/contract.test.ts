@@ -203,8 +203,10 @@ describe('web client contract', () => {
     expect((await call('PUT', '/api/connectors/apify', { token: stubToken })).status).toBe(201);
     try {
       const defaults = ['harvestapi/linkedin-post-reactions', 'harvestapi/linkedin-post-comments', 'harvestapi/linkedin-profile-scraper'];
+      const defaultPost = 'apimaestro/linkedin-post-detail';
       const initial = (await call('GET', '/api/connectors')).body.items[0];
       expect(initial.settings.leadCapture).toEqual({
+        postActor: defaultPost,
         reactionsActor: defaults[0],
         commentsActor: defaults[1],
         profileActor: defaults[2],
@@ -214,6 +216,7 @@ describe('web client contract', () => {
       const edited = await call('PUT', '/api/connectors/apify', { leadCapture: { reactionsActor: 'harvestapi~linkedin-post-reactions', profileActor: 'Custom/Profile' } });
       expect(edited.status).toBe(200);
       expect(edited.body.settings.leadCapture).toEqual({
+        postActor: defaultPost,
         reactionsActor: 'harvestapi~linkedin-post-reactions',
         commentsActor: defaults[1],
         profileActor: 'custom~profile',
@@ -223,6 +226,20 @@ describe('web client contract', () => {
       expect(single.body.settings.leadCapture.profileActor).toBe(defaults[2]);
       expect((await call('GET', '/api/connectors')).body.items[0].settings.leadCapture.reactionsActor).toBe('harvestapi~linkedin-post-reactions');
       expect((await call('PUT', '/api/connectors/apify', { leadCapture: { commentsActor: '..' } })).status).toBe(400);
+      const post = await call('PUT', '/api/connectors/apify', { leadCapture: { postActor: 'Custom/Post-Actor' } });
+      expect(post.body.settings.leadCapture.postActor).toBe('custom~post-actor');
+      const postReset = await call('PUT', '/api/connectors/apify', { leadCapture: { postActor: '' } });
+      expect(postReset.body.settings.leadCapture).toEqual({
+        postActor: defaultPost,
+        reactionsActor: 'harvestapi~linkedin-post-reactions',
+        commentsActor: defaults[1],
+        profileActor: defaults[2],
+      });
+      // The post source needs a ready model provider, and the message names the fix.
+      const noProvider = await call('POST', '/api/runs', { kind: 'lead_capture', scope: { postUrl, sources: ['post', 'reactions', 'comments'] } });
+      expect(noProvider.status).toBe(400);
+      expect(noProvider.body.error.code).toBe('validation');
+      expect(noProvider.body.error.message).toContain('Connect a provider in Settings, Model providers');
       expect((await call('PUT', '/api/connectors/apify', {})).status).toBe(400);
 
       stub.state.actorItems[reactionsActorId] = reactionItems;
@@ -243,7 +260,7 @@ describe('web client contract', () => {
         simulated: false,
         scope: { postUrl, sources: ['reactions', 'comments'], maxPeople: 50, enrich: false, enrichLimit: 25, calls: {} },
       });
-      expect(run.body.steps).toHaveLength(8);
+      expect(run.body.steps).toHaveLength(10);
       for (let tick = 0; tick < 60; tick += 1) {
         env.advance(1000);
         await processAllJobs(env.ctx);
@@ -253,17 +270,20 @@ describe('web client contract', () => {
       expect(detail.status).toBe('waiting_approval');
       expect(detail.steps.map((step: { title: string; status: string }) => [step.title, step.status])).toEqual([
         ['Validate connector, post URL, and limits', 'done'],
+        ['Read the post through Apify', 'done'],
         ['Scrape reactions through Apify', 'done'],
         ['Scrape comments through Apify', 'done'],
+        ['Extract people named in the post', 'done'],
         ['Stage people from the post', 'done'],
         ['Check for duplicates', 'done'],
         ['Enrich new profiles through Apify', 'done'],
         ['Merge enriched details', 'done'],
         ['Request import review', 'done'],
       ]);
-      expect(detail.steps[5].detail).toContain('Skipped');
+      expect(detail.steps[7].detail).toContain('Skipped');
       expect(detail.scope.batchId).toMatch(/^imp_/);
       expect(detail.scope.actors).toEqual({
+        post: defaultPost,
         reactions: 'harvestapi~linkedin-post-reactions',
         comments: defaults[1],
         profile: defaults[2],

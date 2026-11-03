@@ -10,6 +10,10 @@ export interface MappedRow {
   linkedinUrl: string | null;
   // Only CSV rows carry tags. Apify items never do.
   tags?: string[];
+  // Set to 'organization' on lead capture rows that name an organization. Person rows leave it out.
+  kind?: 'organization';
+  // Organization rows only: whether the model read the organization as a fund or an operating company.
+  orgKind?: 'fund' | 'company';
 }
 
 // Item keys the heuristic mapping reads, in priority order. The CSV header suggestions use the same lists.
@@ -137,9 +141,12 @@ export function mapItem(raw: unknown): MappedRow {
   };
 }
 
+// The key names are compared on: lowercase, combining accents removed ("Société" matches "Societe"; marks of other scripts stay), punctuation as one space.
 export function normalizeName(value: string): string {
   return value
     .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]+/g, '')
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 }

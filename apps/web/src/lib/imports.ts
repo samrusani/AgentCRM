@@ -72,6 +72,11 @@ export function mappedProfile(mapped: Record<string, unknown>): string | null {
   return text(mapped.linkedinUrl) ?? text(mapped.linkedin);
 }
 
+// Only lead capture stages organizations. Anything that is not clearly an organization is a person.
+export function mappedKind(mapped: Record<string, unknown>): 'person' | 'organization' {
+  return text(mapped.kind)?.toLowerCase() === 'organization' ? 'organization' : 'person';
+}
+
 // The profile link without the scheme, "www.", and any query, so it fits a table cell.
 export function profileLabel(url: string): string {
   return url.replace(/^https?:\/\//i, '').replace(/^www\./i, '').split(/[?#]/)[0]!.replace(/\/$/, '');
@@ -89,6 +94,7 @@ export function parseImportReviewPayload(payload: unknown): ImportReviewPayload 
       company: mappedCompany(row),
       title: mappedTitle(row),
       linkedinUrl: mappedProfile(row),
+      kind: mappedKind(row),
     };
   });
   return {

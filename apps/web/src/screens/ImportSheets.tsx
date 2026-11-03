@@ -11,7 +11,7 @@ import {
 } from '../api/hooks';
 import type { ApifyActorSummary, ImportCounts, ImportRow, Run } from '../api/types';
 import { Chip, ErrorState, Loading, Sheet, errorMessage, type ChipTone } from '../components/common';
-import { ImportCountsRow } from '../components/importReview';
+import { ImportCountsRow, RowNameCell } from '../components/importReview';
 import { SheetSection } from '../components/record';
 import { formatAgo, humanize, personName } from '../lib/format';
 import {
@@ -23,6 +23,7 @@ import {
   formatCount,
   mappedCompany,
   mappedEmail,
+  mappedKind,
   mappedName,
   mappedProfile,
   mappedTitle,
@@ -380,7 +381,7 @@ function MatchedRecord({ type, id }: { type: string; id: string }) {
 
 function RowReason({ row }: { row: ImportRow }) {
   const hasMatch = Boolean(row.matchEntityType && row.matchEntityId);
-  if (!row.reason && !hasMatch) return <span className="muted">None</span>;
+  if (!row.reason && !hasMatch && !row.postQuote) return <span className="muted">None</span>;
   return (
     <>
       {row.reason ? <span>{row.reason}</span> : null}
@@ -389,6 +390,11 @@ function RowReason({ row }: { row: ImportRow }) {
           {row.reason ? <br /> : null}
           <MatchedRecord type={row.matchEntityType as string} id={row.matchEntityId as string} />
         </>
+      ) : null}
+      {row.postQuote ? (
+        <span className="muted row-quote" title={row.postQuote}>
+          From the post: {row.postQuote}
+        </span>
       ) : null}
     </>
   );
@@ -488,7 +494,7 @@ export function ImportBatchSheet({ id, onClose }: { id: string; onClose: () => v
                     : batch.sourceKind === 'csv'
                       ? 'This batch has no rows. The file had no usable rows.'
                       : batch.sourceKind === 'lead_capture'
-                        ? 'This batch has no rows. The post had no usable reactions or comments.'
+                        ? 'This batch has no rows. The post had no usable people.'
                         : 'This batch has no rows. The Apify run returned no usable items.'}
               </p>
             ) : (
@@ -511,15 +517,17 @@ export function ImportBatchSheet({ id, onClose }: { id: string; onClose: () => v
                   </thead>
                   <tbody>
                     {rows.map((row) => {
+                      const kind = mappedKind(row.mapped);
                       const name = mappedName(row.mapped);
-                      const email = mappedEmail(row.mapped);
+                      // An organization has no person email or title, so those cells show their placeholders.
+                      const email = kind === 'person' ? mappedEmail(row.mapped) : null;
                       const company = mappedCompany(row.mapped);
-                      const title = mappedTitle(row.mapped);
+                      const title = kind === 'person' ? mappedTitle(row.mapped) : null;
                       const profile = mappedProfile(row.mapped);
                       return (
                         <tr key={row.seq}>
                           <td className="is-numeric muted">{row.seq}</td>
-                          <td className={name ? 'cell-name' : 'muted'}>{name ?? 'No name'}</td>
+                          <RowNameCell kind={kind} name={name} company={company} />
                           <td className={email ? undefined : 'muted'}>{email ?? 'No email'}</td>
                           <td className={company ? undefined : 'muted'}>{company ?? 'No company'}</td>
                           {showPeople ? <td className={title ? undefined : 'muted'}>{title ?? 'No title'}</td> : null}

@@ -1,8 +1,9 @@
 import { z } from 'zod';
-import { conflict } from '../errors.js';
+import { conflict, validationError } from '../errors.js';
 import { getRunDetail, listRunSteps, requireRun } from '../queries/runs.js';
 import { dotSegmentMessage, hasDotSegment } from '../providers/apify.js';
 import { getConnector } from '../queries/connectors.js';
+import { isActiveModelReady } from '../queries/modelProvider.js';
 import { terminalRunStatuses, type RunCounts } from '../records.js';
 import { apifyKind, apifyStepTitles, defaultMaxItems, hardMaxItems, scheduleApifyRun } from './apifyScrape.js';
 import { allowlistIncludes, connectApifyMessage, requireActiveModel } from './connectors.js';
@@ -17,6 +18,9 @@ import {
   hasUnfinishedCall,
   leadCaptureKind,
   leadCaptureStepTitles,
+  requestedPeople,
+  postNeedsProviderMessage,
+  type SourceName,
   scheduleLeadCaptureRun,
   sourceNames,
 } from './leadCapture.js';
@@ -88,11 +92,13 @@ const leadCaptureRunSchema = z
           .min(1)
           .max(500, 'Use a post link of at most 500 characters')
           .refine(isLinkedinPostUrl, postUrlShapesMessage),
+        // Left out, a user's sources default to all three when a model provider is ready, else reactions and comments.
+        // An agent's default is always reactions and comments: reading the post text must be asked for.
         sources: z
           .array(z.enum(sourceNames))
-          .min(1, 'Choose reactions, comments, or both')
-          .default([...sourceNames])
-          .transform((chosen) => sourceNames.filter((name) => chosen.includes(name))),
+          .min(1, 'Choose at least one source: post, reactions, or comments')
+          .optional()
+          .transform((chosen) => (chosen ? sourceNames.filter((name) => chosen.includes(name)) : undefined)),
         maxPeople: z.number().int().min(1).max(hardMaxPeople).default(defaultMaxPeople),
         enrich: z.boolean().default(true),
         enrichLimit: z.number().int().min(1).max(hardEnrichLimit).default(defaultEnrichLimit),
@@ -129,9 +135,10 @@ function assertLeadCaptureAllowed(
   if (!connector) throw conflict(connectApifyMessage);
   if (connector.status !== 'connected') throw conflict('Apify rejected the saved API token. Update it in Settings.');
   const configured = connector.settings.leadCapture;
-  const actors = { reactions: configured.reactionsActor, comments: configured.commentsActor, profile: configured.profileActor };
+  const actors = { post: configured.postActor, reactions: configured.reactionsActor, comments: configured.commentsActor, profile: configured.profileActor };
   if (origin === 'agent') {
     const involved = [
+      ...(scope.sources.includes('post') ? [actors.post] : []),
       ...(scope.sources.includes('reactions') ? [actors.reactions] : []),
       ...(scope.sources.includes('comments') ? [actors.comments] : []),
       ...(scope.enrich ? [actors.profile] : []),
@@ -144,6 +151,15 @@ function assertLeadCaptureAllowed(
     }
   }
   return actors;
+}
+
+// The sources a lead capture starts with. Reading the post text needs a ready model provider, and it spends the
+// user's model credit, so an agent gets it only when it names the source.
+function resolveLeadSources(ctx: ActionContext, chosen: SourceName[] | undefined, origin: 'user' | 'agent'): SourceName[] {
+  const ready = isActiveModelReady(ctx.db, ctx.workspaceId);
+  if (!chosen) return origin === 'agent' || !ready ? sourceNames.filter((name) => name !== 'post') : [...sourceNames];
+  if (chosen.includes('post') && !ready) throw validationError(`scope.sources: ${postNeedsProviderMessage}`);
+  return chosen;
 }
 
 // Draft runs use the active model provider. The run keeps that provider and model for its whole life.
@@ -172,8 +188,12 @@ export function scheduleRunJob(tx: Tx, kind: string, runId: string, runAt: strin
 }
 
 export function startRun(ctx: ActionContext, input: unknown, options: StartRunOptions = {}) {
-  const data = parseInput(startRunSchema, input);
+  const parsed = parseInput(startRunSchema, input);
   const origin = options.origin ?? 'user';
+  const data =
+    parsed.kind === 'lead_capture'
+      ? { ...parsed, scope: { ...parsed.scope, sources: resolveLeadSources(ctx, parsed.scope.sources, origin) } }
+      : parsed;
   if (data.kind === 'apify_scrape') assertApifyRunAllowed(ctx, data.scope.actorId, origin);
   const leadActors = data.kind === 'lead_capture' ? assertLeadCaptureAllowed(ctx, data.scope, origin) : null;
   const draftConnector = data.kind === 'draft_outreach' ? assertDraftRunAllowed(ctx) : null;
@@ -249,15 +269,17 @@ export function startRun(ctx: ActionContext, input: unknown, options: StartRunOp
         processed: 0,
         found: 0,
         flagged: 0,
-        requested: data.scope.maxPeople * data.scope.sources.length,
+        requested: requestedPeople(data.scope),
         fetched: 0,
         staged: 0,
         duplicates: 0,
         invalid: 0,
         accepted: 0,
       };
-      storedScope = { ...storedScope, actors: leadActors!, calls: {} };
-      auditScope = { ...data.scope, actors: leadActors, origin };
+      // A run that reads the post text pins the provider and model it will use, like a draft run does.
+      const pinned = data.scope.sources.includes('post') ? requireActiveModel(ctx) : null;
+      storedScope = { ...storedScope, actors: leadActors!, calls: {}, ...(pinned ? { provider: pinned.kind, model: pinned.model } : {}) };
+      auditScope = { ...data.scope, actors: leadActors, origin, ...(pinned ? { provider: pinned.kind, model: pinned.model } : {}) };
     } else if (data.kind === 'qualify') {
       title = data.title ?? (data.scope.tag ? `Qualify people tagged ${data.scope.tag}` : 'Qualify people');
       stepTitles = qualifyStepTitles;
