@@ -12,6 +12,11 @@ function isRequest(value: unknown): value is ExtensionRequest {
   return kind === 'capture' || kind === 'openOptions';
 }
 
+// The toolbar button has no popup, so clicking it opens the options page.
+chrome.action.onClicked.addListener(() => {
+  void chrome.runtime.openOptionsPage();
+});
+
 chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id || !isRequest(message)) return false;
   if (message.kind === 'openOptions') {

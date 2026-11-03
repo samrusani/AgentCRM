@@ -368,15 +368,24 @@ describe('background worker', () => {
   async function bootBackground(stored: Record<string, unknown>, fetchImpl: (...a: any[]) => Promise<Response>) {
     vi.resetModules();
     let listener: ((m: unknown, sender: { id?: string }, respond: (r: unknown) => void) => boolean) | undefined;
+    let actionListener: (() => void) | undefined;
     const openOptionsPage = vi.fn();
     vi.stubGlobal('chrome', {
       runtime: { id: 'ext', openOptionsPage, onMessage: { addListener: (l: typeof listener) => (listener = l) } },
+      action: { onClicked: { addListener: (l: () => void) => (actionListener = l) } },
       storage: { local: { get: vi.fn(async (defaults: Record<string, unknown>) => ({ ...defaults, ...stored })) } },
     });
     vi.stubGlobal('fetch', fetchImpl);
     await import('../src/background');
-    return { listener: listener!, openOptionsPage };
+    return { listener: listener!, actionListener: actionListener!, openOptionsPage };
   }
+
+  it('KILLS: clicking the toolbar icon opens the options page, the only way in from the toolbar since there is no popup', async () => {
+    const { actionListener, openOptionsPage } = await bootBackground({}, vi.fn());
+    expect(actionListener).toBeTypeOf('function');
+    actionListener();
+    expect(openOptionsPage).toHaveBeenCalledTimes(1);
+  });
 
   it('KILLS: messages from another extension or a web page sender, and unknown kinds, are ignored without a response', async () => {
     const fetchImpl = vi.fn();
