@@ -3,13 +3,7 @@
 // Every probe that once confirmed a bug was flipped to a KILLS test when its fix landed; only the documented limitation
 // below still confirms.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import {
-  createContext,
-  prepareSendIntents,
-  stopFollowupRule,
-  syncMail,
-  tickFollowupRules,
-} from '../src/actions/index.js';
+import { prepareSendIntents, stopFollowupRule, syncMail, tickFollowupRules } from '../src/actions/index.js';
 import { resetAllData } from '../src/actions/workspace.js';
 import { countReserved, countSentToday, dayStartFor } from '../src/queries/sendIntents.js';
 import { dueAfter } from '../src/actions/followupRules.js';
@@ -480,5 +474,3 @@ describe('regressions outside the lane', () => {
     }
   });
 });
-
-void [createContext, intentOf, google, imap];

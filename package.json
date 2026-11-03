@@ -13,7 +13,7 @@
     "dev": "concurrently -n server,web -c blue,green \"npm run dev --prefix apps/server\" \"npm run dev --prefix apps/web\"",
     "seed": "npm run seed --prefix apps/server",
     "build": "npm run build --prefix apps/server && npm run build --prefix apps/web",
-    "test": "npm run test --prefix apps/server",
+    "test": "npm run test --prefix apps/server && npm run test --prefix apps/web",
     "doctor": "npm run doctor --prefix apps/server",
     "bench": "npm run bench --prefix apps/server --",
     "backup": "npm run backup --prefix apps/server --",

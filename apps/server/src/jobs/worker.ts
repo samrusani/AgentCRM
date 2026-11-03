@@ -113,12 +113,20 @@ export function processJobs(ctx: ActionContext): number {
   return jobs.length;
 }
 
-// Lead capture shares this lane with Apify imports. Its extraction step (step 5) makes one model call that can take up
-// to two minutes, and while it runs this lane does not poll any Apify run. A job has one kind for the whole run, so
-// moving step 5 to the draft lane would need a second job kind, routing in scheduleRunJob, pause and resume, and
-// cancel handling for both kinds. The tradeoff is accepted: polling pauses for the length of that one call.
+// Apify imports have a lane of their own: polling runs and reading datasets, which never waits on a model call.
 export async function processApifyJobs(ctx: ActionContext): Promise<number> {
-  const jobs = claimDueJobs(ctx, 10, { kinds: [apifyJobKind, leadCaptureJobKind] });
+  const jobs = claimDueJobs(ctx, 10, { kinds: [apifyJobKind] });
+  for (const job of jobs) await runApifyJob(ctx, job);
+  return jobs.length;
+}
+
+// Lead capture has its own lane too. Its extraction step (step 5) makes one model call that can take up to two
+// minutes, and while it runs this lane waits, but the Apify lane keeps polling its runs. A job has one kind for the
+// whole run, so moving step 5 to the draft lane would need a second job kind, routing in scheduleRunJob, pause and
+// resume, and cancel handling for both kinds. The tradeoff is accepted: lead captures queue behind each other, and
+// behind nothing else.
+export async function processLeadCaptureJobs(ctx: ActionContext): Promise<number> {
+  const jobs = claimDueJobs(ctx, 10, { kinds: [leadCaptureJobKind] });
   for (const job of jobs) await runApifyJob(ctx, job);
   return jobs.length;
 }
@@ -149,7 +157,7 @@ export async function processMailJobs(ctx: ActionContext): Promise<number> {
 }
 
 export async function processAllJobs(ctx: ActionContext): Promise<number> {
-  return processJobs(ctx) + (await processApifyJobs(ctx)) + (await processDraftJobs(ctx)) + (await processMailJobs(ctx));
+  return processJobs(ctx) + (await processApifyJobs(ctx)) + (await processLeadCaptureJobs(ctx)) + (await processDraftJobs(ctx)) + (await processMailJobs(ctx));
 }
 
 export interface Worker {
@@ -170,6 +178,7 @@ export function startWorker(
     if (mail) recoverSubmittingIntents(ctx);
   }
   let apifyBusy = false;
+  let leadCaptureBusy = false;
   let draftBusy = false;
   let mailBusy = false;
   let syncBusy = false;
@@ -185,6 +194,15 @@ export function startWorker(
         .catch(onError)
         .finally(() => {
           apifyBusy = false;
+        });
+    }
+    // A lead capture model call can take up to two minutes, so lead capture has its own lane and never blocks Apify polling.
+    if (!leadCaptureBusy) {
+      leadCaptureBusy = true;
+      processLeadCaptureJobs(ctx)
+        .catch(onError)
+        .finally(() => {
+          leadCaptureBusy = false;
         });
     }
     // A draft call can take up to a minute, so drafting has its own lane and never blocks Apify polling.

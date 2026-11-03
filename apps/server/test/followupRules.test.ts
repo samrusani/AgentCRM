@@ -25,14 +25,17 @@ import { listSendIntents } from '../src/queries/sendIntents.js';
 import { type AgentmailStub, startAgentmailStub, useAgentmailStub } from './agentmailStub.js';
 import { type GoogleStub, startGoogleStub, useGoogleStub } from './googleStub.js';
 import { createTestEnvironment, type TestEnvironment } from './helpers.js';
-import { addDraft, addPerson, approve, connectGmail, connectImap, connectMail, drain, insertAcceptedToday, intentOf, markMailSynced, stage, statusOf } from './mailHelpers.js';
+import { type MicrosoftStub, startMicrosoftStub, useMicrosoftStub } from './microsoftStub.js';
+import { addDraft, addPerson, approve, connectGmail, connectImap, connectMail, connectMicrosoft, drain, insertAcceptedToday, intentOf, markMailSynced, stage, statusOf } from './mailHelpers.js';
 import { type FakeMailTransport, useMailTransportStub } from './mailTransportStub.js';
 
 let agentmail: AgentmailStub;
 let google: GoogleStub;
+let ms: MicrosoftStub;
 let imap: FakeMailTransport;
 let restoreAgentmail: () => void;
 let restoreGoogle: () => void;
+let restoreMicrosoft: () => void;
 let restoreImap: () => void;
 const environments: TestEnvironment[] = [];
 
@@ -41,18 +44,23 @@ beforeAll(async () => {
   restoreAgentmail = useAgentmailStub(agentmail);
   google = await startGoogleStub();
   restoreGoogle = useGoogleStub(google);
+  ms = await startMicrosoftStub();
+  restoreMicrosoft = useMicrosoftStub(ms);
   ({ stub: imap, restore: restoreImap } = useMailTransportStub());
 });
 
 afterEach(() => {
   agentmail.reset();
   google.reset();
+  ms.reset();
   imap.reset();
 });
 
 afterAll(async () => {
   await agentmail.close();
   await google.close();
+  await ms.close();
+  restoreMicrosoft();
   restoreAgentmail();
   restoreGoogle();
   restoreImap();
@@ -65,11 +73,12 @@ const steps = [
   { waitDays: 5, body: 'One last nudge before I close this out.' },
 ];
 
-async function freshEnv(kind: 'agentmail' | 'imap' | 'gmail' = 'agentmail'): Promise<TestEnvironment> {
+async function freshEnv(kind: 'agentmail' | 'imap' | 'gmail' | 'microsoft' = 'agentmail'): Promise<TestEnvironment> {
   const env = createTestEnvironment();
   environments.push(env);
   if (kind === 'imap') await connectImap(env);
   else if (kind === 'gmail') await connectGmail(env, google);
+  else if (kind === 'microsoft') await connectMicrosoft(env, ms);
   else await connectMail(env);
   return env;
 }
@@ -1114,6 +1123,59 @@ describe('a stop holds for steps in unknown states', () => {
     await processMailJobs(e.ctx);
     await processMailJobs(e.ctx);
     expect(statusOf(e, sending.stepId)).toBe('accepted');
+  });
+
+  it('never sends a Microsoft draft again after Stop, even though the sanctioned resend path exists', async () => {
+    const e = await freshEnv('microsoft');
+    const sending = await launchSending(e, 'Hold6');
+    // The send request failed before Outlook acted: the draft is saved and still a draft, and the outcome is unknown.
+    const sentBefore = ms.state.sent.length;
+    ms.state.sendScript.push({ type: 'respond', status: 503 });
+    await processMailJobs(e.ctx);
+    expect(statusOf(e, sending.stepId)).toBe('unknown');
+    const attempts = ms.state.sendAttempts.length;
+    expect(attempts).toBeGreaterThan(0);
+    expect(Object.values(ms.state.messages).filter((message) => message.isDraft)).toHaveLength(1);
+    expect(ms.state.sent).toHaveLength(sentBefore);
+    expect(stopFollowupRule(e.ctx, sending.ruleId).status).toBe('stopped');
+    // Long past the wait before a saved draft may be sent again, which a live rule would have allowed.
+    warpTo(e, Date.parse(e.ctx.now()) + 60_000);
+    await processMailJobs(e.ctx);
+    await processMailJobs(e.ctx);
+    // The check still reads the draft, which can only learn the truth, but the resend it would have made is refused.
+    const draftId = (e.db.prepare('SELECT provider_draft_id FROM send_intent WHERE id = ?').get(sending.stepId) as { provider_draft_id: string }).provider_draft_id;
+    expect(ms.state.paths).toContain(`GET /v1.0/me/messages/${draftId}`);
+    expect(statusOf(e, sending.stepId)).toBe('unknown');
+    expect(ms.state.sendAttempts).toHaveLength(attempts);
+    expect(ms.state.sent).toHaveLength(sentBefore);
+    expect(ms.state.messages[draftId]!.isDraft).toBe(true);
+    expect(Object.values(ms.state.messages).filter((message) => message.isDraft)).toHaveLength(1);
+    // Checking goes on, so a later read can still settle the truth.
+    expect(e.db.prepare("SELECT COUNT(*) AS n FROM job WHERE kind = 'mail_reconcile' AND status = 'queued'").get()).toEqual({ n: 1 });
+  });
+
+  it('refuses the Microsoft resend when the rule stops after the check passed and before the request leaves', async () => {
+    const e = await freshEnv('microsoft');
+    const sending = await launchSending(e, 'Hold7');
+    const sentBefore = ms.state.sent.length;
+    ms.state.sendScript.push({ type: 'respond', status: 503 });
+    await processMailJobs(e.ctx);
+    expect(statusOf(e, sending.stepId)).toBe('unknown');
+    const attempts = ms.state.sendAttempts.length;
+    warpTo(e, Date.parse(e.ctx.now()) + 60_000);
+    // The stop lands while the draft is being read, which is after the claim allowed a resend and before the final guard.
+    let stopped = false;
+    ms.state.onRequest = ({ method, path }) => {
+      if (stopped || method !== 'GET' || !path.startsWith('/me/messages/')) return;
+      stopped = true;
+      e.db.prepare("UPDATE followup_rule SET status = 'stopped', stopped_reason = 'stopped_by_user', next_due_at = NULL WHERE id = ?").run(sending.ruleId);
+    };
+    await processMailJobs(e.ctx);
+    await processMailJobs(e.ctx);
+    expect(stopped).toBe(true);
+    expect(statusOf(e, sending.stepId)).toBe('unknown');
+    expect(ms.state.sendAttempts).toHaveLength(attempts);
+    expect(ms.state.sent).toHaveLength(sentBefore);
   });
 
   it('lets a read only search settle a Gmail step after Stop, because it can only learn the truth', async () => {

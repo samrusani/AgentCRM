@@ -12,7 +12,7 @@ Run these from the repository root.
 | `npm run seed` | Create the local database and fill it with synthetic demo data |
 | `npm run dev` | Start the API server (port 4720) and the web app (port 5173) |
 | `npm run build` | Type check and build both apps |
-| `npm run test` | Run the server test suite |
+| `npm run test` | Run the server test suite, then the web test suite |
 | `npm run doctor` | Check Node version, database state, and port availability |
 
 ## Layout
