@@ -1,4 +1,4 @@
-import { profileHref, profilePath } from '../../src/lib/links';
+import { domainHref, profileHref, profilePath } from '../../src/lib/links';
 
 describe('profilePath', () => {
   it('shortens a LinkedIn person URL to the path form', () => {
@@ -41,5 +41,26 @@ describe('profileHref', () => {
     expect(profileHref('javascript:alert(1)')).toBeNull();
     expect(profileHref('')).toBeNull();
     expect(profileHref(null)).toBeNull();
+  });
+});
+
+describe('domainHref', () => {
+  it('links a stored domain over https', () => {
+    expect(domainHref('acme.example.com')).toBe('https://acme.example.com');
+  });
+
+  it('trims surrounding space but refuses a stored scheme, path, or query outright', () => {
+    expect(domainHref(' acme.example.com ')).toBe('https://acme.example.com');
+    expect(domainHref('http://acme.example.com')).toBeNull();
+    expect(domainHref('acme.example.com/about')).toBeNull();
+    expect(domainHref('acme.example.com?x=1')).toBeNull();
+  });
+
+  it('refuses text that is not a bare host with a letter', () => {
+    expect(domainHref('not a domain')).toBeNull();
+    expect(domainHref('javascript:alert(1)')).toBeNull();
+    expect(domainHref('127.1')).toBeNull();
+    expect(domainHref(null)).toBeNull();
+    expect(domainHref('')).toBeNull();
   });
 });

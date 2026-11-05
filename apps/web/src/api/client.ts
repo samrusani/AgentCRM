@@ -53,6 +53,7 @@ import type {
   Person,
   PersonDetail,
   Pipeline,
+  ImportSettings,
   QualificationConfig,
   QualificationResult,
   QualificationSummary,
@@ -232,6 +233,11 @@ function normalizeRun(raw: Run): Run {
     steps: raw.steps ? [...raw.steps].sort((a, b) => a.seq - b.seq) : raw.steps,
     approvals: raw.approvals ? raw.approvals.map(normalizeApproval) : raw.approvals,
   };
+}
+
+// Off unless the server says on, so a missing or odd value never reads as a promise to skip review.
+function normalizeImportSettings(raw: unknown): ImportSettings {
+  return { autoAccept: objectOrEmpty(raw).autoAccept === true };
 }
 
 function normalizeApproval(raw: Approval): Approval {
@@ -1069,6 +1075,13 @@ export const api = {
       normalizeImportPage(
         await request<unknown>('GET', `/imports/${encodeURIComponent(id)}`, { query: { ...params, withRaw: 'true' } }),
       ),
+  },
+
+  importSettings: {
+    get: async (): Promise<ImportSettings> =>
+      normalizeImportSettings(await request<unknown>('GET', '/imports/settings')),
+    put: async (input: ImportSettings): Promise<ImportSettings> =>
+      normalizeImportSettings(await request<unknown>('PUT', '/imports/settings', { body: input })),
   },
 
   qualification: {

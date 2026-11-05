@@ -13,6 +13,7 @@ import {
   claimsForField,
   ClaimDetail,
   EvidenceChips,
+  DomainLink,
   ProfileLink,
 } from '../components/record';
 import { Chip } from '../components/common';
@@ -248,7 +249,14 @@ export function OrganizationSheet({
                 <span>{humanize(organization.kind)}</span>
               </FieldRow>
               <FieldRow label="Domain" claims={claimsForField(organization.claims, 'domain')} openClaim={openClaim} onToggleClaim={toggleClaim}>
-                <span className={organization.domain ? '' : 'muted'}>{organization.domain || 'Not set'}</span>
+                <EditableValue
+                  label="Domain"
+                  field="domain"
+                  value={organization.domain ?? null}
+                  save={saveField('domain')}
+                  onReload={() => query.refetch()}
+                  renderValue={(value) => <DomainLink value={value} />}
+                />
               </FieldRow>
               <FieldRow label="Location" claims={claimsForField(organization.claims, 'location')} openClaim={openClaim} onToggleClaim={toggleClaim}>
                 <EditableValue label="Location" field="location" value={organization.location} save={saveField('location')} onReload={() => query.refetch()} />

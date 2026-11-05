@@ -47,6 +47,9 @@ const KEYS_BY_EVENT: Record<ServerEventName, string[]> = {
     // The token routes emit record_updated with entityType capture_settings, so a rotation made
     // outside this tab reaches the Settings card.
     'capture-settings',
+    // The imports setting emits record_updated with entityType import_settings, so a toggle made
+    // in another tab reaches this one instead of going stale.
+    'import-settings',
     ...MAIL_KEYS,
   ],
   // Rule changes show in the Follow-ups section, the Outbox markers, and a person sheet that shows that person's rule.

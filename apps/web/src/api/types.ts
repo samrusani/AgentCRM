@@ -622,6 +622,10 @@ export interface Criterion {
   enabled: boolean;
 }
 
+export interface ImportSettings {
+  autoAccept: boolean;
+}
+
 export interface QualificationConfig {
   exclusions: Criterion[];
   criteria: Criterion[];

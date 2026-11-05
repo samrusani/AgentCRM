@@ -16,6 +16,7 @@ import type {
   CsvImportInput,
   DraftOutreachInput,
   GmailCredentialsInput,
+  ImportSettings,
   MicrosoftCredentialsInput,
   ImapConnectorInput,
   LeadCaptureInput,
@@ -641,6 +642,21 @@ export function useStageCsv() {
       queryClient.setQueryData(['run', run.id], run);
       void queryClient.invalidateQueries({ queryKey: ['runs'] });
       void queryClient.invalidateQueries({ queryKey: ['today'] });
+    },
+  });
+}
+
+export function useImportSettings() {
+  return useQuery({ queryKey: ['import-settings'], queryFn: api.importSettings.get });
+}
+
+// The toggle shows the saved value, so it updates when the server confirms, not before.
+export function useSaveImportSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ImportSettings) => api.importSettings.put(input),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(['import-settings'], saved);
     },
   });
 }

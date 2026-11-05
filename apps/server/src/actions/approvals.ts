@@ -3,7 +3,7 @@ import { conflict } from '../errors.js';
 import { getRun, requireApproval, requireRun } from '../queries/runs.js';
 import { type ActionContext, mutate, parseInput } from './context.js';
 import { applyDrafts } from './draftOutreach.js';
-import { acceptImportBatch } from './importReview.js';
+import { settleAcceptedImport } from './importReview.js';
 import { applyShortlist, hashPayload } from './demoResearch.js';
 import { cancelRunIn } from './runs.js';
 import { approveSendReview, rejectSendReview, sendReviewKind, startSendingRunIn } from './sendIntents.js';
@@ -69,26 +69,7 @@ export function decideApproval(ctx: ActionContext, approvalId: string, input: un
       }
     } else if (approval.kind === 'import_review') {
       if (data.decision === 'approve') {
-        const outcome = acceptImportBatch(tx, run.id, run.scope);
-        const finalStatus = outcome.truncated ? 'partial' : 'succeeded';
-        tx.db.prepare('UPDATE run SET status = ?, counts = ?, finished_at = ? WHERE id = ?').run(
-          finalStatus,
-          JSON.stringify({
-            ...run.counts,
-            processed: outcome.counts.fetched,
-            found: outcome.counts.accepted,
-            flagged: outcome.counts.duplicates + outcome.counts.invalid,
-            ...outcome.counts,
-            requested: run.counts.requested ?? Number(run.scope.maxItems ?? 0),
-          }),
-          now,
-          run.id,
-        );
-        tx.audit(`run.${finalStatus}`, 'run', run.id, {
-          accepted: outcome.accepted,
-          skipped: outcome.skipped,
-          organizationsCreated: outcome.organizationsCreated,
-        });
+        settleAcceptedImport(tx, run, now);
       } else {
         cancelRunIn(tx, run.id, 'The import was rejected.');
         tx.audit('run.cancelled', 'run', run.id, { reason: 'approval_rejected' });

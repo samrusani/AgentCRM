@@ -29,3 +29,16 @@ export function profilePath(value: string | null | undefined): string {
   const path = url ? url.pathname.replace(/\/+$/, '') : '';
   return path || value;
 }
+
+// The link target for a stored organization domain: https://<domain>. Only a bare host becomes a
+// link: anything carrying a scheme, path, query, userinfo, port, or whitespace renders as plain
+// text, and so does a purely numeric address, so a hostile stored value never links elsewhere
+// than the text it shows.
+export function domainHref(value: string | null | undefined): string | null {
+  const host = (value ?? '').trim();
+  if (/[/?#:@\s]/.test(host)) return null;
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(host)) return null;
+  // Numeric address spellings (127.1, 0x7f.1) can resolve to loopback or private machines.
+  if (host.split('.').every((label) => /^\d+$/.test(label) || /^0x[0-9a-f]+$/i.test(label))) return null;
+  return `https://${host}`;
+}

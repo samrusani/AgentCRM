@@ -4,7 +4,8 @@ import { AppError } from '../errors.js';
 import { type Row, type RunCounts } from '../records.js';
 import { normalizeName, splitName, type MappedRow } from './apifyMapping.js';
 import { normalizeProfileUrl } from './leadCaptureMapping.js';
-import { type Tx, emitRecord } from './context.js';
+import { type Tx, emitRecord, withAuditActor } from './context.js';
+import { readImportSettings } from './importSettings.js';
 import { createFieldClaimIn, createOrganizationIn, createPersonIn } from './crud.js';
 import { updateEntityIn } from './entities.js';
 import { requireOrganization } from '../queries/organizations.js';
@@ -423,6 +424,40 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
   };
 }
 
+// The approve path of an import_review approval, shared by a human decision and the auto accept setting:
+// accept the batch, then finish the run with honest counts. Runs inside the deciding transaction.
+export function settleAcceptedImport(tx: Tx, run: { id: string; scope: Record<string, unknown>; counts: RunCounts }, now: string): void {
+  const outcome = acceptImportBatch(tx, run.id, run.scope);
+  const finalStatus = outcome.truncated ? 'partial' : 'succeeded';
+  tx.db.prepare('UPDATE run SET status = ?, counts = ?, finished_at = ? WHERE id = ?').run(
+    finalStatus,
+    JSON.stringify({
+      ...run.counts,
+      processed: outcome.counts.fetched,
+      found: outcome.counts.accepted,
+      flagged: outcome.counts.duplicates + outcome.counts.invalid,
+      ...outcome.counts,
+      requested: run.counts.requested ?? Number(run.scope.maxItems ?? 0),
+    }),
+    now,
+    run.id,
+  );
+  tx.audit(`run.${finalStatus}`, 'run', run.id, {
+    accepted: outcome.accepted,
+    skipped: outcome.skipped,
+    organizationsCreated: outcome.organizationsCreated,
+  });
+}
+
+// Only a run that explicitly records origin "user" can be auto accepted. The gate fails closed: a missing or unknown
+// origin waits for a human, and agent started runs store origin "agent".
+function startedByUser(scope: Record<string, unknown>): boolean {
+  return scope.origin === 'user';
+}
+
+export const autoAcceptActor = 'auto_accept';
+export const autoAcceptNote = 'Auto accepted by the imports setting.';
+
 // Ends the run as failed, or partial when rows were already staged. Never creates or keeps invented rows.
 export function failImportRunIn(tx: Tx, runId: string, detail: string): void {
   const run = getRun(tx.db, tx.workspaceId, runId);
@@ -702,12 +737,25 @@ export function requestImportReview(tx: Tx, runId: string, seq: number, request:
   tx.audit('approval.create', 'approval', approvalId, { runId, kind: 'import_review' });
   tx.emit({ type: 'approval_updated', approvalId, runId });
   tx.db.prepare("UPDATE import_batch SET status = 'awaiting_review', updated_at = ? WHERE id = ?").run(tx.now(), batch.id);
-  finishStep(
-    tx,
-    runId,
-    live.step,
-    `Waiting for review: ${counts.staged} to import, ${counts.duplicates} duplicates, ${counts.invalid} invalid.`,
-  );
+  const summary = `${counts.staged} to import, ${counts.duplicates} duplicates, ${counts.invalid} invalid.`;
+
+  // The only place an approval is ever decided without a person, and only for import_review: this one,
+  // just created. The setting is read inside this transaction, so a toggle is seen or not as a whole.
+  if (readImportSettings(tx.db, tx.workspaceId).autoAccept && startedByUser(live.run.scope)) {
+    finishStep(tx, runId, live.step, `Auto accepted by the imports setting: ${summary}`);
+    const decider = withAuditActor(tx, autoAcceptActor);
+    const now = tx.now();
+    tx.db
+      .prepare("UPDATE approval SET status = 'approved', note = ?, decided_at = ?, decided_by = ? WHERE id = ? AND status = 'pending'")
+      .run(autoAcceptNote, now, autoAcceptActor, approvalId);
+    decider.audit('approval.approve', 'approval', approvalId, { runId, note: autoAcceptNote, autoAccept: true });
+    settleAcceptedImport(decider, live.run, now);
+    tx.emit({ type: 'approval_updated', approvalId, runId });
+    tx.emit({ type: 'run_updated', runId });
+    return;
+  }
+
+  finishStep(tx, runId, live.step, `Waiting for review: ${summary}`);
   tx.db.prepare("UPDATE run SET status = 'waiting_approval' WHERE id = ?").run(runId);
   tx.audit('run.waiting_approval', 'run', runId);
   tx.emit({ type: 'run_updated', runId });

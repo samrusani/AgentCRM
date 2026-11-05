@@ -40,6 +40,7 @@ import {
   generateCaptureToken,
   getApifyActor,
   getCaptureSettings,
+  getImportSettings,
   getEnrichment,
   getOrganizationEnrichment,
   getMailProvider,
@@ -55,6 +56,7 @@ import {
   previewCsvFile,
   saveQualificationConfig,
   searchApifyActors,
+  setImportSettings,
   setMailProvider,
   setModelProvider,
   stopFollowupRule,
@@ -192,6 +194,9 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
     reply.status(result.outcome === 'created' ? 201 : 200);
     return result;
   });
+
+  app.get('/api/imports/settings', async () => getImportSettings({ db, workspaceId: workspaceId() }));
+  app.put('/api/imports/settings', async (request) => setImportSettings(context(), request.body));
 
   app.get('/api/today', async () => getToday(db, workspaceId()));
 
@@ -485,7 +490,7 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   const csvBodyLimit = 32 * 1024 * 1024;
   app.post('/api/imports/csv/preview', { bodyLimit: csvBodyLimit }, async (request) => previewCsvFile(request.body));
   app.post('/api/imports/csv', { bodyLimit: csvBodyLimit }, async (request, reply) => {
-    const run = stageCsvImport(context(), request.body);
+    const run = stageCsvImport(context(), request.body, { origin: 'user' });
     reply.status(201);
     return run;
   });

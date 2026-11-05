@@ -517,11 +517,11 @@ describe('money: one click, one billed call', () => {
 });
 
 describe('shared engine keeps person behavior', () => {
-  it('KILLS: a person run stores the same scope keys, sends the same three field input, and refuses an agent origin', async () => {
+  it('KILLS: a person run stores the same scope keys plus its stamped origin, sends the same three field input, and refuses an agent origin', async () => {
     const person = createPerson(env.ctx, { firstName: 'Same', lastName: 'Person', linkedinUrl: 'https://www.linkedin.com/in/same-person' });
     stub.state.actorItems[profileActorKey] = [{ linkedinUrl: 'https://www.linkedin.com/in/same-person', headline: 'Partner' }];
     const run = startRun(env.ctx, { kind: 'enrich_person', scope: { personId: person.id } });
-    expect(Object.keys(getRunDetail(env.db, env.workspaceId, run.id).scope).sort()).toEqual(['actorId', 'personId', 'profileUrl']);
+    expect(Object.keys(getRunDetail(env.db, env.workspaceId, run.id).scope).sort()).toEqual(['actorId', 'origin', 'personId', 'profileUrl']);
     await driveRunAsync(env, run.id, ['succeeded']);
     const url = 'https://www.linkedin.com/in/same-person';
     expect(stub.state.startBodies).toEqual([{ queries: [url], profileUrls: [url], usernames: [url] }]);
@@ -531,6 +531,7 @@ describe('shared engine keeps person behavior', () => {
       'apifyFinished',
       'apifyRunId',
       'apifyStartedAt',
+      'origin',
       'personId',
       'profileUrl',
       'startAttemptedAt',

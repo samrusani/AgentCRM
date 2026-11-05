@@ -66,6 +66,11 @@ function installFetch() {
       world.calls.push({ method, path: `${url.pathname}${url.search}`, body });
 
       if (url.pathname === '/api/organizations/o1' && method === 'GET') return json(200, world.organization);
+      if (url.pathname === '/api/organizations/o1' && method === 'PATCH') {
+        const { fields } = body as { fields: Record<string, unknown> };
+        world.organization = { ...world.organization, ...fields, version: (world.organization.version as number) + 1 };
+        return json(200, world.organization);
+      }
       if (url.pathname === '/api/organizations/o1/enrichment' && method === 'GET') return json(200, world.enrichment);
       if (url.pathname === '/api/organizations/o1/enrichment' && method === 'POST') {
         if (world.acceptFailure) return json(world.acceptFailure.status, { error: world.acceptFailure });
@@ -325,5 +330,37 @@ describe('organization runs without pending suggestions', () => {
     await screen.findByRole('button', { name: 'Enrich' });
     expect(screen.queryByRole('heading', { name: 'Suggestions' })).not.toBeInTheDocument();
     expect(screen.queryByText('Looked up by name and found Acme Robotics.')).not.toBeInTheDocument();
+  });
+});
+
+describe('organization Domain field', () => {
+  it('renders the stored domain as a link to https and opens it in a new tab', async () => {
+    world.organization = { ...world.organization, domain: 'acme.example.com' };
+    renderOrganization();
+    await loaded();
+    const link = within(fieldRow('Domain')).getByRole('link', { name: 'acme.example.com' });
+    expect(link).toHaveAttribute('href', 'https://acme.example.com');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link.getAttribute('rel')).toContain('noreferrer');
+  });
+
+  it('reads Not set without a link when there is no domain', async () => {
+    renderOrganization();
+    await loaded();
+    const row = fieldRow('Domain');
+    expect(within(row).getByText('Not set')).toBeInTheDocument();
+    expect(within(row).queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('stays editable and saves the new domain', async () => {
+    world.organization = { ...world.organization, domain: 'acme.example.com' };
+    const { user } = renderOrganization();
+    await loaded();
+    await user.click(within(fieldRow('Domain')).getByRole('button', { name: 'Edit domain' }));
+    const input = screen.getByRole('textbox', { name: 'Domain' });
+    await user.clear(input);
+    await user.type(input, 'acme.example.org{Enter}');
+    await waitFor(() => expect(calls('PATCH', '/api/organizations/o1')).toHaveLength(1));
+    expect(calls('PATCH', '/api/organizations/o1')[0].body).toMatchObject({ fields: { domain: 'acme.example.org' } });
   });
 });

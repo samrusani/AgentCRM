@@ -61,9 +61,12 @@ export function ApprovalCard({
 
   if (decision) {
     const at = settled?.at ?? approval.decidedAt;
+    // The setting decided this review, so the card says so instead of leaving it looking like a human did.
+    const autoAccepted = approval.decidedBy === 'auto_accept';
     return (
       <div className="approval approval--settled">
         <span className="approval__verdict">{decision === 'approve' ? 'Approved' : 'Rejected'}</span>
+        {autoAccepted ? <span className="muted">Auto accepted</span> : null}
         <span className="approval__settled-title">{approval.title}</span>
         {at ? <span className="muted num">{formatDateTime(at)}</span> : null}
       </div>

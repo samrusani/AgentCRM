@@ -60,7 +60,9 @@ export function previewCsvFile(input: unknown): CsvPreview & { fileName: string 
 
 // Stages the batch and every row in one transaction, then queues the run. The worker validates, dedupes,
 // and asks for review. Nothing becomes a person or organization until a person approves the import.
-export function stageCsvImport(ctx: ActionContext, input: unknown) {
+export function stageCsvImport(ctx: ActionContext, input: unknown, options: { origin?: 'user' | 'agent' } = {}) {
+  // The shell and the HTTP route are the human, so a CSV import is a user action unless a caller says otherwise.
+  const origin = options.origin ?? 'user';
   const data = parseInput(stageSchema, input);
   const fileName = cleanFileName(data.fileName);
   if (fileName === '') throw validationError('fileName: Give the name of the file.');
@@ -87,7 +89,7 @@ export function stageCsvImport(ctx: ActionContext, input: unknown) {
         tx.workspaceId,
         csvImportKind,
         `CSV import: ${fileName}`,
-        JSON.stringify({ batchId, fileName }),
+        JSON.stringify({ batchId, fileName, origin }),
         JSON.stringify(importCountsOf(counts, rowCount)),
       );
     const delimiterName = delimiterNames[parsed.delimiter] ?? parsed.delimiter;

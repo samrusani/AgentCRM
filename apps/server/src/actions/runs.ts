@@ -354,6 +354,8 @@ export function startRun(ctx: ActionContext, input: unknown, options: StartRunOp
       counts = { processed: 0, found: 0, flagged: 0 };
       auditScope = { scope: data.scope };
     }
+    // Every run records who started it. The auto accept gate reads this and fails closed when it is absent.
+    storedScope = { ...storedScope, origin };
     tx.db
       .prepare(
         `INSERT INTO run (id, created_at, workspace_id, kind, title, status, scope, counts)

@@ -1,7 +1,15 @@
 import { useState } from 'react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
-import { useConnectors, useHealth, useModelProvider, useTemplates, useWorkspace } from '../api/hooks';
-import { ErrorState, Loading, PageHeader } from '../components/common';
+import {
+  useConnectors,
+  useHealth,
+  useImportSettings,
+  useModelProvider,
+  useSaveImportSettings,
+  useTemplates,
+  useWorkspace,
+} from '../api/hooks';
+import { ErrorState, Loading, PageHeader, errorMessage } from '../components/common';
 import { isLocalProvider, modelName, providerAttention, providerName } from '../lib/models';
 import { useUI, type ThemeSetting } from '../lib/ui';
 import { TemplateSheet } from './TemplateSheet';
@@ -59,6 +67,47 @@ export function Settings() {
   );
 }
 
+function ImportsSection() {
+  const settings = useImportSettings();
+  const save = useSaveImportSettings();
+  const enabled = settings.data?.autoAccept === true;
+
+  return (
+    <section className="section" aria-labelledby="settings-imports">
+      <h2 className="section__title" id="settings-imports">
+        Imports
+      </h2>
+      {settings.isPending ? <Loading what="import settings" /> : null}
+      {settings.isError ? (
+        <ErrorState what="import settings" error={settings.error} onRetry={() => void settings.refetch()} />
+      ) : null}
+      {settings.data ? (
+        <>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={enabled}
+              disabled={save.isPending}
+              aria-describedby="settings-imports-note"
+              onChange={(event) => save.mutate({ autoAccept: event.target.checked })}
+            />
+            <span>Auto accept imports</span>
+          </label>
+          <p className="muted" id="settings-imports-note">
+            Staged rows from Apify imports, CSV files, and lead capture are saved without review. Duplicates and invalid
+            rows are still skipped. Runs started by the agent always wait for your review.
+          </p>
+          {save.isError ? (
+            <p className="inline-error" role="alert">
+              {errorMessage(save.error)} The setting did not change.
+            </p>
+          ) : null}
+        </>
+      ) : null}
+    </section>
+  );
+}
+
 export function GeneralSettings() {
   const { theme, setTheme } = useUI();
   const health = useHealth();
@@ -96,6 +145,8 @@ export function GeneralSettings() {
           {THEMES.find((option) => option.value === theme)?.hint}. This choice is stored in this browser only.
         </p>
       </section>
+
+      <ImportsSection />
 
       <section className="section" aria-labelledby="settings-workspace">
         <h2 className="section__title" id="settings-workspace">

@@ -122,6 +122,7 @@ Every row below is backed by tests: 1,637 across the server (1,174), the web app
 | --- | --- |
 | Apify imports: run any store Actor, staged rows, dedupe, review before anything is saved | Working, verified against a stubbed Apify API; bring your own Apify account |
 | CSV import: column mapping, staged rows, same dedupe and review as Apify | Working, UI and CLI |
+| Auto accept imports: an off by default setting saves staged rows from your own imports without review, with the decision still recorded; runs started by the agent always wait | Working |
 | LinkedIn lead capture: paste a post URL, read the people and organizations named in the post text, scrape reactions and comments, enrich new people, one review | Working, verified against stubbed Apify and model APIs; runs on your own Apify account and model key |
 | Browser extension: one click capture of the LinkedIn or X profile you are viewing, with the button sitting next to the profile name and showing In CRM when the person is already saved; token guarded, nothing leaves your machine | Working; load unpacked from apps/extension, generate the token in Settings |
 

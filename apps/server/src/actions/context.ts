@@ -43,6 +43,28 @@ export interface Tx {
   emit: (event: DomainEvent) => void;
 }
 
+interface AuditSink {
+  db: Db;
+  workspaceId: string;
+  now: () => string;
+  newId: (prefix: IdPrefix) => string;
+}
+
+function writeAudit(
+  sink: AuditSink,
+  actor: string,
+  action: string,
+  entityType: string,
+  entityId: string,
+  detail: Record<string, unknown>,
+): void {
+  sink.db
+    .prepare(
+      'INSERT INTO audit_event (id, created_at, workspace_id, actor, action, entity_type, entity_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    )
+    .run(sink.newId('aud'), sink.now(), sink.workspaceId, actor, action, entityType, entityId, JSON.stringify(detail));
+}
+
 // One short immediate transaction. Events leave the process only after the commit succeeds.
 export function mutate<T>(ctx: ActionContext, work: (tx: Tx) => T): T {
   const events: DomainEvent[] = [];
@@ -53,11 +75,7 @@ export function mutate<T>(ctx: ActionContext, work: (tx: Tx) => T): T {
     now: ctx.now,
     newId: ctx.newId,
     audit: (action, entityType, entityId, detail = {}) => {
-      ctx.db
-        .prepare(
-          'INSERT INTO audit_event (id, created_at, workspace_id, actor, action, entity_type, entity_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        )
-        .run(ctx.newId('aud'), ctx.now(), ctx.workspaceId, ctx.actor, action, entityType, entityId, JSON.stringify(detail));
+      writeAudit(ctx, ctx.actor, action, entityType, entityId, detail);
     },
     emit: (event) => {
       events.push(event);
@@ -70,6 +88,12 @@ export function mutate<T>(ctx: ActionContext, work: (tx: Tx) => T): T {
 
 export function withTxActor(tx: Tx, actor: string): Tx {
   return { ...tx, actor };
+}
+
+// Like withTxActor, but the audit rows written through the returned Tx name the new actor too. withTxActor leaves audit
+// rows under the context actor, which every existing caller relies on. The auto accept path needs its own audit actor.
+export function withAuditActor(tx: Tx, actor: string): Tx {
+  return { ...tx, actor, audit: (action, entityType, entityId, detail = {}) => writeAudit(tx, actor, action, entityType, entityId, detail) };
 }
 
 export function parseInput<S extends z.ZodTypeAny>(schema: S, input: unknown): z.output<S> {

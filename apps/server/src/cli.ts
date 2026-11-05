@@ -268,11 +268,11 @@ async function importCommand(parsed: Parsed): Promise<number> {
   const { createContext } = await import('./actions/index.js');
   const { db, workspace } = await openWorkspace();
   try {
-    const run = stageCsvImport(createContext(db, workspace.id, { actor: 'user' }), {
-      fileName,
-      content,
-      mapping: preview.suggestedMapping,
-    });
+    const run = stageCsvImport(
+      createContext(db, workspace.id, { actor: 'user' }),
+      { fileName, content, mapping: preview.suggestedMapping },
+      { origin: 'user' },
+    );
     const batchId = String(run.scope.batchId);
     print(parsed, { run, batchId }, () =>
       [

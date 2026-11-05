@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useCreateNote } from '../api/hooks';
 import { ApiError, isVersionConflict } from '../api/client';
 import type { Activity, Claim, Opportunity } from '../api/types';
-import { profileHref, profilePath } from '../lib/links';
+import { domainHref, profileHref, profilePath } from '../lib/links';
 import { formatAge, formatAgo, formatAmount, formatDateTime, humanize } from '../lib/format';
 import { Chip, ChipButton, errorMessage } from './common';
 import { Icon } from './Icons';
@@ -37,6 +37,17 @@ export function ProfileLink({ value }: { value: string }) {
   return (
     <a className="link" href={href} target="_blank" rel="noreferrer noopener" title={value}>
       {profilePath(value)}
+    </a>
+  );
+}
+
+// The stored domain is the visible text. The server may store it with a scheme or a path, so the link is built from the host.
+export function DomainLink({ value }: { value: string }) {
+  const href = domainHref(value);
+  if (!href) return <span>{value}</span>;
+  return (
+    <a className="link" href={href} target="_blank" rel="noreferrer noopener">
+      {value}
     </a>
   );
 }
