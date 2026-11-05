@@ -5,9 +5,10 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { ApiError, api } from './client';
+import { ApiError, api, type NewPersonInput } from './client';
 import { useEventConnection } from './events';
 import type {
+  Lifecycle,
   AcceptEnrichmentInput,
   AcceptOrganizationEnrichmentInput,
   AgentMessageInput,
@@ -98,21 +99,21 @@ export function useToday() {
 
 export type PeopleSort = 'default' | 'fit';
 
-export function usePeople(q: string, sort: PeopleSort = 'default') {
+export function usePeople(q: string, sort: PeopleSort = 'default', lifecycle?: Lifecycle) {
   return useInfiniteQuery({
-    queryKey: ['people', q, sort],
+    queryKey: ['people', q, sort, lifecycle ?? 'all'],
     queryFn: ({ pageParam }) =>
-      api.people.list({ q, sort: sort === 'fit' ? 'fit' : undefined, cursor: pageParam, limit: PAGE_SIZE }),
+      api.people.list({ q, sort: sort === 'fit' ? 'fit' : undefined, lifecycle, cursor: pageParam, limit: PAGE_SIZE }),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
     placeholderData: keepPreviousData,
   });
 }
 
-export function useOrganizations(q: string, enabled = true) {
+export function useOrganizations(q: string, enabled = true, lifecycle?: Lifecycle) {
   return useInfiniteQuery({
-    queryKey: ['organizations', q],
-    queryFn: ({ pageParam }) => api.organizations.list({ q, cursor: pageParam, limit: PAGE_SIZE }),
+    queryKey: ['organizations', q, lifecycle ?? 'all'],
+    queryFn: ({ pageParam }) => api.organizations.list({ q, lifecycle, cursor: pageParam, limit: PAGE_SIZE }),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
     placeholderData: keepPreviousData,
@@ -310,6 +311,20 @@ export function usePatchPerson() {
     onSuccess: (_data, input) => {
       void queryClient.invalidateQueries({ queryKey: ['people'] });
       void queryClient.invalidateQueries({ queryKey: ['person', input.id] });
+      // An organization counts as a relationship when one of its people is, so a lifecycle change can move it.
+      if ('lifecycle' in input.fields) void queryClient.invalidateQueries({ queryKey: ['organizations'] });
+    },
+  });
+}
+
+export function useCreatePerson() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: NewPersonInput) => api.people.create(input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['people'] });
+      void queryClient.invalidateQueries({ queryKey: ['organizations'] });
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
     },
   });
 }

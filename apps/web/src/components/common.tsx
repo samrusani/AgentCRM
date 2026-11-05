@@ -119,10 +119,17 @@ export function EmptyState({
   );
 }
 
-export function PageHeader({ title, children }: { title: string; children?: ReactNode }) {
+export function PageHeader({ title, description, children }: { title: string; description?: string; children?: ReactNode }) {
   return (
     <div className="page-header">
-      <h1 className="page-title">{title}</h1>
+      {description ? (
+        <div className="page-header__text">
+          <h1 className="page-title">{title}</h1>
+          <p className="page-header__description muted">{description}</p>
+        </div>
+      ) : (
+        <h1 className="page-title">{title}</h1>
+      )}
       {children ? <div className="page-header__actions">{children}</div> : null}
     </div>
   );

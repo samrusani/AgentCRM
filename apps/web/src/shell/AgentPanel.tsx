@@ -42,6 +42,7 @@ function toHistory(items: ChatItem[]): ChatTurn[] {
 
 const SCREEN_LABELS: Record<string, string> = {
   '/today': 'Today',
+  '/leads': 'Leads',
   '/relationships': 'Relationships',
   '/pipeline': 'Pipeline',
   '/research': 'Research',

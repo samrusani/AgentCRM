@@ -12,6 +12,7 @@ import {
   type Tx,
   versionConflict,
 } from './context.js';
+import { promoteForStageIn } from './lifecycle.js';
 import {
   canonicalCompanyLinkedinUrl,
   canonicalPersonLinkedinUrl,
@@ -53,6 +54,7 @@ export const personFields = {
   location: optionalText(200),
   linkedinUrl: profileUrlField(canonicalPersonLinkedinUrl, linkedinProfileUrlMessage),
   xUrl: profileUrlField(canonicalXUrl, xProfileUrlMessage),
+  lifecycle: z.enum(['lead', 'relationship']),
   tags: tagsSchema,
   nextActionAt: isoTimestamp.nullable(),
 };
@@ -112,6 +114,7 @@ const specs: Record<UpdatableType, EntitySpec> = {
       location: 'location',
       linkedinUrl: 'linkedin_url',
       xUrl: 'x_url',
+      lifecycle: 'lifecycle',
       tags: 'tags',
       nextActionAt: 'next_action_at',
     },
@@ -253,7 +256,13 @@ export function updateEntityIn(tx: Tx, type: UpdatableType, id: string, parsed: 
     changes: Object.fromEntries(changes.map((change) => [change.field, { from: change.from, to: change.to }])),
   });
   emitRecord(tx, type, id);
-  return spec.load(tx.db, tx.workspaceId, id)!;
+  const updated = spec.load(tx.db, tx.workspaceId, id)!;
+  // Re-pointing an opportunity at a person while it sits past the first stage is a relationship signal for that person.
+  if (type === 'opportunity' && 'personId' in patch) {
+    const row = updated as unknown as { personId: string | null; stageId: string };
+    if (row.personId) promoteForStageIn(tx, row.personId, row.stageId);
+  }
+  return updated;
 }
 
 export function loadEntity(db: Db, workspaceId: string, type: UpdatableType, id: string) {

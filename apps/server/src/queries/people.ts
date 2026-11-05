@@ -30,6 +30,8 @@ export interface ListPeopleInput {
   limit?: number | undefined;
   organizationId?: string | undefined;
   sort?: 'name' | 'fit' | undefined;
+  // Absent means all people.
+  lifecycle?: 'lead' | 'relationship' | undefined;
 }
 
 const listSelect = `SELECT p.*, o.name AS organization_name, ${qualificationColumns} FROM person p LEFT JOIN organization o ON o.id = p.organization_id ${qualificationJoin}`;
@@ -63,6 +65,10 @@ export function listPeople(
   if (input.organizationId) {
     where.push('p.organization_id = ?');
     params.push(input.organizationId);
+  }
+  if (input.lifecycle) {
+    where.push('p.lifecycle = ?');
+    params.push(input.lifecycle);
   }
   return paginate({
     db,

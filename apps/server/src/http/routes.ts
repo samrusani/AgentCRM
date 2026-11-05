@@ -106,9 +106,14 @@ const peopleQuery = z.object({
   q: z.string().optional(),
   organizationId: z.string().optional(),
   sort: z.enum(['name', 'fit']).optional(),
+  lifecycle: z.enum(['lead', 'relationship']).optional(),
   ...pagingQuery,
 });
-const organizationsQuery = z.object({ q: z.string().optional(), ...pagingQuery });
+const organizationsQuery = z.object({
+  q: z.string().optional(),
+  lifecycle: z.enum(['lead', 'relationship']).optional(),
+  ...pagingQuery,
+});
 const opportunitiesQuery = z.object({
   pipelineId: z.string().optional(),
   stageId: z.string().optional(),

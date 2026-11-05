@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useOrganizations, usePeople, type PeopleSort } from '../api/hooks';
-import type { Organization, Person } from '../api/types';
+import type { Lifecycle, Organization, Person } from '../api/types';
 import { EmptyState, ErrorState, Loading, PageHeader } from '../components/common';
 import { Icon } from '../components/Icons';
 import { FitCell } from '../components/qualification';
 import { VirtualTable, type Column } from '../components/VirtualTable';
 import { describeDue, humanize, personName } from '../lib/format';
 import { CsvImportSheet } from './CsvImportSheet';
+import { NewPersonSheet } from './NewPersonSheet';
 import { OrganizationSheet, PersonSheet } from './RecordSheets';
 
 type Tab = 'people' | 'organizations';
@@ -21,7 +22,47 @@ function useDebouncedValue(value: string, delay: number) {
   return debounced;
 }
 
+// Leads and Relationships are one screen in two framings. The framing sets the title, the muted
+// line, the lifecycle filter for the tables, and the empty states. Sheets read their record by id,
+// so a sheet opens for either lifecycle on either route and only the tables filter.
+interface Framing {
+  title: string;
+  description: string;
+  lifecycle: Lifecycle;
+  // Shown when the people table is empty and no search is active.
+  emptyPeople: string;
+  emptyOrganizations: string;
+  // Leads invite an import from the empty people table.
+  inviteImport: boolean;
+}
+
+const LEADS_FRAMING: Framing = {
+  title: 'Leads',
+  description: 'People you have imported or captured but not yet talked to.',
+  lifecycle: 'lead',
+  emptyPeople: 'No leads yet. Import a CSV or capture people from LinkedIn and they will appear here.',
+  emptyOrganizations: 'No lead organizations yet. Organizations appear here when you import or capture people who work at them.',
+  inviteImport: true,
+};
+
+const RELATIONSHIPS_FRAMING: Framing = {
+  title: 'Relationships',
+  description: 'People you have a real interaction with: they replied, or a deal is moving.',
+  lifecycle: 'relationship',
+  emptyPeople: 'No relationships yet. Leads graduate here when someone replies or a deal moves.',
+  emptyOrganizations: 'No relationship organizations yet. Organizations appear here when a person there replies or a deal moves.',
+  inviteImport: false,
+};
+
+export function Leads() {
+  return <LifecycleScreen framing={LEADS_FRAMING} />;
+}
+
 export function Relationships() {
+  return <LifecycleScreen framing={RELATIONSHIPS_FRAMING} />;
+}
+
+function LifecycleScreen({ framing }: { framing: Framing }) {
   const [params, setParams] = useSearchParams();
   const tab: Tab = params.get('tab') === 'organizations' ? 'organizations' : 'people';
   const personId = params.get('person');
@@ -33,8 +74,10 @@ export function Relationships() {
   const csvOpen = tab === 'people' && params.get('import') === 'csv';
   const navigate = useNavigate();
 
-  const people = usePeople(q, sort);
-  const organizations = useOrganizations(q, tab === 'organizations');
+  const [newPersonOpen, setNewPersonOpen] = useState(false);
+
+  const people = usePeople(q, sort, framing.lifecycle);
+  const organizations = useOrganizations(q, tab === 'organizations', framing.lifecycle);
 
   const setTab = (next: Tab) => {
     const copy = new URLSearchParams(params);
@@ -111,7 +154,7 @@ export function Relationships() {
 
   return (
     <div className="screen screen--table">
-      <PageHeader title="Relationships">
+      <PageHeader title={framing.title} description={framing.description}>
         <div className="search-box">
           <label className="sr-only" htmlFor="relationships-search">
             Search {tab === 'people' ? 'people' : 'organizations'}
@@ -126,9 +169,14 @@ export function Relationships() {
           />
         </div>
         {tab === 'people' ? (
-          <button type="button" className="btn" onClick={openCsvImport} aria-haspopup="dialog">
-            Import CSV
-          </button>
+          <>
+            <button type="button" className="btn" onClick={openCsvImport} aria-haspopup="dialog">
+              Import CSV
+            </button>
+            <button type="button" className="btn" onClick={() => setNewPersonOpen(true)} aria-haspopup="dialog">
+              New person
+            </button>
+          </>
         ) : null}
       </PageHeader>
 
@@ -159,20 +207,37 @@ export function Relationships() {
             onToggleSort={toggleSort}
             selectedId={personId}
             onOpen={openPerson}
+            emptyMessage={framing.emptyPeople}
+            onImport={framing.inviteImport ? openCsvImport : undefined}
           />
         ) : (
-          <OrganizationsTable query={organizations} q={q} selectedId={orgId} onOpen={openOrganization} />
+          <OrganizationsTable
+            query={organizations}
+            q={q}
+            selectedId={orgId}
+            onOpen={openOrganization}
+            emptyMessage={framing.emptyOrganizations}
+          />
         )}
+        {newPersonOpen && !csvOpen ? (
+          <NewPersonSheet
+            onClose={() => setNewPersonOpen(false)}
+            onCreated={(id) => {
+              setNewPersonOpen(false);
+              openPerson(id);
+            }}
+          />
+        ) : null}
         {csvOpen ? (
           <CsvImportSheet
             onClose={closeCsvImport}
             onStaged={(run) => navigate(`/research?run=${encodeURIComponent(run.id)}`)}
           />
         ) : null}
-        {!csvOpen && sheetOpen && tab === 'people' && personId ? (
+        {!csvOpen && !newPersonOpen && sheetOpen && tab === 'people' && personId ? (
           <PersonSheet id={personId} onClose={closeSheet} onOpenOrganization={openOrganization} />
         ) : null}
-        {!csvOpen && sheetOpen && tab === 'organizations' && orgId ? (
+        {!csvOpen && !newPersonOpen && sheetOpen && tab === 'organizations' && orgId ? (
           <OrganizationSheet id={orgId} onClose={closeSheet} onOpenPerson={openPerson} />
         ) : null}
       </div>
@@ -187,6 +252,8 @@ function PeopleTable({
   onToggleSort,
   selectedId,
   onOpen,
+  emptyMessage,
+  onImport,
 }: {
   query: ReturnType<typeof usePeople>;
   q: string;
@@ -194,6 +261,8 @@ function PeopleTable({
   onToggleSort: () => void;
   selectedId: string | null;
   onOpen: (id: string) => void;
+  emptyMessage: string;
+  onImport?: () => void;
 }) {
   const rows = useMemo(() => query.data?.pages.flatMap((page) => page.items) ?? [], [query.data]);
   const needsNames = rows.some((row) => row.organizationId && !row.organizationName);
@@ -264,11 +333,9 @@ function PeopleTable({
       query={query}
       what="people"
       count={rows.length}
-      emptyMessage={
-        q
-          ? `No people match "${q}". Check the spelling or search by email or organization.`
-          : 'No people yet. Add people through the API or the CLI, or load the seeded demo data.'
-      }
+      emptyMessage={q ? `No people match "${q}". Check the spelling or search by email or organization.` : emptyMessage}
+      actionLabel={!q && onImport ? 'Import CSV' : undefined}
+      onAction={!q ? onImport : undefined}
     >
       <VirtualTable
         label="People"
@@ -288,11 +355,13 @@ function OrganizationsTable({
   q,
   selectedId,
   onOpen,
+  emptyMessage,
 }: {
   query: ReturnType<typeof useOrganizations>;
   q: string;
   selectedId: string | null;
   onOpen: (id: string) => void;
+  emptyMessage: string;
 }) {
   const rows = useMemo(() => query.data?.pages.flatMap((page) => page.items) ?? [], [query.data]);
   const columns = useMemo<Column<Organization>[]>(
@@ -313,11 +382,7 @@ function OrganizationsTable({
       query={query}
       what="organizations"
       count={rows.length}
-      emptyMessage={
-        q
-          ? `No organizations match "${q}". Check the spelling or search by domain.`
-          : 'No organizations yet. Add organizations through the API or the CLI, or load the seeded demo data.'
-      }
+      emptyMessage={q ? `No organizations match "${q}". Check the spelling or search by domain.` : emptyMessage}
     >
       <VirtualTable
         label="Organizations"
@@ -337,18 +402,22 @@ function TableStates({
   what,
   count,
   emptyMessage,
+  actionLabel,
+  onAction,
   children,
 }: {
   query: { isPending: boolean; isError: boolean; error: unknown; refetch: () => unknown };
   what: string;
   count: number;
   emptyMessage: string;
+  actionLabel?: string;
+  onAction?: () => void;
   children: ReactNode;
 }) {
   if (query.isPending) return <Loading what={what} />;
   if (query.isError && count === 0) {
     return <ErrorState what={what} error={query.error} onRetry={() => void query.refetch()} />;
   }
-  if (count === 0) return <EmptyState message={emptyMessage} />;
+  if (count === 0) return <EmptyState message={emptyMessage} actionLabel={actionLabel} onAction={onAction} />;
   return <>{children}</>;
 }

@@ -170,7 +170,7 @@ describe('migration 003', () => {
       expect(batchesBefore).toEqual([...batches].sort((a, b) => a.id.localeCompare(b.id)));
       expect(rowsBefore).toEqual([...rows].sort((a, b) => a.id.localeCompare(b.id)));
 
-      expect(applyMigrations(db)).toEqual(['003_csv_qualify.sql', '004_lookup_indexes.sql', '005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql']);
+      expect(applyMigrations(db)).toEqual(['003_csv_qualify.sql', '004_lookup_indexes.sql', '005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql', '019_lifecycle.sql', '020_lifecycle_indexes.sql']);
 
       expect(snapshot(db, 'import_batch')).toEqual(batchesBefore);
       expect(snapshot(db, 'import_row')).toEqual(rowsBefore);
@@ -269,7 +269,7 @@ describe('migration 005', () => {
       insert(db, 'connector', connector);
       expect(() => insert(db, 'connector', { ...connector, id: 'con_x', kind: 'anthropic' })).toThrow(/CHECK/);
 
-      expect(applyMigrations(db)).toEqual(['005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql']);
+      expect(applyMigrations(db)).toEqual(['005_anthropic.sql', '006_model_call_markers.sql', '007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql', '019_lifecycle.sql', '020_lifecycle_indexes.sql']);
       expect(snapshot(db, 'connector')).toEqual([connector]);
       expect(db.pragma('foreign_key_check')).toEqual([]);
       expect(tableSql(db, 'connector')).not.toContain('_new');
@@ -349,7 +349,7 @@ describe('migration 007', () => {
       expect(() => insert(db, 'activity', { ...activity, id: 'act_x', kind: 'email_out' })).toThrow(/CHECK/);
       expect(() => insert(db, 'connector', { ...connector, id: 'con_x', kind: 'agentmail' })).toThrow(/CHECK/);
 
-      expect(applyMigrations(db)).toEqual(['007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql']);
+      expect(applyMigrations(db)).toEqual(['007_agentmail.sql', '008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql', '019_lifecycle.sql', '020_lifecycle_indexes.sql']);
       expect(snapshot(db, 'connector')).toEqual([connector]);
       expect(snapshot(db, 'activity')).toEqual([activity]);
       expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -471,7 +471,7 @@ describe('migration 008', () => {
       insert(db, 'send_intent', intent('snd_3a', 'act_3', 'cancelled', '2026-01-03T00:00:00.000Z', { error: 'Outcome unknown. Acknowledged by a person. Whether this email was sent was never confirmed.' }));
       insert(db, 'send_intent', intent('snd_3b', 'act_3', 'cancelled', '2026-01-04T00:00:00.000Z', { error: 'The send was rejected.' }));
 
-      expect(applyMigrations(db)).toEqual(['008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql']);
+      expect(applyMigrations(db)).toEqual(['008_send_intent_guards.sql', '009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql', '019_lifecycle.sql', '020_lifecycle_indexes.sql']);
       expect(db.pragma('foreign_key_check')).toEqual([]);
 
       const statuses = Object.fromEntries((db.prepare('SELECT id, status FROM send_intent').all() as { id: string; status: string }[]).map((row) => [row.id, row.status]));
@@ -549,7 +549,7 @@ describe('migration 009', () => {
       for (const call of calls) insert(db, 'model_call', call);
       expect(() => insert(db, 'connector', { ...connectors[1], id: 'con_x', kind: 'ollama' })).toThrow(/CHECK/);
 
-      expect(applyMigrations(db)).toEqual(['009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql']);
+      expect(applyMigrations(db)).toEqual(['009_model_providers.sql', '010_lead_capture.sql', '011_workspace_version.sql', '012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql', '019_lifecycle.sql', '020_lifecycle_indexes.sql']);
       expect(snapshot(db, 'connector')).toEqual(connectors);
       expect(snapshot(db, 'model_call')).toEqual(calls.map((call) => ({ ...call, provider: 'anthropic' })));
       expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -658,7 +658,7 @@ describe('migration 012', () => {
       ).run();
       const connectorsBefore = db.prepare('SELECT * FROM connector').all();
 
-      expect(applyMigrations(db)).toEqual(['012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql']);
+      expect(applyMigrations(db)).toEqual(['012_mail_providers.sql', '013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql', '019_lifecycle.sql', '020_lifecycle_indexes.sql']);
       expect(db.prepare('SELECT * FROM connector').all()).toEqual(connectorsBefore);
       expect(db.prepare('SELECT provider, message_id_header FROM send_intent').get()).toEqual({ provider: 'agentmail', message_id_header: null });
       expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -710,7 +710,7 @@ describe('migration 013', () => {
       const connectorsBefore = db.prepare('SELECT * FROM connector').all();
       const intentBefore = db.prepare('SELECT * FROM send_intent').get() as Record<string, unknown>;
 
-      expect(applyMigrations(db)).toEqual(['013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql']);
+      expect(applyMigrations(db)).toEqual(['013_microsoft.sql', '014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql', '019_lifecycle.sql', '020_lifecycle_indexes.sql']);
       expect(db.prepare('SELECT * FROM connector').all()).toEqual(connectorsBefore);
       expect(db.prepare('SELECT * FROM send_intent').get()).toEqual({ ...intentBefore, provider_draft_id: null, send_attempted_at: null, no_resend: 0, followup_rule_id: null, followup_step: null, followup_reply_to: null });
       expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -779,11 +779,11 @@ describe('migration 014', () => {
       const intentBefore = db.prepare('SELECT * FROM send_intent').get();
       const indexesBefore = db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%' ORDER BY name").all();
 
-      expect(applyMigrations(db)).toEqual(['014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql']);
+      expect(applyMigrations(db)).toEqual(['014_imap.sql', '015_people_order_index.sql', '016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql', '019_lifecycle.sql', '020_lifecycle_indexes.sql']);
       expect(db.prepare('SELECT * FROM connector').all()).toEqual(connectorsBefore);
       // 016 adds three empty follow-up columns to the send intent.
       expect(db.prepare('SELECT * FROM send_intent').get()).toEqual({ ...(intentBefore as Record<string, unknown>), followup_rule_id: null, followup_step: null, followup_reply_to: null });
-      // 015, 016, and 017 add one index each, and 018 adds three, on top of what 014 preserves.
+      // 015, 016, and 017 add one index each, 018 adds three, 019 one, and 020 two, on top of what 014 preserves.
       const indexesAfter = [
         ...indexesBefore,
         { name: 'idx_person_order_name', sql: 'CREATE INDEX idx_person_order_name ON person (workspace_id, lower(last_name), lower(first_name), id)' },
@@ -792,6 +792,9 @@ describe('migration 014', () => {
         { name: 'idx_person_linkedin_url', sql: 'CREATE INDEX idx_person_linkedin_url ON person (workspace_id, linkedin_url)' },
         { name: 'idx_person_x_url', sql: 'CREATE INDEX idx_person_x_url ON person (workspace_id, x_url)' },
         { name: 'idx_organization_linkedin_url', sql: 'CREATE INDEX idx_organization_linkedin_url ON organization (workspace_id, linkedin_url)' },
+        { name: 'idx_person_lifecycle', sql: 'CREATE INDEX idx_person_lifecycle ON person (workspace_id, lifecycle)' },
+        { name: 'idx_person_organization_lifecycle', sql: 'CREATE INDEX idx_person_organization_lifecycle ON person (organization_id, lifecycle)' },
+        { name: 'idx_opportunity_person', sql: 'CREATE INDEX idx_opportunity_person ON opportunity (workspace_id, person_id)' },
       ].sort((left, right) => ((left as { name: string }).name < (right as { name: string }).name ? -1 : 1));
       expect(db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%' ORDER BY name").all()).toEqual(indexesAfter);
       expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -844,7 +847,7 @@ describe('migration 016', () => {
       ).run();
       const intentBefore = db.prepare('SELECT * FROM send_intent').get() as Record<string, unknown>;
 
-      expect(applyMigrations(db)).toEqual(['016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql']);
+      expect(applyMigrations(db)).toEqual(['016_followup_rules.sql', '017_search_index.sql', '018_profile_urls.sql', '019_lifecycle.sql', '020_lifecycle_indexes.sql']);
       expect(db.prepare('SELECT * FROM send_intent').get()).toEqual({ ...intentBefore, followup_rule_id: null, followup_step: null, followup_reply_to: null });
       expect(db.pragma('foreign_key_check')).toEqual([]);
       expect((db.pragma('index_info(idx_followup_rule_status)') as { name: string }[]).map((column) => column.name)).toEqual(['workspace_id', 'status', 'next_due_at']);

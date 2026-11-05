@@ -49,9 +49,13 @@ export interface Page<T> {
   nextCursor: string | null;
 }
 
+// A person is a lead until someone replies or a deal moves, then a relationship.
+export type Lifecycle = 'lead' | 'relationship';
+
 export interface Person {
   id: string;
   version: number;
+  lifecycle?: Lifecycle;
   firstName: string;
   lastName: string;
   name?: string;

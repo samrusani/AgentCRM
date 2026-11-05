@@ -3,6 +3,7 @@ import { DEFAULT_LEAD_ACTORS } from '../lib/leads';
 import { DAILY_SEND_CAP, parseExcluded } from '../lib/mail';
 import type {
   Activity,
+  Lifecycle,
   AgentMessageInput,
   AgentReply,
   AgentUsage,
@@ -786,9 +787,18 @@ function normalizeCsvPreview(raw: unknown): CsvPreview {
   };
 }
 
+export interface NewPersonInput {
+  firstName: string;
+  lastName?: string;
+  email?: string;
+  title?: string;
+  lifecycle?: Lifecycle;
+}
+
 export interface ListParams {
   q?: string;
   sort?: string;
+  lifecycle?: Lifecycle;
   cursor?: string | null;
   limit?: number;
 }
@@ -820,6 +830,7 @@ export const api = {
     get: async (id: string) => normalizePersonDetail(await request<unknown>('GET', `/people/${id}`)),
     patch: (id: string, expectedVersion: number, fields: Record<string, unknown>) =>
       request<Person>('PATCH', `/people/${id}`, { body: { expectedVersion, fields } }),
+    create: (input: NewPersonInput) => request<Person>('POST', '/people', { body: input }),
     // The person's newest enrich run and the suggestions still waiting for a decision.
     enrichment: async (id: string): Promise<EnrichmentState> => {
       const data = objectOrEmpty(await request<unknown>('GET', `/people/${id}/enrichment`));

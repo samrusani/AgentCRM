@@ -16,6 +16,7 @@ import { MailProviderError, type MailProviderKind, type NormalizedInbound } from
 import { getActiveMailConnector, mailAccountOf } from '../queries/mailProvider.js';
 import { type ActionContext, mutate, type Tx } from './context.js';
 import { imapPasswordRejectedSentence } from './imapConnector.js';
+import { promotePersonIn } from './lifecycle.js';
 import { createMailAdapter, type MailAdapter, markMailProviderRejected } from './mailProviders.js';
 import {
   blockWaitingIntentsIn,
@@ -108,6 +109,12 @@ function personByEmail(tx: Tx, email: string): { id: string; name: string } | nu
     .prepare("SELECT id, TRIM(first_name || ' ' || last_name) AS name FROM person WHERE workspace_id = ? AND lower(email) = ?")
     .get(tx.workspaceId, email) as { id: string; name: string } | undefined;
   return row ?? null;
+}
+
+// True when the address case folds to the person's own email. Promotion on inbound mail requires this: a mailer daemon,
+// a third party, or a colleague on the thread never promotes the thread's person.
+function isOwnAddress(tx: Tx, personId: string, address: string): boolean {
+  return Boolean(tx.db.prepare('SELECT 1 FROM person WHERE workspace_id = ? AND id = ? AND lower(email) = ?').get(tx.workspaceId, personId, address.toLowerCase()));
 }
 
 function personById(tx: Tx, id: string): { id: string; name: string } | null {
@@ -338,6 +345,7 @@ function storeMessages(
       if (result.changes === 0) continue;
       stored += 1;
       changed = true;
+      if (direction === 'in' && person && senderAddress && isOwnAddress(tx, person.id, senderAddress)) promotePersonIn(tx, person.id, 'replied');
       if (bounced) applyBounceIn(tx, bounced, message.providerMessageId);
       else if (link) handleInbound(tx, message, fromEmail, link, target.address);
       if (message.unreadable) {

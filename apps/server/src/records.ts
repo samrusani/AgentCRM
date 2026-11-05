@@ -1,5 +1,6 @@
 export type Row = Record<string, unknown>;
 
+export type Lifecycle = 'lead' | 'relationship';
 export type OpportunityStatus = 'open' | 'passed' | 'lost' | 'nurture';
 export type RunStatus =
   | 'queued'
@@ -71,6 +72,7 @@ export function toPerson(row: Row) {
     location: text(row.location),
     linkedinUrl: text(row.linkedin_url),
     xUrl: text(row.x_url),
+    lifecycle: (row.lifecycle === 'relationship' ? 'relationship' : 'lead') as Lifecycle,
     tags: parseJson<string[]>(row.tags, []),
     nextActionAt: text(row.next_action_at),
     createdAt: String(row.created_at),

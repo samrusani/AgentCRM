@@ -24,6 +24,7 @@ import {
   taskFields,
   updateEntityIn,
 } from './entities.js';
+import { promoteForStageIn, promotePersonIn } from './lifecycle.js';
 import { entityTypeSchema, idSchema, isoTimestamp } from './schemas.js';
 import type { Opportunity, Organization, Person, Row, Task } from '../records.js';
 
@@ -37,6 +38,7 @@ const createPersonSchema = z
     location: personFields.location.optional().default(null),
     linkedinUrl: personFields.linkedinUrl.optional().default(null),
     xUrl: personFields.xUrl.optional().default(null),
+    lifecycle: personFields.lifecycle.optional().default('lead'),
     tags: personFields.tags.optional().default([]),
     nextActionAt: personFields.nextActionAt.optional().default(null),
   })
@@ -48,9 +50,10 @@ export function createPerson(ctx: ActionContext, input: unknown) {
 }
 
 // Internal callers pass profile URLs already canonicalized (see profileUrls.ts) and may leave them out.
-type PersonInput = Omit<z.output<typeof createPersonSchema>, 'linkedinUrl' | 'xUrl'> & {
+type PersonInput = Omit<z.output<typeof createPersonSchema>, 'linkedinUrl' | 'xUrl' | 'lifecycle'> & {
   linkedinUrl?: string | null;
   xUrl?: string | null;
+  lifecycle?: 'lead' | 'relationship';
 };
 
 export function createPersonIn(tx: Tx, data: PersonInput) {
@@ -60,8 +63,8 @@ export function createPersonIn(tx: Tx, data: PersonInput) {
   const now = tx.now();
   tx.db
     .prepare(
-      `INSERT INTO person (id, created_at, workspace_id, version, first_name, last_name, email, title, organization_id, location, linkedin_url, x_url, tags, next_action_at, updated_at)
-       VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO person (id, created_at, workspace_id, version, first_name, last_name, email, title, organization_id, location, linkedin_url, x_url, lifecycle, tags, next_action_at, updated_at)
+       VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -75,6 +78,7 @@ export function createPersonIn(tx: Tx, data: PersonInput) {
       data.location,
       data.linkedinUrl ?? null,
       data.xUrl ?? null,
+      data.lifecycle ?? 'lead',
       JSON.stringify(data.tags),
       data.nextActionAt,
       now,
@@ -202,6 +206,7 @@ export function createOpportunity(ctx: ActionContext, input: unknown) {
       .run(tx.newId('evt'), now, id, stageId, now, tx.actor);
     tx.audit('opportunity.create', 'opportunity', id, { name: data.name });
     emitRecord(tx, 'opportunity', id);
+    if (data.personId) promoteForStageIn(tx, data.personId, stageId!);
     return requireOpportunity(tx.db, tx.workspaceId, id);
   });
 }
@@ -247,6 +252,7 @@ export function moveOpportunityStage(ctx: ActionContext, id: string, input: unkn
       );
     tx.audit('opportunity.stage', 'opportunity', id, { fromStageId: current.stageId, toStageId: target.id });
     emitRecord(tx, 'opportunity', id);
+    if (current.personId && target.seq > 1) promotePersonIn(tx, current.personId, 'opportunity');
     return requireOpportunity(tx.db, tx.workspaceId, id);
   });
 }

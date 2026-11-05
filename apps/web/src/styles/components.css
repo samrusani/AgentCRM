@@ -466,6 +466,15 @@ textarea.input {
 }
 
 /* Record fields */
+.lifecycle {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.lifecycle .link--button:disabled {
+  color: var(--ink-muted);
+}
 .fields {
   display: flex;
   flex-direction: column;

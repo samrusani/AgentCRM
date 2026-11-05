@@ -373,6 +373,9 @@
   font-weight: 600;
   line-height: 28px;
 }
+.page-header__description {
+  margin-top: 2px;
+}
 .page-header__actions {
   display: flex;
   align-items: center;

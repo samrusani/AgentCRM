@@ -9,6 +9,7 @@ import { CommandPalette } from './CommandPalette';
 
 const DESTINATIONS: Array<{ to: string; label: string; icon: IconName }> = [
   { to: '/today', label: 'Today', icon: 'today' },
+  { to: '/leads', label: 'Leads', icon: 'leads' },
   { to: '/relationships', label: 'Relationships', icon: 'people' },
   { to: '/pipeline', label: 'Pipeline', icon: 'pipeline' },
   { to: '/research', label: 'Research', icon: 'research' },

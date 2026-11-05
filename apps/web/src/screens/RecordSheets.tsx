@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import type { Claim } from '../api/types';
+import { isVersionConflict } from '../api/client';
+import type { Claim, Lifecycle } from '../api/types';
 import { useOrganization, usePatchOrganization, usePatchPerson, usePerson } from '../api/hooks';
-import { ErrorState, Loading, Sheet } from '../components/common';
+import { ErrorState, Loading, Sheet, errorMessage } from '../components/common';
 import { TaskRow } from '../components/TaskRow';
 import {
   EditableValue,
@@ -67,6 +68,40 @@ function claimField(field: string): string {
   return field.replace(/_([a-z0-9])/g, (_match, char: string) => char.toUpperCase());
 }
 
+function LifecycleValue({
+  lifecycle,
+  busy,
+  problem,
+  onChange,
+}: {
+  lifecycle: Lifecycle;
+  busy: boolean;
+  problem: string | null;
+  onChange: (next: Lifecycle) => void;
+}) {
+  const isLead = lifecycle === 'lead';
+  return (
+    <>
+      <span className="lifecycle">
+        <span>{isLead ? 'Lead' : 'Relationship'}</span>
+        <button
+          type="button"
+          className="link link--button"
+          disabled={busy}
+          onClick={() => onChange(isLead ? 'relationship' : 'lead')}
+        >
+          {isLead ? 'Mark as relationship' : 'Move to leads'}
+        </button>
+      </span>
+      {problem ? (
+        <p className="muted" role="alert">
+          {problem}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
 export function PersonSheet({
   id,
   onClose,
@@ -92,6 +127,24 @@ export function PersonSheet({
       expectedVersion: versionOverride ?? person.version,
       fields: { [field]: value === '' ? null : value },
     });
+    await query.refetch();
+  };
+
+  const [lifecycleProblem, setLifecycleProblem] = useState<string | null>(null);
+
+  // Either direction is allowed whatever caused the current value. A conflict refetches so the next try carries the current version.
+  const changeLifecycle = async (next: Lifecycle) => {
+    if (!person) return;
+    setLifecycleProblem(null);
+    try {
+      await patch.mutateAsync({ id, expectedVersion: person.version, fields: { lifecycle: next } });
+    } catch (error) {
+      setLifecycleProblem(
+        isVersionConflict(error)
+          ? 'This person changed since you opened the record. The latest version is loaded. Try again.'
+          : `${errorMessage(error)} The lifecycle was not changed.`,
+      );
+    }
     await query.refetch();
   };
 
@@ -145,6 +198,14 @@ export function PersonSheet({
                   save={saveField('xUrl')}
                   onReload={() => query.refetch()}
                   renderValue={(value) => <ProfileLink value={value} />}
+                />
+              </FieldRow>
+              <FieldRow label="Lifecycle" openClaim={openClaim} onToggleClaim={toggleClaim}>
+                <LifecycleValue
+                  lifecycle={person.lifecycle ?? 'lead'}
+                  busy={patch.isPending}
+                  problem={lifecycleProblem}
+                  onChange={changeLifecycle}
                 />
               </FieldRow>
               <FieldRow label="Next action" openClaim={openClaim} onToggleClaim={toggleClaim}>

@@ -24,7 +24,16 @@ export interface ListOrganizationsInput {
   q?: string | undefined;
   cursor?: string | undefined;
   limit?: number | undefined;
+  // Absent means all organizations. The value is derived, see relationshipOrganization.
+  lifecycle?: 'lead' | 'relationship' | undefined;
 }
+
+// An organization is a relationship when at least one of its people is one, or when any opportunity names it. A lead
+// is the complement. Both are EXISTS subqueries on the row, so the keyset cursor stays valid.
+const relationshipOrganization = `(
+  EXISTS (SELECT 1 FROM person pe WHERE pe.organization_id = o.id AND pe.lifecycle = 'relationship' AND pe.workspace_id = o.workspace_id)
+  OR EXISTS (SELECT 1 FROM opportunity op WHERE op.workspace_id = o.workspace_id AND op.organization_id = o.id)
+)`;
 
 export function listOrganizations(
   db: Db,
@@ -38,6 +47,7 @@ export function listOrganizations(
     where.push(`(lower(o.name) LIKE ? ESCAPE '\\' OR lower(o.domain) LIKE ? ESCAPE '\\')`);
     params.push(pattern, pattern);
   }
+  if (input.lifecycle) where.push(input.lifecycle === 'relationship' ? relationshipOrganization : `NOT ${relationshipOrganization}`);
   return paginate({
     db,
     workspaceId,
