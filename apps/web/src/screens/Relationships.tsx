@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useOrganizations, usePeople, type PeopleSort } from '../api/hooks';
 import type { Lifecycle, Organization, Person } from '../api/types';
 import { EmptyState, ErrorState, Loading, PageHeader } from '../components/common';
-import { Icon } from '../components/Icons';
+import { Icon, type IconName } from '../components/Icons';
 import { FitCell } from '../components/qualification';
 import { VirtualTable, type Column } from '../components/VirtualTable';
 import { describeDue, humanize, personName } from '../lib/format';
@@ -333,6 +333,7 @@ function PeopleTable({
       query={query}
       what="people"
       count={rows.length}
+      icon={q ? 'search' : 'people'}
       emptyMessage={q ? `No people match "${q}". Check the spelling or search by email or organization.` : emptyMessage}
       actionLabel={!q && onImport ? 'Import CSV' : undefined}
       onAction={!q ? onImport : undefined}
@@ -382,6 +383,7 @@ function OrganizationsTable({
       query={query}
       what="organizations"
       count={rows.length}
+      icon={q ? 'search' : 'building'}
       emptyMessage={q ? `No organizations match "${q}". Check the spelling or search by domain.` : emptyMessage}
     >
       <VirtualTable
@@ -402,6 +404,7 @@ function TableStates({
   what,
   count,
   emptyMessage,
+  icon,
   actionLabel,
   onAction,
   children,
@@ -410,6 +413,7 @@ function TableStates({
   what: string;
   count: number;
   emptyMessage: string;
+  icon: IconName;
   actionLabel?: string;
   onAction?: () => void;
   children: ReactNode;
@@ -418,6 +422,6 @@ function TableStates({
   if (query.isError && count === 0) {
     return <ErrorState what={what} error={query.error} onRetry={() => void query.refetch()} />;
   }
-  if (count === 0) return <EmptyState message={emptyMessage} actionLabel={actionLabel} onAction={onAction} />;
+  if (count === 0) return <EmptyState framed icon={icon} message={emptyMessage} actionLabel={actionLabel} onAction={onAction} />;
   return <>{children}</>;
 }

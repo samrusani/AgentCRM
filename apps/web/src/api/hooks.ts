@@ -907,20 +907,22 @@ export function useMailReadiness(): MailReadiness {
   return { state: 'ready', inboxEmail: provider.address, provider: provider.kind };
 }
 
-export function useSendIntents() {
+export function useSendIntents(enabled = true) {
   const connection = useEventConnection();
   return useQuery({
     queryKey: ['send-intents', 'all'],
     queryFn: () => api.mail.intents(),
+    enabled,
     refetchInterval: connection === 'open' ? false : 5000,
   });
 }
 
-export function useMailSummary() {
+export function useMailSummary(enabled = true) {
   const connection = useEventConnection();
   return useQuery({
     queryKey: ['mail-summary'],
     queryFn: api.mail.summary,
+    enabled,
     refetchInterval: connection === 'open' ? false : 5000,
   });
 }

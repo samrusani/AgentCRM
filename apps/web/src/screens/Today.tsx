@@ -1,5 +1,6 @@
+import type { ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useStartRun, useToday } from '../api/hooks';
+import { useFollowupRules, useMailSummary, useSendIntents, useStartRun, useToday } from '../api/hooks';
 import { ApprovalCard, useSettledApprovals } from '../components/approvals';
 import { EmptyState, ErrorState, Loading, PageHeader, errorMessage } from '../components/common';
 import { Followups } from '../components/followups';
@@ -9,7 +10,29 @@ import { StagedBanner, type StagedNotice } from '../components/prepareSend';
 import { Replies } from '../components/replies';
 import { TaskRow } from '../components/TaskRow';
 import { describeDue } from '../lib/format';
+import { isFollowupActive } from '../lib/mail';
 import { useUI } from '../lib/ui';
+
+// One Today section as a card. The title stays a real heading; the count sits beside it, not inside it, so the
+// heading's name is unchanged. A zero count shows nothing.
+function TodayCard({ id, title, count, children }: { id: string; title: string; count: number; children: ReactNode }) {
+  return (
+    <section className="today-card" aria-labelledby={id}>
+      <header className="today-card__header">
+        <h2 className="today-card__title" id={id}>
+          {title}
+        </h2>
+        {count > 0 ? (
+          <>
+            <span className="today-card__count num">{count.toLocaleString()}</span>
+            <span className="sr-only"> items</span>
+          </>
+        ) : null}
+      </header>
+      <div className="today-card__body">{children}</div>
+    </section>
+  );
+}
 
 export function Today() {
   const today = useToday();
@@ -19,6 +42,15 @@ export function Today() {
   const startRun = useStartRun();
   const { pushToast } = useUI();
   const settled = useSettledApprovals();
+  // The Outbox, Follow-ups, and Replies sections load their own data. These are the same cached queries, read here only
+  // for the count beside each title.
+  // They wait for the Today request, so a failed Today screen does not fire three more requests.
+  const intents = useSendIntents(today.isSuccess);
+  const followupRules = useFollowupRules({}, today.isSuccess);
+  const mailSummary = useMailSummary(today.isSuccess);
+  const outboxCount = (intents.data ?? []).filter((intent) => intent.status !== 'cancelled').length;
+  const followupCount = (followupRules.data ?? []).filter(isFollowupActive).length;
+  const replyCount = mailSummary.data?.repliesNeedingAttention ?? 0;
 
   const startDemo = () =>
     startRun.mutate(undefined, {
@@ -56,113 +88,97 @@ export function Today() {
         </span>
       </PageHeader>
 
-      <div className="today">
-        <section className="section" aria-labelledby="today-approvals">
-          <h2 className="section__title" id="today-approvals">
-            Approvals waiting
-          </h2>
-          {staged ? (
-            <StagedBanner
-              notice={staged}
-              onDismiss={() => navigate(location.pathname, { replace: true, state: null })}
-            />
-          ) : null}
-          {approvals.length === 0 ? (
-            <EmptyState
-              message="Nothing needs a decision. Agent proposals that need your approval will appear here."
-              actionLabel="Start demo research"
-              onAction={startDemo}
-              busy={startRun.isPending}
-            />
-          ) : (
-            <div className="stack">
-              {approvals.map(({ approval, settled: entry }) => (
-                <ApprovalCard key={approval.id} approval={approval} settled={entry} onDecided={settled.record} />
-              ))}
-            </div>
-          )}
-        </section>
+      <div className="today-area">
+        <div className="today">
+          <TodayCard id="today-approvals" title="Approvals waiting" count={approvalsPending.length}>
+            {staged ? (
+              <StagedBanner
+                notice={staged}
+                onDismiss={() => navigate(location.pathname, { replace: true, state: null })}
+              />
+            ) : null}
+            {approvals.length === 0 ? (
+              <EmptyState
+                message="Nothing needs a decision. Agent proposals that need your approval will appear here."
+                actionLabel="Start demo research"
+                onAction={startDemo}
+                busy={startRun.isPending}
+              />
+            ) : (
+              <div className="stack">
+                {approvals.map(({ approval, settled: entry }) => (
+                  <ApprovalCard key={approval.id} approval={approval} settled={entry} onDecided={settled.record} />
+                ))}
+              </div>
+            )}
+          </TodayCard>
 
-        <section className="section" aria-labelledby="today-outbox">
-          <h2 className="section__title" id="today-outbox">
-            Outbox
-          </h2>
-          <Outbox />
-        </section>
+          <TodayCard id="today-outbox" title="Outbox" count={outboxCount}>
+            <Outbox />
+          </TodayCard>
 
-        <section className="section" aria-labelledby="today-followups">
-          <h2 className="section__title" id="today-followups">
-            Follow-ups
-          </h2>
-          <Followups />
-        </section>
+          <TodayCard id="today-followups" title="Follow-ups" count={followupCount}>
+            <Followups />
+          </TodayCard>
 
-        <section className="section" aria-labelledby="today-replies">
-          <h2 className="section__title" id="today-replies">
-            Replies
-          </h2>
-          <Replies tasks={tasksDue} />
-        </section>
+          <TodayCard id="today-replies" title="Replies" count={replyCount}>
+            <Replies tasks={tasksDue} />
+          </TodayCard>
 
-        <section className="section" aria-labelledby="today-tasks">
-          <h2 className="section__title" id="today-tasks">
-            Tasks due and overdue
-          </h2>
-          {tasksDue.length === 0 ? (
-            <EmptyState
-              message="No tasks are due. Tasks dated today or earlier will appear here."
-              actionLabel="Open relationships"
-              onAction={() => navigate('/relationships')}
-            />
-          ) : (
-            <>
-              {overdue.length > 0 ? (
-                <>
-                  <h3 className="subsection__title">
-                    Overdue <span className="num muted">{overdue.length}</span>
-                  </h3>
-                  <ul className="task-list">
-                    {overdue.map((task) => (
-                      <TaskRow key={task.id} task={task} />
-                    ))}
-                  </ul>
-                </>
-              ) : null}
-              {dueToday.length > 0 ? (
-                <>
-                  <h3 className="subsection__title">
-                    Due today <span className="num muted">{dueToday.length}</span>
-                  </h3>
-                  <ul className="task-list">
-                    {dueToday.map((task) => (
-                      <TaskRow key={task.id} task={task} />
-                    ))}
-                  </ul>
-                </>
-              ) : null}
-            </>
-          )}
-        </section>
+          <TodayCard id="today-tasks" title="Tasks due and overdue" count={tasksDue.length}>
+            {tasksDue.length === 0 ? (
+              <EmptyState
+                message="No tasks are due. Tasks dated today or earlier will appear here."
+                actionLabel="Open relationships"
+                onAction={() => navigate('/relationships')}
+              />
+            ) : (
+              <>
+                {overdue.length > 0 ? (
+                  <>
+                    <h3 className="subsection__title">
+                      Overdue <span className="num muted">{overdue.length}</span>
+                    </h3>
+                    <ul className="task-list">
+                      {overdue.map((task) => (
+                        <TaskRow key={task.id} task={task} />
+                      ))}
+                    </ul>
+                  </>
+                ) : null}
+                {dueToday.length > 0 ? (
+                  <>
+                    <h3 className="subsection__title">
+                      Due today <span className="num muted">{dueToday.length}</span>
+                    </h3>
+                    <ul className="task-list">
+                      {dueToday.map((task) => (
+                        <TaskRow key={task.id} task={task} />
+                      ))}
+                    </ul>
+                  </>
+                ) : null}
+              </>
+            )}
+          </TodayCard>
 
-        <section className="section" aria-labelledby="today-runs">
-          <h2 className="section__title" id="today-runs">
-            Active runs
-          </h2>
-          {runsActive.length === 0 ? (
-            <EmptyState
-              message="No runs are active. Research runs show a live ledger here while they work."
-              actionLabel="Start demo research"
-              onAction={startDemo}
-              busy={startRun.isPending}
-            />
-          ) : (
-            <div className="stack">
-              {runsActive.map((run) => (
-                <LiveRun key={run.id} run={run} />
-              ))}
-            </div>
-          )}
-        </section>
+          <TodayCard id="today-runs" title="Active runs" count={runsActive.length}>
+            {runsActive.length === 0 ? (
+              <EmptyState
+                message="No runs are active. Research runs show a live ledger here while they work."
+                actionLabel="Start demo research"
+                onAction={startDemo}
+                busy={startRun.isPending}
+              />
+            ) : (
+              <div className="stack">
+                {runsActive.map((run) => (
+                  <LiveRun key={run.id} run={run} />
+                ))}
+              </div>
+            )}
+          </TodayCard>
+        </div>
       </div>
     </div>
   );

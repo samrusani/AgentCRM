@@ -11,7 +11,7 @@ import {
 import { createPortal } from 'react-dom';
 import { ApiError } from '../api/client';
 import { runStatusLabel } from '../lib/format';
-import { Icon } from './Icons';
+import { Icon, type IconName } from './Icons';
 
 export type ChipTone = 'neutral' | 'accent' | 'warn' | 'danger';
 
@@ -96,19 +96,31 @@ export function ErrorState({
   );
 }
 
+// With an icon the state centres itself in its container. With `framed` it is also its own card, for screens where the
+// empty state replaces a table. Without an icon it stays a plain left aligned sentence, for sections inside a card.
 export function EmptyState({
   message,
   actionLabel,
   onAction,
   busy,
+  icon,
+  framed,
 }: {
   message: string;
   actionLabel?: string;
   onAction?: () => void;
   busy?: boolean;
+  icon?: IconName;
+  framed?: boolean;
 }) {
+  const className = ['state', icon ? 'state--centered' : '', framed ? 'state--framed' : ''].filter(Boolean).join(' ');
   return (
-    <div className="state">
+    <div className={className}>
+      {icon ? (
+        <span className="state__icon">
+          <Icon name={icon} />
+        </span>
+      ) : null}
       <p className="state__body">{message}</p>
       {actionLabel && onAction ? (
         <button type="button" className="btn" onClick={onAction} disabled={busy}>

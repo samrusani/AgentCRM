@@ -144,6 +144,7 @@ export function Research() {
         <div className="run-detail">
           {items.length === 0 && !selectedId ? (
             <EmptyState
+              icon="research"
               message="No research runs yet. A demo run is simulated: it shows the ledger, counts, and approval flow with synthetic data. An Apify import is real: it runs an actor on your own Apify account. A LinkedIn post capture is real too: it runs actors on your Apify account and stages the people who engaged for your review. A CSV import starts from the People tab in Relationships. Draft outreach needs a connected model provider: it writes drafts for you to review and sends nothing."
             />
           ) : selectedId ? (

@@ -15,6 +15,7 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
+  background: var(--bg);
 }
 .content:focus-visible {
   outline-offset: -2px;
@@ -30,7 +31,7 @@
   display: flex;
   flex-direction: column;
   padding: 8px 0;
-  background: var(--surface);
+  background: var(--shell);
   border-right: 1px solid var(--line);
 }
 .nav[data-collapsed='true'] {
@@ -41,7 +42,7 @@
   align-items: center;
   justify-content: space-between;
   height: 32px;
-  padding: 0 12px 0 16px;
+  padding: 0 14px 0 18px;
   margin-bottom: 8px;
 }
 .nav[data-collapsed='true'] .nav__top {
@@ -55,37 +56,36 @@
 .nav__links {
   display: flex;
   flex-direction: column;
+  gap: 2px;
   flex: 1;
+  padding: 0 8px;
+}
+.nav__bottom {
+  padding: 0 8px;
 }
 .nav__link {
-  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 32px;
-  padding: 0 16px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: var(--radius);
   color: var(--ink);
   text-decoration: none;
-  font-weight: 500;
+  font-weight: 400;
+  transition: background-color var(--duration) var(--ease);
 }
 .nav[data-collapsed='true'] .nav__link {
   justify-content: center;
   padding: 0;
 }
 .nav__link:hover {
-  background: var(--accent-tint);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 .nav__link.is-active {
+  background: var(--accent-tint);
   color: var(--accent);
-}
-.nav__link.is-active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 4px;
-  bottom: 4px;
-  width: 2px;
-  background: var(--accent);
+  font-weight: 500;
 }
 .nav__link:focus-visible {
   outline-offset: -2px;
@@ -99,7 +99,7 @@
   align-items: center;
   gap: 12px;
   padding: 0 12px 0 20px;
-  background: var(--surface);
+  background: var(--shell);
   border-bottom: 1px solid var(--line);
 }
 .header__workspace {
@@ -120,9 +120,10 @@
   padding: 0 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--bg);
+  background: var(--surface);
   color: var(--ink-muted);
   text-align: left;
+  transition: border-color var(--duration) var(--ease);
 }
 .header__search:hover {
   border-color: var(--ink-muted);
@@ -145,7 +146,7 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--surface);
+  background: var(--shell);
   border-left: 1px solid var(--line);
 }
 .panel--overlay {
@@ -157,15 +158,15 @@
   height: auto;
   width: min(420px, 100vw);
   max-width: 100vw;
-  background: var(--surface);
+  background: var(--shell);
   border-left: 1px solid var(--line);
-  box-shadow: -8px 0 24px color-mix(in srgb, var(--ink) 14%, transparent);
+  box-shadow: var(--shadow-lg);
 }
 .scrim {
   position: fixed;
   inset: 0;
   z-index: 45;
-  background: color-mix(in srgb, var(--ink) 28%, transparent);
+  background: color-mix(in srgb, black 32%, transparent);
 }
 @media (prefers-reduced-motion: no-preference) {
   .panel--overlay {
@@ -277,8 +278,10 @@
 }
 .chat__item--user .chat__text {
   padding: 6px 10px;
-  border-radius: var(--radius-lg);
-  background: var(--accent-tint);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
 }
 .chat__item--system .chat__text {
   color: var(--ink-muted);
@@ -300,8 +303,9 @@
   padding: 16px 0;
   border: 0;
   border-left: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--shell);
   color: var(--ink-muted);
+  transition: background-color var(--duration) var(--ease);
 }
 .panel-tab:hover {
   background: var(--accent-tint);
@@ -378,8 +382,11 @@
 }
 .page-header__actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  min-width: 0;
 }
 .search-box {
   width: 280px;
@@ -394,6 +401,9 @@
 .screen--table .table-region > .state,
 .screen--table .table-region > .loading {
   margin: 0 20px;
+}
+.screen--table .table-region > .state--framed {
+  margin: 0 20px 20px;
 }
 .section {
   margin-bottom: 24px;
@@ -417,8 +427,45 @@
 .today {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 0;
-  max-width: 720px;
+  align-items: start;
+  gap: 16px;
+}
+/* The Today area, not the viewport, decides the column count, so an open agent panel counts against it. The
+   container type lives on this wrapper only, never on .content, whose absolute and fixed descendants must keep
+   their own containing blocks. */
+.today-area {
+  container-type: inline-size;
+  container-name: today-area;
+}
+@container today-area (min-width: 760px) {
+  .today {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.today-card {
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+.today-card__header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 12px 16px 8px;
+}
+.today-card__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.today-card__count {
+  font-size: 12px;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+.today-card__body {
+  padding: 0 16px 14px;
 }
 .settings-layout {
   display: flex;
@@ -435,33 +482,26 @@
   width: 168px;
 }
 .settings-nav__link {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 5px 10px 5px 14px;
+  min-height: 30px;
+  padding: 5px 10px;
   border-radius: var(--radius);
   font-size: 13px;
   color: var(--ink-muted);
   text-decoration: none;
+  transition: background-color var(--duration) var(--ease);
 }
 .settings-nav__link:hover {
   color: var(--ink);
-  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 .settings-nav__link.is-active {
+  background: var(--accent-tint);
   color: var(--accent);
-  font-weight: 600;
-}
-.settings-nav__link.is-active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 5px;
-  bottom: 5px;
-  width: 2px;
-  background: var(--accent);
+  font-weight: 500;
 }
 .settings-nav__link:focus-visible {
   outline-offset: -2px;
@@ -504,8 +544,9 @@
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius);
   background: var(--surface);
+  box-shadow: var(--shadow-sm);
   margin-bottom: 8px;
 }
 .segmented__option {
@@ -522,9 +563,10 @@
   align-items: center;
   height: 26px;
   padding: 0 12px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   font-size: 13px;
   color: var(--ink-muted);
+  transition: background-color var(--duration) var(--ease);
 }
 .segmented__option input:checked + span {
   background: var(--accent-tint);
@@ -543,6 +585,16 @@
   min-width: 0;
   max-width: 560px;
 }
+/* Each settings section is one card. */
+.settings .section {
+  margin-bottom: 16px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
 
 /* Pipeline board */
 .board {
@@ -552,20 +604,23 @@
   padding: 4px 20px 16px;
   overflow: auto;
 }
+/* Each stage is a well: the shell surface, no border, header inside. */
 .board__column {
   flex: none;
   display: flex;
   flex-direction: column;
-  width: 264px;
+  width: 272px;
   min-height: 0;
+  padding: 0 8px 8px;
+  border-radius: var(--radius-lg);
+  background: var(--shell);
 }
 .board__header {
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: baseline;
   column-gap: 8px;
-  padding: 0 2px 8px;
-  border-bottom: 1px solid var(--line);
+  padding: 10px 4px 8px;
 }
 .board__stage {
   font-size: 13px;
@@ -583,24 +638,31 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 8px 0;
+  padding: 0;
   overflow: auto;
   min-height: 0;
 }
 .board__empty {
-  padding: 4px 2px;
+  padding: 4px;
 }
 .card {
   box-sizing: border-box;
   max-width: 100%;
   padding: 8px 8px 8px 10px;
   border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius);
   background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  transition:
+    border-color var(--duration) var(--ease),
+    box-shadow var(--duration) var(--ease);
+}
+.card:hover {
+  border-color: color-mix(in srgb, var(--ink-muted) 55%, var(--line));
 }
 .card.is-selected {
   background: var(--accent-tint);
-  box-shadow: inset 2px 0 0 var(--accent);
+  border-color: var(--accent);
 }
 .card__top {
   display: flex;
@@ -637,19 +699,39 @@
   min-height: 0;
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
-  border-top: 1px solid var(--line);
+  gap: 16px;
+  padding: 4px 20px 20px;
 }
 .run-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  margin: 0 -3px;
+  padding: 0 3px 4px;
   overflow: auto;
-  border-right: 1px solid var(--line);
+}
+.lead-capture,
+.run-list,
+.run-detail {
   background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+.run-list {
+  flex: none;
+  overflow: hidden;
+}
+.run-list:has(ul:empty) {
+  display: none;
 }
 .lead-capture {
+  flex: none;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px 16px 12px 20px;
-  border-bottom: 1px solid var(--line);
+  padding: 12px 16px;
 }
 .lead-capture__title {
   font-size: 13px;
@@ -687,11 +769,14 @@
   flex-direction: column;
   gap: 4px;
   width: 100%;
-  padding: 10px 16px 10px 20px;
+  padding: 10px 16px;
   border: 0;
   border-bottom: 1px solid var(--line);
   background: transparent;
   text-align: left;
+}
+.run-list li:last-child .run-list__item {
+  border-bottom: 0;
 }
 .run-list__item:hover {
   background: color-mix(in srgb, var(--accent-tint) 55%, var(--surface));
@@ -717,6 +802,7 @@
   font-size: 12px;
 }
 .run-detail {
+  min-height: 0;
   overflow: auto;
   padding: 16px 20px 32px;
 }
@@ -768,23 +854,27 @@
   }
   .nav[data-overlay='true'] {
     width: var(--nav-width);
-    box-shadow: 8px 0 24px color-mix(in srgb, var(--ink) 14%, transparent);
+    box-shadow: var(--shadow-lg);
   }
   .toasts {
     left: 12px;
   }
+  /* Research stacks its three cards in one column and the page itself scrolls: no nested scrollbars. */
+  .screen--split {
+    position: static;
+    min-height: 100%;
+  }
   .research {
+    flex: none;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-    overflow: auto;
+    grid-template-rows: none;
+    overflow: visible;
   }
   .run-side {
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
+    overflow: visible;
   }
-  .run-list {
-    max-height: 220px;
-    overflow: auto;
+  .run-detail {
+    overflow: visible;
   }
   .header__search-label {
     display: none;
@@ -803,16 +893,8 @@
     border-bottom: 1px solid var(--line);
   }
   .settings-nav__link {
+    flex: none;
     white-space: nowrap;
-    padding: 5px 10px;
-  }
-  .settings-nav__link.is-active::before {
-    top: auto;
-    left: 10px;
-    right: 10px;
-    bottom: -9px;
-    width: auto;
-    height: 2px;
   }
 }
 

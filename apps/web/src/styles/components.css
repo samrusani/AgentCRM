@@ -8,12 +8,21 @@
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
+  box-shadow: var(--shadow-sm);
   color: var(--ink);
   font-weight: 500;
   white-space: nowrap;
+  transition:
+    background-color var(--duration) var(--ease),
+    border-color var(--duration) var(--ease),
+    box-shadow var(--duration) var(--ease);
 }
 .btn:hover:not(:disabled) {
-  background: var(--accent-tint);
+  border-color: color-mix(in srgb, var(--ink-muted) 75%, var(--line));
+}
+.btn:active:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 4%, var(--surface));
+  box-shadow: none;
 }
 .btn:disabled {
   color: var(--ink-muted);
@@ -25,8 +34,12 @@
   color: var(--on-accent);
 }
 .btn--primary:hover:not(:disabled) {
-  background: var(--accent);
-  filter: brightness(1.08);
+  background: color-mix(in srgb, var(--accent) 88%, black);
+  border-color: color-mix(in srgb, var(--accent) 88%, black);
+}
+.btn--primary:active:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, black);
+  border-color: color-mix(in srgb, var(--accent) 88%, black);
 }
 .btn--primary:disabled {
   color: var(--on-accent);
@@ -35,7 +48,16 @@
 .btn--quiet {
   border-color: transparent;
   background: transparent;
+  box-shadow: none;
   color: var(--ink-muted);
+}
+.btn--quiet:hover:not(:disabled) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink);
+}
+.btn--quiet:active:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
 }
 .btn--danger-text {
   color: var(--danger);
@@ -46,8 +68,12 @@
   color: var(--surface);
 }
 .btn--danger:hover:not(:disabled) {
-  background: var(--danger);
-  filter: brightness(1.08);
+  background: color-mix(in srgb, var(--danger) 88%, black);
+  border-color: color-mix(in srgb, var(--danger) 88%, black);
+}
+.btn--danger:active:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 88%, black);
+  border-color: color-mix(in srgb, var(--danger) 88%, black);
 }
 
 .icon-btn {
@@ -61,6 +87,9 @@
   background: transparent;
   color: var(--ink-muted);
   flex: none;
+  transition:
+    background-color var(--duration) var(--ease),
+    color var(--duration) var(--ease);
 }
 .icon-btn:hover,
 .icon-btn[aria-expanded='true'],
@@ -106,6 +135,17 @@
   border-radius: var(--radius);
   background: var(--surface);
   color: var(--ink);
+  transition: border-color var(--duration) var(--ease);
+}
+input.input,
+select.input {
+  height: 28px;
+}
+.input:hover:not(:disabled):not(:focus-visible) {
+  border-color: color-mix(in srgb, var(--ink-muted) 60%, var(--line));
+}
+.input:focus-visible {
+  border-color: var(--accent);
 }
 .input::placeholder {
   color: var(--ink-muted);
@@ -176,6 +216,26 @@ textarea.input {
   padding: 16px 0;
   max-width: 560px;
 }
+.state__icon {
+  display: inline-flex;
+  color: var(--ink-muted);
+}
+/* Empty states with an icon centre in their container. The framed variant is itself the card. */
+.state--centered {
+  align-items: center;
+  max-width: none;
+  padding: 40px 24px;
+  text-align: center;
+}
+.state--centered .state__body {
+  max-width: 56ch;
+}
+.state--framed {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
 .state__title {
   font-weight: 600;
 }
@@ -229,6 +289,7 @@ textarea.input {
   background: var(--surface-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
 }
 .toast--error {
   border-color: var(--danger);
@@ -245,6 +306,7 @@ textarea.input {
   background: var(--surface-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
 }
 .menu__item {
   display: flex;
@@ -257,6 +319,7 @@ textarea.input {
   border-radius: var(--radius-sm);
   background: transparent;
   text-align: left;
+  transition: background-color var(--duration) var(--ease);
 }
 .menu__item:hover:not(:disabled),
 .menu__item:focus-visible {
@@ -273,11 +336,15 @@ textarea.input {
 }
 
 /* Table */
+/* A table is one card. The overflow clip with the radius keeps row hover inside the corners. */
 .vtable {
-  height: 100%;
+  position: absolute;
+  inset: 0 20px 20px;
   overflow: auto;
   background: var(--surface);
-  border-top: 1px solid var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 .vtable__grid {
   min-width: 720px;
@@ -366,6 +433,12 @@ textarea.input {
   max-width: min(100%, 100vw);
   background: var(--surface);
   border-left: 1px solid var(--line);
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+  /* The second shadow is the scrim: a translucent black spread that the content area clips. It paints, it does not
+     take pointer events, so the table behind a sheet stays usable. No blur. */
+  box-shadow:
+    var(--shadow-lg),
+    0 0 0 100vmax color-mix(in srgb, black 32%, transparent);
   animation: sheet-in var(--duration) var(--ease);
 }
 @keyframes sheet-in {
@@ -896,7 +969,7 @@ textarea.input {
   justify-content: center;
   align-items: flex-start;
   padding-top: 12vh;
-  background: color-mix(in srgb, var(--ink) 28%, transparent);
+  background: color-mix(in srgb, black 32%, transparent);
   animation: fade-in var(--duration) var(--ease);
 }
 @keyframes fade-in {
@@ -915,6 +988,7 @@ textarea.input {
   background: var(--surface-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
   overflow: hidden;
 }
 .palette__field {
@@ -1001,6 +1075,7 @@ textarea.input {
   background: transparent;
   font-weight: 500;
   color: var(--ink-muted);
+  transition: background-color var(--duration) var(--ease);
 }
 .segmented button + button {
   border-left: 1px solid var(--line);
@@ -1015,8 +1090,8 @@ textarea.input {
 .tabs {
   display: flex;
   gap: 4px;
+  margin: 0 20px 12px;
   border-bottom: 1px solid var(--line);
-  padding: 0 20px;
 }
 .tabs__tab {
   position: relative;
@@ -1054,7 +1129,7 @@ textarea.input {
   transition: border-color var(--duration) var(--ease);
 }
 .connector:hover {
-  border-color: color-mix(in srgb, var(--ink) 16%, var(--line));
+  border-color: color-mix(in srgb, var(--ink-muted) 55%, var(--line));
 }
 .connector__name {
   font-size: 14px;

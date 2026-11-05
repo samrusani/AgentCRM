@@ -153,7 +153,7 @@ export function Pipeline() {
     return (
       <div className="screen">
         <PageHeader title="Pipeline" />
-        <EmptyState message="No pipeline exists yet. Seed the demo workspace to create one with stages." />
+        <EmptyState framed icon="pipeline" message="No pipeline exists yet. Seed the demo workspace to create one with stages." />
       </div>
     );
   }
@@ -224,7 +224,11 @@ export function Pipeline() {
             onStatus={(opportunity) => open(opportunity.id)}
           />
         ) : opportunities.length === 0 ? (
-          <EmptyState message="No opportunities match this status. Choose another status or move a record into the pipeline." />
+          <EmptyState
+            framed
+            icon="deal"
+            message="No opportunities match this status. Choose another status or move a record into the pipeline."
+          />
         ) : (
           <OpportunityTable
             stages={activePipeline.stages}
