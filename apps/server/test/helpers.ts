@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createContext, ensureWorkspace, type ActionContext } from '../src/actions/index.js';
 import { openDatabase, type Db } from '../src/db.js';
+import { seededIdFactory } from '../src/ids.js';
 import { EventBus } from '../src/events.js';
 import { processAllJobs, processJobs } from '../src/jobs/worker.js';
 import { getRun } from '../src/queries/runs.js';
@@ -17,8 +18,17 @@ export interface TestEnvironment {
   cleanup: () => void;
 }
 
+export interface TestEnvironmentOptions {
+  // Bootstrap the workspace, pipeline, and stages with this id seed instead of random ids. Two
+  // environments built with the same seed hold identical configuration rows, which the seed
+  // determinism test compares byte for byte now that seeding preserves the workspace. Everything
+  // else keeps random ids: module level caches keyed by workspace id must not leak between
+  // environments in one file.
+  idSeed?: number;
+}
+
 // One temporary database per test file. The clock only moves when a test advances it.
-export function createTestEnvironment(): TestEnvironment {
+export function createTestEnvironment(options: TestEnvironmentOptions = {}): TestEnvironment {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'agentcrm-test-'));
   const databasePath = path.join(directory, 'test.db');
   const db = openDatabase(databasePath);
@@ -28,7 +38,10 @@ export function createTestEnvironment(): TestEnvironment {
     clock += 1;
     return new Date(clock).toISOString();
   };
-  const workspace = ensureWorkspace(db, { now });
+  const workspace = ensureWorkspace(
+    db,
+    options.idSeed === undefined ? { now } : { now, newId: seededIdFactory(options.idSeed) },
+  );
   const ctx = createContext(db, workspace.id, { bus, now });
   return {
     db,

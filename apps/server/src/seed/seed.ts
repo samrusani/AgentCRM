@@ -10,7 +10,7 @@ import {
   decideApproval,
   ensureWorkspace,
   moveOpportunityStage,
-  resetAllData,
+  resetRecordData,
   saveDefaultQualificationConfig,
   startRun,
   updateOpportunity,
@@ -67,8 +67,10 @@ export function seedDatabase(db: Db, options: SeedOptions = {}) {
   if (!options.reset && populated.people + populated.organizations + populated.opportunities + populated.tasksOpen + populated.runs > 0) {
     throw new AppError('conflict', 'The database already has records. Run "crm seed --reset" to replace them.');
   }
-  // An empty database is rebuilt too, so the seeded ids are the same on every machine.
-  resetAllData(db);
+  // Records only: the workspace row with its settings (capture token included), the pipeline and
+  // stages, and connectors survive a seed. An empty database is cleared too, so the seeded record
+  // ids are the same on every machine; the workspace keeps whatever id it was created with.
+  resetRecordData(db);
 
   const random = mulberry32(7);
   const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)]!;

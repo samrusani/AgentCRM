@@ -52,34 +52,44 @@ export function ensureWorkspace(db: Db, options: BootstrapOptions = {}) {
   return findWorkspace(db)!;
 }
 
-// Used by "crm seed --reset". Deletes every row except the migration log.
+// Record tables in delete order. Configuration rows (workspace, pipeline, stage, connector) are not here.
+const recordTables = [
+  'audit_event',
+  'model_call',
+  'qualification_result',
+  'import_row',
+  'import_batch',
+  'followup_rule',
+  'send_intent',
+  'email_message',
+  'suppression',
+  'job',
+  'approval',
+  'run_step',
+  'run',
+  'field_claim',
+  'task',
+  'activity',
+  'stage_event',
+  'opportunity',
+  'person',
+  'organization',
+];
+
+// Used by "crm seed". Deletes records and leaves configuration in place: the workspace row with its
+// settings (the capture token hash included), the pipeline and stages, and connectors all survive.
+export function resetRecordData(db: Db): void {
+  db.transaction(() => {
+    // followup_rule.intent_id points at send_intent and send_intent.followup_rule_id points back, so the loop is broken
+    // first: clear the intents' references, then the rules go before the intents.
+    db.prepare('UPDATE send_intent SET followup_rule_id = NULL, followup_step = NULL, followup_reply_to = NULL').run();
+    for (const table of recordTables) db.prepare(`DELETE FROM ${table}`).run();
+  }).immediate();
+}
+
+// Deletes every row except the migration log. A full wipe, configuration included; the seed does not use it.
 export function resetAllData(db: Db): void {
-  const tables = [
-    'audit_event',
-    'model_call',
-    'qualification_result',
-    'import_row',
-    'import_batch',
-    'connector',
-    'followup_rule',
-    'send_intent',
-    'email_message',
-    'suppression',
-    'job',
-    'approval',
-    'run_step',
-    'run',
-    'field_claim',
-    'task',
-    'activity',
-    'stage_event',
-    'opportunity',
-    'stage',
-    'pipeline',
-    'person',
-    'organization',
-    'workspace',
-  ];
+  const tables = [...recordTables, 'connector', 'stage', 'pipeline', 'workspace'];
   db.transaction(() => {
     // followup_rule.intent_id points at send_intent and send_intent.followup_rule_id points back, so the loop is broken
     // first: clear the intents' references, then the rules go before the intents.

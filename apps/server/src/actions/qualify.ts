@@ -41,8 +41,11 @@ export function saveQualificationConfig(ctx: ActionContext, input: unknown): Qua
   });
 }
 
-// Writes the template defaults when no config is saved yet. Used by the seed.
+// Writes the template defaults when no config is saved yet. Used by the seed, which preserves
+// configuration, so a saved config is returned untouched instead of being overwritten.
 export function saveDefaultQualificationConfig(ctx: ActionContext): QualificationConfig {
+  const saved = readQualificationConfig(ctx.db, ctx.workspaceId);
+  if (!saved.defaulted) return saved;
   return saveQualificationConfig(ctx, currentTemplateDefaults(ctx.db, ctx.workspaceId));
 }
 

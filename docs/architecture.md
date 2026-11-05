@@ -451,6 +451,8 @@ crm mcp
 
 `crm import` with `--preview` prints the parse result and suggested mapping without staging; without it, the suggested mapping is used to stage the file and the command prints the run and batch ids. The CLI runs as the local user, so `crm approvals decide` is a human decision, unlike MCP tools, which can never decide approvals.
 
+`crm seed` fills the database with synthetic demo data and replaces records only, never configuration. The workspace row with all of its settings (the capture token hash, the chosen model and mail providers, a saved qualification config), the pipeline and its stages, and every connector row survive a seed; `--reset`, required once records exist, preserves them the same way. Record ids are deterministic for a given seed date, so two fresh databases seeded with the same date hold identical records; the workspace row itself keeps whatever id it was created with. Seeding writes the template's default qualification config only when none is saved.
+
 Exit codes: 0 success, 1 expected failure with a printed reason, 2 usage error.
 
 ## Conventions
