@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useCreateNote } from '../api/hooks';
 import { ApiError, isVersionConflict } from '../api/client';
 import type { Activity, Claim, Opportunity } from '../api/types';
+import { profileHref, profilePath } from '../lib/links';
 import { formatAge, formatAgo, formatAmount, formatDateTime, humanize } from '../lib/format';
 import { Chip, ChipButton, errorMessage } from './common';
 import { Icon } from './Icons';
@@ -28,6 +29,16 @@ function safeUrl(value: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+export function ProfileLink({ value }: { value: string }) {
+  const href = profileHref(value);
+  if (!href) return <span>{value}</span>;
+  return (
+    <a className="link" href={href} target="_blank" rel="noreferrer noopener" title={value}>
+      {profilePath(value)}
+    </a>
+  );
 }
 
 export function ClaimDetail({ claim }: { claim: Claim }) {
@@ -133,12 +144,15 @@ export function EditableValue({
   value,
   save,
   onReload,
+  renderValue,
 }: {
   label: string;
   field: string;
   value: string | null;
   save: (value: string, versionOverride?: number) => Promise<void>;
   onReload: () => Promise<unknown>;
+  // Shows a saved value in another form, such as a link. The edit control stays the same.
+  renderValue?: (value: string) => ReactNode;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
@@ -220,7 +234,7 @@ export function EditableValue({
         />
       ) : (
         <>
-          <span className={value ? '' : 'muted'}>{value || 'Not set'}</span>
+          {value && renderValue ? renderValue(value) : <span className={value ? '' : 'muted'}>{value || 'Not set'}</span>}
           <button type="button" className="icon-btn icon-btn--small" onClick={begin} aria-label={`Edit ${label.toLowerCase()}`}>
             <Icon name="pencil" />
           </button>
@@ -340,10 +354,18 @@ export function OpportunityList({ opportunities }: { opportunities: Opportunity[
   );
 }
 
-export function SheetSection({ title, children }: { title: string; children: ReactNode }) {
+// Header items sit beside the title on the same row. A full width item wraps below it.
+export function SheetSection({ title, children, headerItems }: { title: string; children: ReactNode; headerItems?: ReactNode }) {
   return (
     <section className="sheet-section">
-      <h3 className="sheet-section__title">{title}</h3>
+      {headerItems ? (
+        <div className="sheet-section__head">
+          <h3 className="sheet-section__title">{title}</h3>
+          {headerItems}
+        </div>
+      ) : (
+        <h3 className="sheet-section__title">{title}</h3>
+      )}
       {children}
     </section>
   );

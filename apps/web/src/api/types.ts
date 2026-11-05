@@ -60,6 +60,9 @@ export interface Person {
   organizationId: string | null;
   organizationName?: string | null;
   location: string | null;
+  // Canonical profile URLs, null when none is saved.
+  linkedinUrl?: string | null;
+  xUrl?: string | null;
   tags: string[];
   nextActionAt: string | null;
   // Present on list items and details. Null means the person was never qualified.
@@ -75,6 +78,7 @@ export interface Organization {
   domain: string | null;
   kind: 'fund' | 'company' | string;
   location: string | null;
+  linkedinUrl?: string | null;
   tags: string[];
   createdAt: string;
   updatedAt: string;
@@ -646,6 +650,36 @@ export interface CriterionResult {
 export interface QualificationResult extends QualificationSummary {
   excludedReasons: string[];
   criteria: CriterionResult[];
+}
+
+export type EnrichmentField = 'title' | 'location' | 'email';
+
+export interface EnrichmentRun {
+  id: string;
+  status: RunStatus | string;
+  startedAt: string | null;
+  // The final or failing step detail, null while the run is open.
+  detail?: string | null;
+  // How many suggestions the run produced in all, including 0. Only pending ones are listed.
+  suggestedCount?: number;
+}
+
+export interface EnrichmentSuggestion {
+  field: EnrichmentField | string;
+  value: string;
+  status: 'pending' | string;
+}
+
+export interface EnrichmentState {
+  run: EnrichmentRun | null;
+  suggestions: EnrichmentSuggestion[];
+}
+
+export interface AcceptEnrichmentInput {
+  personId: string;
+  runId: string;
+  field: string;
+  expectedVersion: number;
 }
 
 export type ServerEventName = 'run_updated' | 'approval_updated' | 'record_updated' | 'followup_updated';

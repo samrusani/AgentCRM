@@ -26,7 +26,7 @@ export function useEventConnection(): Connection {
 const MAIL_KEYS = ['send-intents', 'mail-summary', 'suppressions'];
 
 const KEYS_BY_EVENT: Record<ServerEventName, string[]> = {
-  run_updated: ['today', 'runs', 'run', 'approvals', 'import', 'connectors', 'model-provider', 'people', 'person', 'qualification'],
+  run_updated: ['today', 'runs', 'run', 'approvals', 'import', 'connectors', 'model-provider', 'people', 'person', 'qualification', 'enrichment'],
   approval_updated: ['today', 'approvals', 'runs', 'run', 'import', ...MAIL_KEYS],
   record_updated: [
     'today',
@@ -43,6 +43,7 @@ const KEYS_BY_EVENT: Record<ServerEventName, string[]> = {
     'activities',
     'search',
     'qualification',
+    'enrichment',
     // The token routes emit record_updated with entityType capture_settings, so a rotation made
     // outside this tab reaches the Settings card.
     'capture-settings',

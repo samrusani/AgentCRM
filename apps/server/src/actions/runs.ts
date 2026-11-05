@@ -3,6 +3,7 @@ import { conflict, validationError } from '../errors.js';
 import { getRunDetail, listRunSteps, requireRun } from '../queries/runs.js';
 import { dotSegmentMessage, hasDotSegment } from '../providers/apify.js';
 import { getConnector } from '../queries/connectors.js';
+import { requirePerson } from '../queries/people.js';
 import { isActiveModelReady } from '../queries/modelProvider.js';
 import { terminalRunStatuses, type RunCounts } from '../records.js';
 import { apifyKind, apifyStepTitles, defaultMaxItems, hardMaxItems, scheduleApifyRun } from './apifyScrape.js';
@@ -26,7 +27,16 @@ import {
 } from './leadCapture.js';
 import { isLinkedinPostUrl, postUrlShapesMessage } from './leadCaptureMapping.js';
 import { defaultAgentBudgetUsd, draftKind, draftScopeSchema, draftStepTitlesFor, scheduleDraftRun } from './draftOutreach.js';
+import {
+  enrichByAgentMessage,
+  enrichPersonKind,
+  enrichPersonStartScope,
+  enrichPersonStepTitles,
+  noteUnknownStartOnCancelIn,
+  scheduleEnrichPersonRun,
+} from './enrichPerson.js';
 import { closeImportBatchForRun } from './importReview.js';
+import { idSchema } from './schemas.js';
 import { cancelIntentsForRunIn } from './sendIntents.js';
 import { qualifyKind, qualifyScopeSchema, qualifyStepTitles, scheduleQualifyRun } from './qualify.js';
 
@@ -107,7 +117,22 @@ const leadCaptureRunSchema = z
   })
   .strict();
 
-const startRunSchema = z.discriminatedUnion('kind', [demoRunSchema, apifyRunSchema, qualifyRunSchema, draftRunSchema, leadCaptureRunSchema]);
+const enrichPersonRunSchema = z
+  .object({
+    kind: z.literal('enrich_person'),
+    title: z.string().trim().min(1).max(200).optional(),
+    scope: z.object({ personId: idSchema }).strict(),
+  })
+  .strict();
+
+const startRunSchema = z.discriminatedUnion('kind', [
+  demoRunSchema,
+  apifyRunSchema,
+  qualifyRunSchema,
+  draftRunSchema,
+  leadCaptureRunSchema,
+  enrichPersonRunSchema,
+]);
 
 export interface StartRunOptions {
   // Runs started by an agent (MCP or the agent endpoint) may only use allowlisted Apify actors.
@@ -181,6 +206,7 @@ function postUrlLabel(postUrl: string): string {
 export function scheduleRunJob(tx: Tx, kind: string, runId: string, runAt: string): void {
   if (kind === apifyKind) scheduleApifyRun(tx, runId, runAt);
   else if (kind === leadCaptureKind) scheduleLeadCaptureRun(tx, runId, runAt);
+  else if (kind === enrichPersonKind) scheduleEnrichPersonRun(tx, runId, runAt);
   else if (kind === draftKind) scheduleDraftRun(tx, runId, runAt);
   else if (kind === csvImportKind) scheduleCsvImportRun(tx, runId, runAt);
   else if (kind === qualifyKind) scheduleQualifyRun(tx, runId, runAt);
@@ -190,6 +216,8 @@ export function scheduleRunJob(tx: Tx, kind: string, runId: string, runAt: strin
 export function startRun(ctx: ActionContext, input: unknown, options: StartRunOptions = {}) {
   const parsed = parseInput(startRunSchema, input);
   const origin = options.origin ?? 'user';
+  // Enrichment spends the user's Apify credit on one scrape and is started from the person sheet only.
+  if (parsed.kind === 'enrich_person' && origin === 'agent') throw validationError(enrichByAgentMessage);
   const data =
     parsed.kind === 'lead_capture'
       ? { ...parsed, scope: { ...parsed.scope, sources: resolveLeadSources(ctx, parsed.scope.sources, origin) } }
@@ -280,6 +308,14 @@ export function startRun(ctx: ActionContext, input: unknown, options: StartRunOp
       const pinned = data.scope.sources.includes('post') ? requireActiveModel(ctx) : null;
       storedScope = { ...storedScope, actors: leadActors!, calls: {}, ...(pinned ? { provider: pinned.kind, model: pinned.model } : {}) };
       auditScope = { ...data.scope, actors: leadActors, origin, ...(pinned ? { provider: pinned.kind, model: pinned.model } : {}) };
+    } else if (data.kind === 'enrich_person') {
+      const enrichScope = enrichPersonStartScope(tx, data.scope.personId);
+      const person = requirePerson(tx.db, tx.workspaceId, data.scope.personId);
+      title = data.title ?? `Enrich ${person.name}`;
+      stepTitles = enrichPersonStepTitles;
+      counts = { processed: 0, found: 0, flagged: 0 };
+      storedScope = { ...enrichScope };
+      auditScope = { personId: enrichScope.personId, actorId: enrichScope.actorId, origin };
     } else if (data.kind === 'qualify') {
       title = data.title ?? (data.scope.tag ? `Qualify people tagged ${data.scope.tag}` : 'Qualify people');
       stepTitles = qualifyStepTitles;
@@ -344,6 +380,10 @@ export function controlRun(ctx: ActionContext, runId: string, input: unknown) {
         scheduleRunJob(tx, run.kind, runId, now);
       }
       // A lead capture run may have several remote calls. The job asks Apify to stop every unfinished one.
+      if (run.kind === enrichPersonKind) noteUnknownStartOnCancelIn(tx, runId, run.scope);
+      if (run.kind === enrichPersonKind && scope.apifyRunId && !scope.apifyFinished && !scope.abortRequested) {
+        scheduleRunJob(tx, run.kind, runId, now);
+      }
       if (run.kind === leadCaptureKind && hasUnfinishedCall(run.scope)) {
         scheduleRunJob(tx, run.kind, runId, now);
       }

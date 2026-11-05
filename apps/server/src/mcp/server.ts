@@ -289,7 +289,7 @@ export async function startMcpServer(): Promise<void> {
       inputSchema: { runId: z.string().min(1).max(64) },
       annotations: { readOnlyHint: true },
     },
-    async ({ runId }) => guarded(() => getRunDetail(db, workspace.id, runId)),
+    async ({ runId }) => guarded(() => getRunDetail(db, workspace.id, runId, { forAgent: true })),
   );
 
   const shutdown = (): void => {

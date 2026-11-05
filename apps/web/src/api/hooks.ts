@@ -8,6 +8,7 @@ import {
 import { ApiError, api } from './client';
 import { useEventConnection } from './events';
 import type {
+  AcceptEnrichmentInput,
   AgentMessageInput,
   ApifyConnectorInput,
   ApifyRunInput,
@@ -122,6 +123,63 @@ export function usePerson(id: string | null) {
     queryKey: ['person', id],
     queryFn: () => api.people.get(id as string),
     enabled: Boolean(id),
+  });
+}
+
+// The person's newest enrich run and its pending suggestions. Server events refetch it; a dropped
+// event stream falls back to polling while a run is open.
+export function usePersonEnrichment(id: string | null) {
+  const connection = useEventConnection();
+  return useQuery({
+    queryKey: ['enrichment', id],
+    queryFn: () => api.people.enrichment(id as string),
+    enabled: Boolean(id),
+    refetchInterval: (query) => {
+      const status = query.state.data?.run?.status;
+      return connection !== 'open' && status && isRunActive(status) ? 5000 : false;
+    },
+  });
+}
+
+export function useStartEnrichPerson() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (personId: string) => api.runs.startEnrichPerson(personId),
+    // Returning the enrichment refetch keeps the mutation pending until the next enrichment read lands,
+    // so the Enrich button stays disabled from the click until the open run shows up.
+    onSuccess: (run, personId) => {
+      queryClient.setQueryData(['run', run.id], run);
+      void queryClient.invalidateQueries({ queryKey: ['runs'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+      return queryClient.invalidateQueries({ queryKey: ['enrichment', personId] });
+    },
+  });
+}
+
+export function useAcceptEnrichment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AcceptEnrichmentInput) =>
+      api.people.acceptEnrichment(input.personId, { runId: input.runId, field: input.field, expectedVersion: input.expectedVersion }),
+    // Returning the refetches keeps the mutation pending until the person and enrichment reads land, so a
+    // fast second Accept cannot send the old expectedVersion.
+    onSettled: async (_data, _error, input) => {
+      void queryClient.invalidateQueries({ queryKey: ['people'] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['person', input.personId] }),
+        queryClient.invalidateQueries({ queryKey: ['enrichment', input.personId] }),
+      ]);
+    },
+  });
+}
+
+export function useDismissEnrichment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { personId: string; runId: string }) => api.people.dismissEnrichment(input.personId, input.runId),
+    onSettled: async (_data, _error, input) => {
+      await queryClient.invalidateQueries({ queryKey: ['enrichment', input.personId] });
+    },
   });
 }
 

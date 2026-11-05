@@ -1,4 +1,12 @@
 export { abortRemoteRunIfNeeded, advanceApifyRun, apifyActor, apifyJobKind, apifyKind } from './apifyScrape.js';
+export {
+  acceptEnrichmentSuggestion,
+  advanceEnrichPersonRun,
+  dismissEnrichment,
+  enrichPersonJobKind,
+  enrichPersonKind,
+  getEnrichment,
+} from './enrichPerson.js';
 export { advanceLeadCaptureRun, leadCaptureJobKind, leadCaptureKind } from './leadCapture.js';
 export * from './agentmailConnector.js';
 export * from './gmailConnector.js';

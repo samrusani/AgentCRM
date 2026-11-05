@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   abortRemoteRunIfNeeded,
+  acceptEnrichmentSuggestion,
   addSuppression,
   bearerToken,
   capturePerson,
@@ -33,9 +34,11 @@ import {
   disconnectGmailConnector,
   disconnectMicrosoftConnector,
   disconnectModelConnector,
+  dismissEnrichment,
   generateCaptureToken,
   getApifyActor,
   getCaptureSettings,
+  getEnrichment,
   getMailProvider,
   getModelProvider,
   liftSuppression,
@@ -198,6 +201,17 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
     return createPerson(context(), request.body);
   });
   app.patch('/api/people/:id', async (request) => updatePerson(context(), idParam(request.params), request.body));
+  app.get('/api/people/:id/enrichment', async (request) =>
+    getEnrichment({ db, workspaceId: workspaceId() }, idParam(request.params)),
+  );
+  app.post('/api/people/:id/enrichment', async (request) =>
+    acceptEnrichmentSuggestion(context(), idParam(request.params), request.body),
+  );
+  app.delete('/api/people/:id/enrichment', async (request, reply) => {
+    const { runId } = parseInput(z.object({ runId: z.string().min(1) }), request.query);
+    dismissEnrichment(context(), idParam(request.params), runId);
+    return reply.status(204).send();
+  });
 
   app.get('/api/organizations', async (request) =>
     listOrganizations(db, workspaceId(), parseInput(organizationsQuery, request.query)),

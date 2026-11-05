@@ -417,6 +417,53 @@ textarea.input {
   font-size: 14px;
   font-weight: 600;
 }
+.sheet-section__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-bottom: 8px;
+}
+.sheet-section__head .sheet-section__title {
+  margin-bottom: 0;
+}
+.sheet-section__head .sheet-section__note {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
+}
+.suggestion-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.suggestion-row {
+  display: grid;
+  grid-template-columns: 104px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+}
+.suggestion-row__field {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+.suggestion-row__problem {
+  grid-column: 1 / -1;
+}
+.suggestion-row__value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.suggestion-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
 
 /* Record fields */
 .fields {

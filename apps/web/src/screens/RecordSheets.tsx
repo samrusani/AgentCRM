@@ -13,8 +13,10 @@ import {
   claimsForField,
   ClaimDetail,
   EvidenceChips,
+  ProfileLink,
 } from '../components/record';
 import { Chip } from '../components/common';
+import { EnrichControl, EnrichmentSuggestions } from '../components/enrichment';
 import { PersonFollowupLine } from '../components/followups';
 import { QualificationSection } from '../components/qualification';
 import { describeDue, formatAgo, humanize, personName } from '../lib/format';
@@ -104,7 +106,7 @@ export function PersonSheet({
       {query.isError ? <ErrorState what="this person" error={query.error} onRetry={() => void query.refetch()} /> : null}
       {person ? (
         <>
-          <SheetSection title="Fields">
+          <SheetSection title="Fields" headerItems={<EnrichControl personId={id} linkedinUrl={person.linkedinUrl} />}>
             <dl className="fields">
               <FieldRow label="Title" claims={claimsForField(person.claims, 'title')} openClaim={openClaim} onToggleClaim={toggleClaim}>
                 <EditableValue label="Title" field="title" value={person.title} save={saveField('title')} onReload={() => query.refetch()} />
@@ -123,6 +125,26 @@ export function PersonSheet({
               </FieldRow>
               <FieldRow label="Location" claims={claimsForField(person.claims, 'location')} openClaim={openClaim} onToggleClaim={toggleClaim}>
                 <EditableValue label="Location" field="location" value={person.location} save={saveField('location')} onReload={() => query.refetch()} />
+              </FieldRow>
+              <FieldRow label="LinkedIn" claims={claimsForField(person.claims, 'linkedinUrl')} openClaim={openClaim} onToggleClaim={toggleClaim}>
+                <EditableValue
+                  label="LinkedIn"
+                  field="linkedinUrl"
+                  value={person.linkedinUrl ?? null}
+                  save={saveField('linkedinUrl')}
+                  onReload={() => query.refetch()}
+                  renderValue={(value) => <ProfileLink value={value} />}
+                />
+              </FieldRow>
+              <FieldRow label="X" claims={claimsForField(person.claims, 'xUrl')} openClaim={openClaim} onToggleClaim={toggleClaim}>
+                <EditableValue
+                  label="X"
+                  field="xUrl"
+                  value={person.xUrl ?? null}
+                  save={saveField('xUrl')}
+                  onReload={() => query.refetch()}
+                  renderValue={(value) => <ProfileLink value={value} />}
+                />
               </FieldRow>
               <FieldRow label="Next action" openClaim={openClaim} onToggleClaim={toggleClaim}>
                 <span className={due?.overdue ? 'is-overdue' : due ? '' : 'muted'}>{due ? due.text : 'Not set'}</span>
@@ -144,11 +166,13 @@ export function PersonSheet({
             ) : null}
           </SheetSection>
 
+          <EnrichmentSuggestions personId={id} version={person.version} />
+
           <QualificationSection result={person.qualification} personUpdatedAt={person.updatedAt} />
 
           <OtherEvidence
             claims={person.claims}
-            shownFields={['title', 'organizationId', 'email', 'location']}
+            shownFields={['title', 'organizationId', 'email', 'location', 'linkedinUrl', 'xUrl']}
             openClaim={openClaim}
             onToggle={toggleClaim}
           />
@@ -229,6 +253,16 @@ export function OrganizationSheet({
               <FieldRow label="Location" claims={claimsForField(organization.claims, 'location')} openClaim={openClaim} onToggleClaim={toggleClaim}>
                 <EditableValue label="Location" field="location" value={organization.location} save={saveField('location')} onReload={() => query.refetch()} />
               </FieldRow>
+              <FieldRow label="LinkedIn" claims={claimsForField(organization.claims, 'linkedinUrl')} openClaim={openClaim} onToggleClaim={toggleClaim}>
+                <EditableValue
+                  label="LinkedIn"
+                  field="linkedinUrl"
+                  value={organization.linkedinUrl ?? null}
+                  save={saveField('linkedinUrl')}
+                  onReload={() => query.refetch()}
+                  renderValue={(value) => <ProfileLink value={value} />}
+                />
+              </FieldRow>
               <FieldRow label="Tags" openClaim={openClaim} onToggleClaim={toggleClaim}>
                 {organization.tags.length > 0 ? (
                   <span className="tag-row">
@@ -245,7 +279,7 @@ export function OrganizationSheet({
 
           <OtherEvidence
             claims={organization.claims}
-            shownFields={['domain', 'location']}
+            shownFields={['domain', 'location', 'linkedinUrl']}
             openClaim={openClaim}
             onToggle={toggleClaim}
           />

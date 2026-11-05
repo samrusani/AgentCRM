@@ -23,6 +23,7 @@ import type {
   CriterionField,
   CsvImportInput,
   CsvPreview,
+  EnrichmentState,
   DraftOutreachInput,
   Health,
   LeadCaptureInput,
@@ -812,6 +813,16 @@ export const api = {
     get: async (id: string) => normalizePersonDetail(await request<unknown>('GET', `/people/${id}`)),
     patch: (id: string, expectedVersion: number, fields: Record<string, unknown>) =>
       request<Person>('PATCH', `/people/${id}`, { body: { expectedVersion, fields } }),
+    // The person's newest enrich run and the suggestions still waiting for a decision.
+    enrichment: async (id: string): Promise<EnrichmentState> => {
+      const data = objectOrEmpty(await request<unknown>('GET', `/people/${id}/enrichment`));
+      const run = data.run && typeof data.run === 'object' ? (data.run as EnrichmentState['run']) : null;
+      return { run, suggestions: Array.isArray(data.suggestions) ? (data.suggestions as EnrichmentState['suggestions']) : [] };
+    },
+    acceptEnrichment: (id: string, input: { runId: string; field: string; expectedVersion: number }) =>
+      request<unknown>('POST', `/people/${id}/enrichment`, { body: input }),
+    dismissEnrichment: (id: string, runId: string) =>
+      request<unknown>('DELETE', `/people/${id}/enrichment`, { query: { runId } }),
   },
 
   organizations: {
@@ -892,6 +903,8 @@ export const api = {
       const { title, ...scope } = input;
       return normalizeRun(await request<Run>('POST', '/runs', { body: { kind: 'draft_outreach', title, scope } }));
     },
+    startEnrichPerson: async (personId: string) =>
+      normalizeRun(await request<Run>('POST', '/runs', { body: { kind: 'enrich_person', scope: { personId } } })),
     startQualify: async (scope: { tag?: string } = {}) =>
       normalizeRun(await request<Run>('POST', '/runs', { body: { kind: 'qualify', scope } })),
     get: async (id: string) => normalizeRun(await request<Run>('GET', `/runs/${id}`)),

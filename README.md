@@ -95,7 +95,8 @@ Every row below is backed by tests: 1,637 across the server (1,174), the web app
 
 | Area | Status |
 | --- | --- |
-| Relationships: people and organizations with search and detail views | Working, synthetic data |
+| Relationships: people and organizations with search and detail views, LinkedIn and X profiles as first class fields | Working, synthetic data |
+| Field enrichment: one click on a person with a LinkedIn profile runs one profile scrape and suggests values for empty fields, each accepted or dismissed by you | Working, verified against a stubbed Apify API; bring your own Apify account |
 | Pipeline: opportunities in board and table views with stage history | Working |
 | Approvals: review, approve, reject, audit trail | Working |
 | Evidence: field claims with source and verification status | Working, synthetic sources |

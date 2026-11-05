@@ -525,7 +525,7 @@ describe('lead capture run', () => {
   });
 
   it('excludes known people before the enrichment call is made', async () => {
-    const known = createPerson(env.ctx, { firstName: 'Ben', lastName: 'Marsh' });
+    const known = createPerson(env.ctx, { firstName: 'Ben', lastName: 'Marsh', linkedinUrl: 'https://LinkedIn.com/in/ben-marsh' });
     createFieldClaim(env.ctx, {
       entityType: 'person',
       entityId: known.id,
@@ -823,7 +823,7 @@ describe('lead capture repeat captures', () => {
     const waiting = detailOf(run.id);
     expect(waiting.counts).toMatchObject({ staged: 6, duplicates: 0 });
     // Created after staging, with no email, so only the profile can reveal it. The URL differs in host case and query.
-    const late = createPerson(env.ctx, { firstName: 'Cara', lastName: 'Voss' });
+    const late = createPerson(env.ctx, { firstName: 'Cara', lastName: 'Voss', linkedinUrl: 'https://LinkedIn.com/in/cara-voss/?utm_source=x' });
     createFieldClaim(env.ctx, {
       entityType: 'person',
       entityId: late.id,
@@ -1279,6 +1279,45 @@ describe('lead capture post source with a model provider', () => {
     }
   });
 
+  it('carries a verified company link onto the organization row and writes the column and claim on accept', async () => {
+    const link = 'https://www.linkedin.com/company/alderwick-family-office/?trk=post';
+    const quote = `Alderwick Family Office (${link}) has quietly funded a dozen climate companies.`;
+    stub.state.actorItems[postActorId] = [
+      { ...postItem, post: { ...postItem.post, text: postText.replace('Alderwick Family Office has quietly funded a dozen climate companies.', quote) } },
+    ];
+    anthropic.state.fallback = () =>
+      jsonReply({
+        entries: [
+          { kind: 'organization', orgKind: 'fund', name: 'Alderwick Family Office', linkedinUrl: link, quote },
+          // A person link on an organization entry is not a company page, so it is not carried.
+          {
+            kind: 'organization',
+            name: 'Tamsin Lane Ventures',
+            linkedinUrl: 'https://www.linkedin.com/in/ben-marsh',
+            quote: 'Imogen Pryce at Tamsin Lane Ventures backs founders before there is a deck.',
+          },
+        ],
+      });
+    const { status, detail } = await capture({ sources: ['post'], enrich: false });
+    expect(status).toBe('waiting_approval');
+    const rows = stagedRows(detail.scope.batchId).filter((row) => row.mapped.kind === 'organization');
+    expect(rows.map((row) => [row.mapped.company, row.mapped.linkedinUrl])).toEqual([
+      ['Alderwick Family Office', link],
+      ['Tamsin Lane Ventures', null],
+    ]);
+
+    decideApproval(env.ctx, detail.approvals[0]!.id, { decision: 'approve' });
+    const alderwick = env.db.prepare("SELECT * FROM organization WHERE name = 'Alderwick Family Office'").get() as Record<string, any>;
+    expect(alderwick.linkedin_url).toBe('https://www.linkedin.com/company/alderwick-family-office');
+    expect(
+      env.db.prepare("SELECT value, source_type, source_url, extraction_method FROM field_claim WHERE entity_id = ? AND field = 'linkedinUrl'").all(alderwick.id),
+    ).toEqual([
+      { value: 'https://www.linkedin.com/company/alderwick-family-office', source_type: 'apify', source_url: postUrl.split('?')[0], extraction_method: modelMethod },
+    ]);
+    const tamsin = env.db.prepare("SELECT linkedin_url FROM organization WHERE name = 'Tamsin Lane Ventures'").get() as Record<string, any>;
+    expect(tamsin.linkedin_url).toBeNull();
+  });
+
   it('reads the post, extracts named people, and stages them with the author, reactors, and commenters', async () => {
     const { run, status, detail } = await capture({});
     expect(status).toBe('waiting_approval');
@@ -1709,7 +1748,7 @@ describe('lead capture post source with a model provider', () => {
 
   it('fails the run when the post is the only source and its read fails', async () => {
     stub.state.actorStartStatus[postActorId] = 400;
-    const { status, detail } = await capture({ sources: ['post'], enrich: false });
+    const { run, status, detail } = await capture({ sources: ['post'], enrich: false });
     expect(status).toBe('failed');
     expect(detail.steps[1]!.status).toBe('failed');
     expect(anthropic.state.messageCalls).toBe(0);
@@ -1837,7 +1876,7 @@ describe('lead capture post source with a model provider', () => {
   it('finishes partial with nothing to review when the post names nobody and has no engagement', async () => {
     anthropic.state.fallback = () => jsonReply({ entries: [] });
     stub.state.actorItems[postActorId] = [{ post: { text: 'No names in this one.' } }];
-    const { status, detail } = await capture({ sources: ['post'], enrich: false });
+    const { run, status, detail } = await capture({ sources: ['post'], enrich: false });
     expect(status).toBe('partial');
     expect(detail.steps[4]!.detail).toContain('The model found nobody named in the post text.');
     expect(detail.steps[5]!.detail).toContain('No people to stage');
@@ -1901,7 +1940,7 @@ describe('lead capture post source with a model provider', () => {
 
     it('fails the run when the post is the only source and its dataset cannot be read', async () => {
       stub.state.datasetStatus[postActorId] = 401;
-      const { status, detail } = await capture({ sources: ['post'], enrich: false });
+      const { run, status, detail } = await capture({ sources: ['post'], enrich: false });
       expect(status).toBe('failed');
       expect(detail.steps[4]!.status).toBe('failed');
       expect(detail.steps[4]!.detail).toContain('The post text could not be read from Apify: Apify rejected the saved API token.');

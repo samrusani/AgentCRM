@@ -1,22 +1,12 @@
+import { canonicalCompanyLinkedinUrl, linkedinHost, normalizeProfileUrl, safeDecode } from './profileUrls.js';
 import { clean, hostnameOf, type Item, mapItem, type MappedRow, normalizeName, splitName } from './apifyMapping.js';
+
+export { normalizeProfileUrl };
 
 export const postUrlShapesMessage =
   'The link must start with http:// or https:// and be a linkedin.com post link. Accepted shapes: https://www.linkedin.com/posts/name-topic-activity-1234567890123456789-AbCd (ugcPost and share slugs work too) and https://www.linkedin.com/feed/update/urn:li:activity:1234567890123456789 (urn:li:ugcPost and urn:li:share work too). At most 500 characters';
 
 const maxPostUrlLength = 500;
-
-function linkedinHost(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  return host === 'linkedin.com' || host.endsWith('.linkedin.com');
-}
-
-function safeDecode(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
 
 // Accepts the post shapes the engagement actors understand. The URL itself is passed on as given.
 export function isLinkedinPostUrl(value: unknown): boolean {
@@ -34,24 +24,6 @@ export function isLinkedinPostUrl(value: unknown): boolean {
   const path = safeDecode(url.pathname);
   if (/^\/posts\/[^/]+-(?:activity|ugcPost|share)-\d+(?:-[A-Za-z0-9_-]*)?\/?$/.test(path)) return true;
   return /^\/feed\/update\/urn:li:(?:activity|ugcPost|share):\d+\/?$/.test(path);
-}
-
-// "/in/<id>" without host, query, or trailing slash. The host is case insensitive; the id keeps its case
-// because some profile ids are case sensitive. Null for anything that is not a profile link.
-export function normalizeProfileUrl(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (trimmed === '') return null;
-  let url: URL;
-  try {
-    url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
-  } catch {
-    return null;
-  }
-  if (!linkedinHost(url.hostname)) return null;
-  const match = /^\/in\/([^/]+)\/?/.exec(safeDecode(url.pathname));
-  if (!match || !match[1]) return null;
-  return `/in/${match[1]}`;
 }
 
 function isItem(value: unknown): value is Item {
@@ -220,6 +192,9 @@ export function mapExtractedEntry(entry: ExtractedEntry): MappedRow {
       orgKind: entry.orgKind === 'fund' ? 'fund' : 'company',
       company: clean(entry.name, 200),
       location: clean(entry.location, 200),
+      // The verification kept this link because it occurs in the post text. Only a company page rides along; a
+      // person link on an organization entry would never be a valid company URL.
+      linkedinUrl: canonicalCompanyLinkedinUrl(entry.linkedinUrl) ? linkedinOnly(entry.linkedinUrl) : null,
     };
   }
   const name = clean(entry.name, 200);

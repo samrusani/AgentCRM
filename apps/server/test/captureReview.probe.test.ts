@@ -267,12 +267,13 @@ describe('canonicalization and dedupe', () => {
     expect(d.body!.person.id).toBe(c.body!.person.id);
   });
 
-  // Documented limit in capture.ts: real LinkedIn ids never contain an encoded slash.
-  it('CONFIRMS: an encoded slash collapses a different id onto the prefix and is reported as existing', async () => {
+  // The dedupe key is the canonical URL string in the column, so an id with an encoded slash is its own person.
+  it('an encoded slash does not collapse a different id onto the prefix', async () => {
     const base = await capture({ source: 'linkedin', url: 'https://www.linkedin.com/in/alias-base', name: 'Alias Base' });
     const alias = await capture({ source: 'linkedin', url: 'https://www.linkedin.com/in/alias-base%2Fsomething-else', name: 'Someone Else' });
-    expect(alias.status).toBe(200);
-    expect(alias.body!.person.id).toBe(base.body!.person.id);
+    expect(base.status).toBe(201);
+    expect(alias.status).toBe(201);
+    expect(alias.body!.person.id).not.toBe(base.body!.person.id);
   });
 
   it('CONFIRMS: linkedin ids differing only in case create two people (contract keeps case, LinkedIn does not care)', async () => {
@@ -326,8 +327,11 @@ describe('canonicalization and dedupe', () => {
     expect(b.status).toBe(200);
     expect(b.body!.person.id).toBe(a.body!.person.id);
     // trailing path segments do not change the identity either
-    const c = await capture({ source: 'x', url: 'http://x.com:8080/CASEHANDLE/with_replies', name: 'Case Handle' });
+    const c = await capture({ source: 'x', url: 'http://x.com/CASEHANDLE/with_replies', name: 'Case Handle' });
     expect(c.status).toBe(200);
+    // a port is refused, like userinfo (architecture.md: profile URLs are first class fields)
+    const ported = await capture({ source: 'x', url: 'http://x.com:8080/CASEHANDLE', name: 'Case Handle' });
+    expect(ported.status).toBe(400);
   });
 
   it('KILLS: a short handle that is a substring of another does not alias it', async () => {

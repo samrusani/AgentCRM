@@ -6,7 +6,13 @@ import { readSettings } from '../qualification/config.js';
 import { splitName } from './apifyMapping.js';
 import { type ActionContext, emitRecord, mutate, parseInput, type Tx } from './context.js';
 import { createActivityIn, createFieldClaimIn, createPersonIn } from './crud.js';
-import { normalizeProfileUrl } from './leadCaptureMapping.js';
+import {
+  canonicalPersonLinkedinUrl,
+  linkedinProfileUrlMessage,
+  normalizeXProfileUrl,
+  type XProfile,
+  xProfileUrlMessage,
+} from './profileUrls.js';
 
 // Capture token
 
@@ -86,66 +92,11 @@ export function verifyCaptureToken(db: Db, workspaceId: string, presented: strin
 
 // URL canonicalization
 
-export const linkedinCaptureUrlMessage =
-  'The LinkedIn link must be a profile link such as https://www.linkedin.com/in/example.';
-export const xCaptureUrlMessage =
-  'The X link must be a profile link such as https://x.com/example, with a handle of 1 to 15 letters, numbers, or underscores.';
+export const linkedinCaptureUrlMessage = linkedinProfileUrlMessage;
+export const xCaptureUrlMessage = xProfileUrlMessage;
 
-const reservedXPaths = new Set([
-  'home',
-  'explore',
-  'notifications',
-  'messages',
-  'search',
-  'settings',
-  'i',
-  'compose',
-  'intent',
-  'login',
-  'signup',
-  'about',
-  'tos',
-  'privacy',
-  'jobs',
-  'hashtag',
-  'share',
-  'download',
-  'account',
-  'logout',
-  'lists',
-  'bookmarks',
-  'help',
-  'verified',
-  'grok',
-]);
-
-const xHosts = new Set(['x.com', 'www.x.com', 'mobile.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com']);
-
-export interface XProfile {
-  handle: string;
-  // Lowercased handle, because X handles are case insensitive.
-  key: string;
-  url: string;
-}
-
-// The profile an X link points at, or null when it is not a profile link.
-export function normalizeXProfileUrl(value: unknown): XProfile | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (trimmed === '') return null;
-  let url: URL;
-  try {
-    url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
-  } catch {
-    return null;
-  }
-  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username !== '' || url.password !== '') return null;
-  if (!xHosts.has(url.hostname.toLowerCase())) return null;
-  const handle = url.pathname.split('/')[1] ?? '';
-  if (!/^[A-Za-z0-9_]{1,15}$/.test(handle)) return null;
-  if (reservedXPaths.has(handle.toLowerCase())) return null;
-  return { handle, key: handle.toLowerCase(), url: `https://x.com/${handle}` };
-}
+// Kept here for the callers that import it from capture.
+export { normalizeXProfileUrl, type XProfile };
 
 // Capture
 
@@ -161,6 +112,11 @@ function scrubbed(keepLineBreaks: boolean) {
     const flattened = keepLineBreaks ? value.replace(/\r\n?/g, '\n').replace(/\t/g, ' ') : value.replace(/[\r\n\t]+/g, ' ');
     return flattened.replace(invisibleChars, '');
   };
+}
+
+// The same scrub for a single line value that arrives from outside capture, such as an enrichment suggestion.
+export function scrubCapturedLine(value: string): string {
+  return (scrubbed(false)(value) as string).trim();
 }
 
 const scrubbedText = <T extends z.ZodTypeAny>(schema: T) => z.preprocess(scrubbed(false), schema);
@@ -216,44 +172,17 @@ export interface CaptureResult {
   person: { id: string; name: string };
 }
 
-interface Canonical {
-  url: string;
-  // Matches a saved claim value for the same profile.
-  matches: (claimValue: string) => boolean;
-  // Narrows the claim scan in SQL. Null scans every claim of that field.
-  hint: string | null;
-}
-
-// The raw, still percent encoded /in/ segment of a LinkedIn link. The decoded form from
-// normalizeProfileUrl cannot be used to rebuild the URL: a decoded ? or # would cut the stored URL
-// short on the next parse and the capture would never match itself again.
-function rawLinkedinSegment(value: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(value.trim()) ? value.trim() : `https://${value.trim()}`);
-  } catch {
-    return null;
-  }
-  const match = /^\/in\/([^/]+)\/?/.exec(url.pathname);
-  return match ? match[1]! : null;
-}
-
-function canonicalize(source: 'linkedin' | 'x', url: string): Canonical {
+// The canonical profile URL of the captured profile. It is the value the person's column and claim hold, and
+// the value the dedupe matches the column against.
+function canonicalize(source: 'linkedin' | 'x', url: string): string {
   if (source === 'linkedin') {
-    if (!normalizeProfileUrl(url)) throw validationError(linkedinCaptureUrlMessage);
-    const raw = rawLinkedinSegment(url);
-    if (!raw) throw validationError(linkedinCaptureUrlMessage);
-    const canonicalUrl = `https://www.linkedin.com/in/${raw}`;
-    // The dedupe key comes from the canonical URL itself, so storing and re-reading always agree.
-    // Known limit: an id carrying an encoded slash decodes into a path and collapses onto its first
-    // segment; real LinkedIn ids never contain one.
-    const key = normalizeProfileUrl(canonicalUrl);
-    if (!key) throw validationError(linkedinCaptureUrlMessage);
-    return { url: canonicalUrl, matches: (value) => normalizeProfileUrl(value) === key, hint: null };
+    const canonicalUrl = canonicalPersonLinkedinUrl(url);
+    if (!canonicalUrl) throw validationError(linkedinCaptureUrlMessage);
+    return canonicalUrl;
   }
   const profile = normalizeXProfileUrl(url);
   if (!profile) throw validationError(xCaptureUrlMessage);
-  return { url: profile.url, matches: (value) => normalizeXProfileUrl(value)?.key === profile.key, hint: profile.key };
+  return profile.url;
 }
 
 const personName = (first: string, last: string): string => `${first} ${last}`.trim();
@@ -265,33 +194,19 @@ function summarize(tx: Pick<Tx, 'db' | 'workspaceId'>, id: string): CaptureResul
   return { id, name: personName(row.first, row.last ?? '') };
 }
 
+// The profile URL columns are indexed, so a URL hit is an equality lookup on the canonical string. The x_url column
+// compares without regard to case, because X handles are case insensitive.
 function findExistingPerson(
   tx: Pick<Tx, 'db' | 'workspaceId'>,
   source: 'linkedin' | 'x',
-  canonical: Canonical,
+  canonicalUrl: string,
   email: string | undefined,
 ): { id: string; via: 'url' | 'email' } | null {
-  const field = source === 'linkedin' ? 'linkedinUrl' : 'xUrl';
-  const claims = (
-    canonical.hint
-      ? tx.db
-          .prepare(
-            `SELECT c.entity_id AS id, c.value AS value FROM field_claim c JOIN person p ON p.id = c.entity_id
-             WHERE c.workspace_id = ? AND c.entity_type = 'person' AND c.field = ? AND p.workspace_id = ?
-               AND instr(lower(c.value), ?) > 0 ORDER BY c.created_at, c.id`,
-          )
-          .all(tx.workspaceId, field, tx.workspaceId, canonical.hint)
-      : tx.db
-          .prepare(
-            `SELECT c.entity_id AS id, c.value AS value FROM field_claim c JOIN person p ON p.id = c.entity_id
-             WHERE c.workspace_id = ? AND c.entity_type = 'person' AND c.field = ? AND p.workspace_id = ?
-             ORDER BY c.created_at, c.id`,
-          )
-          .all(tx.workspaceId, field, tx.workspaceId)
-  ) as { id: string; value: string }[];
-  for (const claim of claims) {
-    if (canonical.matches(claim.value)) return { id: claim.id, via: 'url' };
-  }
+  const column = source === 'linkedin' ? 'linkedin_url' : 'x_url';
+  const byUrl = tx.db
+    .prepare(`SELECT id FROM person WHERE workspace_id = ? AND ${column} = ? ORDER BY created_at, id LIMIT 1`)
+    .get(tx.workspaceId, canonicalUrl) as { id: string } | undefined;
+  if (byUrl) return { id: byUrl.id, via: 'url' };
   if (email) {
     const row = tx.db
       .prepare('SELECT id FROM person WHERE workspace_id = ? AND lower(email) = ?')
@@ -301,10 +216,11 @@ function findExistingPerson(
   return null;
 }
 
-// An email hit proves the person is the captured profile, so the profile URL is saved as a claim and the
-// next lookup and capture match it. A person with any claim for that field already (even a different
-// URL) is left alone: which profile is right is ambiguous and the record is edited in the app.
-function saveProfileUrlClaim(tx: Tx, personId: string, source: 'linkedin' | 'x', url: string): void {
+// An email hit proves the person is the captured profile, so the profile URL is saved as a claim and onto the
+// person's column, and the next lookup and capture match it. A person with any claim for that field already, or a
+// value in the column (even a different URL), is left alone: which profile is right is ambiguous and the record is
+// edited in the app.
+function saveProfileUrl(tx: Tx, personId: string, source: 'linkedin' | 'x', url: string): void {
   const field = source === 'linkedin' ? 'linkedinUrl' : 'xUrl';
   const has = tx.db
     .prepare(
@@ -312,6 +228,13 @@ function saveProfileUrlClaim(tx: Tx, personId: string, source: 'linkedin' | 'x',
     )
     .get(tx.workspaceId, personId, field);
   if (has) return;
+  const column = source === 'linkedin' ? 'linkedin_url' : 'x_url';
+  // The column write is a plain update in this transaction. The claim write below carries the audit row and the
+  // record_updated frame, so the hit stays one audit row and one frame.
+  const saved = tx.db
+    .prepare(`UPDATE person SET ${column} = ?, version = version + 1, updated_at = ? WHERE id = ? AND workspace_id = ? AND ${column} IS NULL`)
+    .run(url, tx.now(), personId, tx.workspaceId);
+  if (saved.changes !== 1) return;
   createFieldClaimIn(tx, {
     entityType: 'person',
     entityId: personId,
@@ -334,7 +257,7 @@ export function capturePerson(ctx: ActionContext, input: unknown): CaptureResult
   return mutate(ctx, (tx): CaptureResult => {
     const existing = findExistingPerson(tx, data.source, canonical, data.email);
     if (existing) {
-      if (existing.via === 'email') saveProfileUrlClaim(tx, existing.id, data.source, canonical.url);
+      if (existing.via === 'email') saveProfileUrl(tx, existing.id, data.source, canonical);
       return { outcome: 'existing', person: summarize(tx, existing.id) };
     }
 
@@ -346,6 +269,7 @@ export function capturePerson(ctx: ActionContext, input: unknown): CaptureResult
       title: data.headline ?? null,
       organizationId: null,
       location: data.location ?? null,
+      ...(data.source === 'linkedin' ? { linkedinUrl: canonical } : { xUrl: canonical }),
       tags: ['captured', data.source],
       nextActionAt: null,
     });
@@ -359,7 +283,7 @@ export function capturePerson(ctx: ActionContext, input: unknown): CaptureResult
       ['email', data.email],
       ['website', data.website],
       ['phone', data.phone],
-      [data.source === 'linkedin' ? 'linkedinUrl' : 'xUrl', canonical.url],
+      [data.source === 'linkedin' ? 'linkedinUrl' : 'xUrl', canonical],
     ];
     for (const [field, value] of claims) {
       if (!value) continue;
@@ -368,7 +292,7 @@ export function capturePerson(ctx: ActionContext, input: unknown): CaptureResult
         entityId: person.id,
         field,
         value,
-        sourceUrl: canonical.url,
+        sourceUrl: canonical,
         sourceType: 'extension',
         observedAt,
         status: 'imported',
@@ -376,14 +300,14 @@ export function capturePerson(ctx: ActionContext, input: unknown): CaptureResult
       });
     }
     const label = data.source === 'linkedin' ? 'LinkedIn' : 'X';
-    const lead = `Captured from ${label} ${canonical.url}.`;
+    const lead = `Captured from ${label} ${canonical}.`;
     createActivityIn(tx, {
       entityType: 'person',
       entityId: person.id,
       kind: 'note',
       body: data.bio ? `${lead}\n\n${data.bio}` : lead,
     });
-    tx.audit('capture.person', 'person', person.id, { source: data.source, url: canonical.url });
+    tx.audit('capture.person', 'person', person.id, { source: data.source, url: canonical });
     emitRecord(tx, 'person', person.id);
     return { outcome: 'created', person: { id: person.id, name: personName(person.firstName, person.lastName) } };
   });

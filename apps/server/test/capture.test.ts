@@ -296,10 +296,10 @@ describe('capture a person', () => {
       await expectExisting({ source: 'linkedin', url: 'https://uk.linkedin.com/in/dedupe-me?x=1', name: 'Other' }, id);
     });
 
-    it('matches a linkedinUrl claim saved by an older import in another shape', async () => {
+    it('matches the linkedin_url column, not claims', async () => {
       const created = await capture({ source: 'linkedin', url: 'https://www.linkedin.com/in/other-person', name: 'Old Import' });
       const id = created.body!.person.id as string;
-      env.db.prepare("UPDATE field_claim SET value = 'linkedin.com/in/legacy-id/' WHERE entity_id = ? AND field = 'linkedinUrl'").run(id);
+      env.db.prepare("UPDATE person SET linkedin_url = 'https://www.linkedin.com/in/legacy-id' WHERE id = ?").run(id);
       await expectExisting({ source: 'linkedin', url: 'https://www.linkedin.com/in/legacy-id', name: 'Old Import' }, id);
     });
 

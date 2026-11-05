@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { backfillProfileUrls } from './actions/profileUrls.js';
 import { migrationsDirectory, repoRoot, resolveDatabasePath } from './paths.js';
 
 export type Db = Database.Database;
@@ -54,6 +55,11 @@ export function appliedMigrations(db: Db): string[] {
   );
 }
 
+// Data work a migration cannot do in plain SQL runs right after its file, in the same transaction.
+const migrationHooks: Record<string, (db: Db) => void> = {
+  '018_profile_urls.sql': backfillProfileUrls,
+};
+
 export function applyMigrations(db: Db): string[] {
   db.exec('CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
   const done = new Set(appliedMigrations(db));
@@ -63,6 +69,7 @@ export function applyMigrations(db: Db): string[] {
     const sql = readFileSync(path.join(migrationsDirectory, file), 'utf8');
     db.transaction(() => {
       db.exec(sql);
+      migrationHooks[file]?.(db);
       db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, ?)').run(
         file,
         new Date().toISOString(),

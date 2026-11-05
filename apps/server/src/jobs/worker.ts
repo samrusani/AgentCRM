@@ -5,6 +5,7 @@ import {
   advanceCsvImportRun,
   advanceDemoRun,
   advanceDraftRun,
+  advanceEnrichPersonRun,
   advanceLeadCaptureRun,
   advanceQualifyRun,
   apifyJobKind,
@@ -12,6 +13,7 @@ import {
   csvImportJobKind,
   completeJob,
   draftJobKind,
+  enrichPersonJobKind,
   failJob,
   failRun,
   type JobRecord,
@@ -68,7 +70,9 @@ async function runApifyJob(ctx: ActionContext, job: JobRecord): Promise<void> {
   const runId = String(job.payload.runId);
   const jobContext: ActionContext = { ...ctx, workspaceId: String(job.payload.workspaceId), actor: 'system' };
   try {
-    const result = await (job.kind === leadCaptureJobKind ? advanceLeadCaptureRun : advanceApifyRun)(jobContext, runId);
+    const advance =
+      job.kind === leadCaptureJobKind ? advanceLeadCaptureRun : job.kind === enrichPersonJobKind ? advanceEnrichPersonRun : advanceApifyRun;
+    const result = await advance(jobContext, runId);
     if (result.nextRunAt) rescheduleJob(ctx, job.id, result.nextRunAt, true);
     else completeJob(ctx, job.id);
   } catch (error) {
@@ -108,14 +112,14 @@ async function runDraftJob(ctx: ActionContext, job: JobRecord): Promise<void> {
 
 // Processes every simulated job that is due. Single writer: this runs on the server's event loop, one job at a time.
 export function processJobs(ctx: ActionContext): number {
-  const jobs = claimDueJobs(ctx, 10, { excludeKinds: [apifyJobKind, leadCaptureJobKind, draftJobKind, mailReconcileJobKind] });
+  const jobs = claimDueJobs(ctx, 10, { excludeKinds: [apifyJobKind, enrichPersonJobKind, leadCaptureJobKind, draftJobKind, mailReconcileJobKind] });
   for (const job of jobs) runJob(ctx, job);
   return jobs.length;
 }
 
-// Apify imports have a lane of their own: polling runs and reading datasets, which never waits on a model call.
+// Apify imports and profile enrichment runs share a lane of their own: polling runs and reading datasets, which never waits on a model call.
 export async function processApifyJobs(ctx: ActionContext): Promise<number> {
-  const jobs = claimDueJobs(ctx, 10, { kinds: [apifyJobKind] });
+  const jobs = claimDueJobs(ctx, 10, { kinds: [apifyJobKind, enrichPersonJobKind] });
   for (const job of jobs) await runApifyJob(ctx, job);
   return jobs.length;
 }

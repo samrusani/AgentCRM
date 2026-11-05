@@ -12,12 +12,37 @@ import {
   type Tx,
   versionConflict,
 } from './context.js';
+import {
+  canonicalCompanyLinkedinUrl,
+  canonicalPersonLinkedinUrl,
+  canonicalXUrl,
+  companyLinkedinUrlMessage,
+  linkedinProfileUrlMessage,
+  xProfileUrlMessage,
+} from './profileUrls.js';
 import { entityTypeSchema, expectedVersionSchema, idSchema, isoTimestamp, optionalText, tagsSchema } from './schemas.js';
 
 export type UpdatableType = 'person' | 'organization' | 'opportunity' | 'task';
 export const updatableTypes = ['person', 'organization', 'opportunity', 'task'] as const;
 
 const emailSchema = z.string().trim().toLowerCase().email().max(200);
+
+// A profile URL field: null or an empty string clears it, any other value must canonicalize or the edit is refused.
+const profileUrlField = (canonical: (value: string) => string | null, message: string) =>
+  z
+    .string()
+    .trim()
+    .max(500)
+    .nullable()
+    .transform((value, ctx) => {
+      if (value === null || value === '') return null;
+      const url = canonical(value);
+      if (url === null) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: message.replace(/\.$/, '') });
+        return z.NEVER;
+      }
+      return url;
+    });
 
 export const personFields = {
   firstName: z.string().trim().min(1).max(100),
@@ -26,6 +51,8 @@ export const personFields = {
   title: optionalText(200),
   organizationId: idSchema.nullable(),
   location: optionalText(200),
+  linkedinUrl: profileUrlField(canonicalPersonLinkedinUrl, linkedinProfileUrlMessage),
+  xUrl: profileUrlField(canonicalXUrl, xProfileUrlMessage),
   tags: tagsSchema,
   nextActionAt: isoTimestamp.nullable(),
 };
@@ -35,6 +62,7 @@ export const organizationFields = {
   domain: z.string().trim().toLowerCase().max(200).nullable().transform((value) => (value === '' ? null : value)),
   kind: z.enum(['fund', 'company']),
   location: optionalText(200),
+  linkedinUrl: profileUrlField(canonicalCompanyLinkedinUrl, companyLinkedinUrlMessage),
   tags: tagsSchema,
 };
 
@@ -82,6 +110,8 @@ const specs: Record<UpdatableType, EntitySpec> = {
       title: 'title',
       organizationId: 'organization_id',
       location: 'location',
+      linkedinUrl: 'linkedin_url',
+      xUrl: 'x_url',
       tags: 'tags',
       nextActionAt: 'next_action_at',
     },
@@ -96,7 +126,7 @@ const specs: Record<UpdatableType, EntitySpec> = {
     table: 'organization',
     label: 'Organization',
     fields: organizationFields,
-    columns: { name: 'name', domain: 'domain', kind: 'kind', location: 'location', tags: 'tags' },
+    columns: { name: 'name', domain: 'domain', kind: 'kind', location: 'location', linkedinUrl: 'linkedin_url', tags: 'tags' },
     jsonFields: ['tags'],
     load: getOrganization,
     checkReferences: (tx, id, patch) => {

@@ -38,8 +38,18 @@ export function listRunSteps(db: Db, runId: string) {
   return (db.prepare('SELECT * FROM run_step WHERE run_id = ? ORDER BY seq, id').all(runId) as Row[]).map(toRunStep);
 }
 
-export function getRunDetail(db: Db, workspaceId: string, id: string) {
-  const run = requireRun(db, workspaceId, id);
+// Scope keys of an enrich_person run that hold scraped text. Agent facing reads leave them out so scraped text
+// reaches no model or agent surface before a person accepted it.
+const enrichAgentHiddenKeys = ['suggestions', 'profileUrl'] as const;
+
+export function getRunDetail(db: Db, workspaceId: string, id: string, options: { forAgent?: boolean } = {}) {
+  const found = requireRun(db, workspaceId, id);
+  let run = found;
+  if (options.forAgent && found.kind === 'enrich_person') {
+    const scope = { ...found.scope };
+    for (const key of enrichAgentHiddenKeys) delete scope[key];
+    run = { ...found, scope };
+  }
   return {
     ...run,
     steps: listRunSteps(db, id),
@@ -76,9 +86,10 @@ function parseStatuses(value: string): RunStatus[] {
 const bulkyScopeKeys = ['drafts', 'failures', 'skipped', 'audienceIds', 'extraction', 'extractionResult'] as const;
 
 function trimScopeForList(run: ReturnType<typeof toRun>): ReturnType<typeof toRun> {
-  if (!bulkyScopeKeys.some((key) => key in run.scope)) return run;
+  const hidden: readonly string[] = run.kind === 'enrich_person' ? [...bulkyScopeKeys, ...enrichAgentHiddenKeys] : bulkyScopeKeys;
+  if (!hidden.some((key) => key in run.scope)) return run;
   const scope = { ...run.scope };
-  for (const key of bulkyScopeKeys) delete scope[key];
+  for (const key of hidden) delete scope[key];
   return { ...run, scope };
 }
 

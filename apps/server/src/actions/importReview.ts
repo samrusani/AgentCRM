@@ -6,6 +6,9 @@ import { normalizeName, splitName, type MappedRow } from './apifyMapping.js';
 import { normalizeProfileUrl } from './leadCaptureMapping.js';
 import { type Tx, emitRecord } from './context.js';
 import { createFieldClaimIn, createOrganizationIn, createPersonIn } from './crud.js';
+import { updateEntityIn } from './entities.js';
+import { requireOrganization } from '../queries/organizations.js';
+import { canonicalCompanyLinkedinUrl, canonicalPersonLinkedinUrl } from './profileUrls.js';
 import { finishStep, hashPayload, startStep } from './demoResearch.js';
 
 export const apifyConsoleRunUrl = (apifyRunId: string): string =>
@@ -87,17 +90,16 @@ function orgKey(mapped: MappedRow): string | null {
   return null;
 }
 
-// People who already have a saved linkedinUrl claim, keyed by the normalized profile.
+// People who have a LinkedIn profile URL saved on the record, keyed by the normalized profile.
 function peopleByLinkedinProfile(tx: Tx): Map<string, string> {
   const peopleByProfile = new Map<string, string>();
-  for (const claim of tx.db
+  for (const person of tx.db
     .prepare(
-      `SELECT c.entity_id AS id, c.value AS value FROM field_claim c JOIN person p ON p.id = c.entity_id
-       WHERE c.workspace_id = ? AND c.entity_type = 'person' AND c.field = 'linkedinUrl' AND p.workspace_id = ?`,
+      `SELECT id, linkedin_url AS value FROM person WHERE workspace_id = ? AND linkedin_url IS NOT NULL ORDER BY created_at, id`,
     )
-    .all(tx.workspaceId, tx.workspaceId) as { id: string; value: string }[]) {
-    const key = normalizeProfileUrl(claim.value);
-    if (key && !peopleByProfile.has(key)) peopleByProfile.set(key, claim.id);
+    .all(tx.workspaceId) as { id: string; value: string }[]) {
+    const key = normalizeProfileUrl(person.value);
+    if (key && !peopleByProfile.has(key)) peopleByProfile.set(key, person.id);
   }
   return peopleByProfile;
 }
@@ -245,6 +247,8 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
     const undoLookups: (() => void)[] = [];
     try {
       const mapped = row.mapped;
+      // On an organization row the link is the company page. On a person row it is the person's own profile.
+      const organizationLinkedin = mapped.kind === 'organization' ? canonicalCompanyLinkedinUrl(mapped.linkedinUrl) : null;
       let organizationId: string | null = null;
       const key = orgKey(mapped);
       if (key) {
@@ -258,6 +262,7 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
               domain: mapped.domain,
               kind: mapped.kind === 'organization' && mapped.orgKind === 'fund' ? 'fund' : 'company',
               location: mapped.kind === 'organization' ? mapped.location : null,
+              linkedinUrl: organizationLinkedin,
               tags: organizationTags,
             });
             organizationId = created.id;
@@ -278,6 +283,7 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
             const orgClaims: [string, string | null, string][] = [
               ['name', name, mapped.company ? 'company' : 'domain'],
               ['domain', mapped.domain, 'domain'],
+              ['linkedinUrl', organizationLinkedin, 'company'],
             ];
             for (const [field, value, originField] of orgClaims) {
               if (!value) continue;
@@ -302,6 +308,30 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
       if (mapped.kind === 'organization') {
         // An organization row creates or matches just the organization. No person is created.
         if (!organizationId) throw new AppError('conflict', 'The organization row has no name.');
+        if (organizationLinkedin && !addedOrganizations.includes(organizationId)) {
+          // The row matched an organization that already exists. Fill its LinkedIn page when it has none, and
+          // keep the link as evidence either way.
+          const current = requireOrganization(tx.db, tx.workspaceId, organizationId);
+          if (current.linkedinUrl !== organizationLinkedin) {
+            if (current.linkedinUrl === null) {
+              updateEntityIn(tx, 'organization', organizationId, {
+                expectedVersion: current.version,
+                fields: { linkedinUrl: organizationLinkedin },
+              });
+            }
+            createFieldClaimIn(tx, {
+              entityType: 'organization',
+              entityId: organizationId,
+              field: 'linkedinUrl',
+              value: organizationLinkedin,
+              sourceUrl: source.url,
+              sourceType: source.type,
+              observedAt,
+              status: 'imported',
+              extractionMethod: methodFor(row, 'company'),
+            });
+          }
+        }
         tx.db.exec('RELEASE import_row');
         markRow(row.id, 'accepted', null, 'organization', organizationId);
         accepted += 1;
@@ -317,6 +347,7 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
         title: mapped.title,
         organizationId,
         location: mapped.location,
+        linkedinUrl: canonicalPersonLinkedinUrl(mapped.linkedinUrl),
         tags: [...new Set([source.tag, `via-${runId}`, ...(mapped.tags ?? [])])].slice(0, 30),
         nextActionAt: null,
       });
