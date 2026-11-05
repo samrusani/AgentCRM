@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="280" viewBox="0 0 1200 280" role="img" aria-label="AgentCRM">
+  <defs>
+    <radialGradient id="glow" cx="30%" cy="0%" r="90%">
+      <stop offset="0%" stop-color="#15685b" stop-opacity="0.35"/>
+      <stop offset="55%" stop-color="#15685b" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#15685b" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="1" y="1" width="1198" height="278" rx="16" fill="#0c1311"/>
+  <rect x="1" y="1" width="1198" height="278" rx="16" fill="url(#glow)"/>
+  <rect x="1" y="1" width="1198" height="278" rx="16" fill="none" stroke="#1d2b27" stroke-width="2"/>
+  <!-- Capture bracket mark, same geometry as the extension icon -->
+  <g transform="translate(408,84)">
+    <rect width="72" height="72" rx="16" fill="#15685b"/>
+    <g fill="#e7f2ef">
+      <rect x="14.4" y="14.4" width="15.84" height="6.48"/>
+      <rect x="14.4" y="14.4" width="6.48" height="15.84"/>
+      <rect x="41.76" y="14.4" width="15.84" height="6.48"/>
+      <rect x="51.12" y="14.4" width="6.48" height="15.84"/>
+      <rect x="14.4" y="51.12" width="15.84" height="6.48"/>
+      <rect x="14.4" y="41.76" width="6.48" height="15.84"/>
+      <rect x="41.76" y="51.12" width="15.84" height="6.48"/>
+      <rect x="51.12" y="41.76" width="6.48" height="15.84"/>
+      <rect x="28.8" y="28.8" width="14.4" height="14.4"/>
+    </g>
+  </g>
+  <text x="508" y="141" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="58" font-weight="650" letter-spacing="-1" fill="#e7f2ef">Agent<tspan fill="#4fae9d">CRM</tspan></text>
+  <text x="600" y="205" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="21" fill="#9fb5ae">A local-first, open source CRM where people and AI agents work through one audited core.</text>
+</svg>
