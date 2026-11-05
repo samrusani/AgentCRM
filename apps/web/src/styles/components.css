@@ -2254,3 +2254,90 @@ fieldset.connector__form > legend {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* Record picker: a combobox over the search endpoint. The popover sits on the raised surface. */
+.picker {
+  position: relative;
+}
+.picker__chosen {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 4px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.picker__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 550;
+}
+.picker__popover {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 2px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+.picker__list {
+  max-height: 296px;
+  overflow: auto;
+  padding: 4px;
+}
+.picker__list:empty {
+  display: none;
+}
+.picker__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.picker__option.is-active {
+  background: var(--accent-tint);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.picker__option-name {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 550;
+}
+.picker__option-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-muted);
+}
+.picker__note {
+  padding: 8px 12px;
+  color: var(--ink-muted);
+}
+.amount-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.amount-row .input--number {
+  flex: 0 0 140px;
+}
+.amount-row .input--select {
+  flex: 0 0 auto;
+}

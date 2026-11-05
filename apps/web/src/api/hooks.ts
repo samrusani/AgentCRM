@@ -5,7 +5,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { ApiError, api, type NewPersonInput } from './client';
+import { ApiError, api, type NewOpportunityInput, type NewPersonInput } from './client';
 import { useEventConnection } from './events';
 import type {
   Lifecycle,
@@ -394,6 +394,31 @@ export function useMoveStage() {
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ['opportunities'] });
       void queryClient.invalidateQueries({ queryKey: ['activities'] });
+    },
+  });
+}
+
+export function useCreateOpportunity() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: NewOpportunityInput) => api.opportunities.create(input),
+    // Returning the refetches keeps the mutation pending until the pipeline and the linked records have reloaded, so the
+    // button stays disabled and the new opportunity is already in the cache when its sheet opens. A linked person may
+    // have been promoted to a relationship, so the people and organization lists reload too.
+    onSuccess: async (opportunity, input) => {
+      const personId = opportunity.personId ?? input.personId;
+      const organizationId = opportunity.organizationId ?? input.organizationId;
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['opportunities'] }),
+        queryClient.invalidateQueries({ queryKey: ['stage-counts'] }),
+        queryClient.invalidateQueries({ queryKey: ['activities'] }),
+        queryClient.invalidateQueries({ queryKey: ['today'] }),
+        queryClient.invalidateQueries({ queryKey: ['search'] }),
+        queryClient.invalidateQueries({ queryKey: ['people'] }),
+        queryClient.invalidateQueries({ queryKey: ['organizations'] }),
+        personId ? queryClient.invalidateQueries({ queryKey: ['person', personId] }) : Promise.resolve(),
+        organizationId ? queryClient.invalidateQueries({ queryKey: ['organization', organizationId] }) : Promise.resolve(),
+      ]);
     },
   });
 }

@@ -4,7 +4,7 @@
 
 **The CRM that people and AI agents operate together.**
 
-<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-1996-15685b?style=flat" alt="1996 tests">
+<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-2046-15685b?style=flat" alt="2046 tests">
 
 [Quick start](#quick-start) · [What works](#what-works-today) · [Architecture docs](docs/architecture.md)
 
@@ -89,7 +89,7 @@ Run it from the repository root, or make the `--prefix` path absolute. Keep `--s
 
 ## What works today
 
-Every row below is backed by tests: 1,996 across the server (1,390), the web app (324), and the browser extension (282). "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
+Every row below is backed by tests: 2,046 across the server (1,390), the web app (374), and the browser extension (282). "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
 
 ### Core CRM
 
@@ -97,7 +97,7 @@ Every row below is backed by tests: 1,996 across the server (1,390), the web app
 | --- | --- |
 | Leads and Relationships: imported and captured people start as leads and graduate to relationships when they reply or a deal moves past the first stage, with manual promote and demote; LinkedIn and X profiles as first class fields | Working, synthetic data |
 | Field enrichment: one click runs one scrape and suggests values for empty fields, each accepted or dismissed by you; people by their LinkedIn profile, organizations by their saved page or a name lookup that tells you which company it found | Working, verified against a stubbed Apify API; bring your own Apify account |
-| Pipeline: opportunities in board and table views with stage history | Working |
+| Pipeline: opportunities in board and table views with stage history; create deals from the Pipeline header or straight from a person or organization sheet | Working |
 | Approvals: review, approve, reject, audit trail | Working |
 | Evidence: field claims with source and verification status | Working, synthetic sources |
 | Templates: startup fundraising, fund LP fundraising, client sales, with a guided switch that maps stages | Working |

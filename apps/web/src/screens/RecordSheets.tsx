@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { isVersionConflict } from '../api/client';
 import type { Claim, Lifecycle } from '../api/types';
 import { useOrganization, usePatchOrganization, usePatchPerson, usePerson } from '../api/hooks';
@@ -21,6 +22,7 @@ import { Chip } from '../components/common';
 import { EnrichControl, EnrichmentSuggestions, OrganizationEnrichControl, OrganizationEnrichmentSuggestions } from '../components/enrichment';
 import { PersonFollowupLine } from '../components/followups';
 import { QualificationSection } from '../components/qualification';
+import { NewOpportunitySheet } from './NewOpportunitySheet';
 import { describeDue, formatAgo, humanize, personName } from '../lib/format';
 import { useUI, type SelectedRecord } from '../lib/ui';
 
@@ -32,6 +34,15 @@ function useSelectedRecord(record: SelectedRecord | null) {
     return () => setSelectedRecord(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
+}
+
+// The quiet action beside an Opportunities title. It opens the creation sheet in place of the record sheet.
+function NewOpportunityAction({ onClick }: { onClick: () => void }) {
+  return (
+    <button type="button" className="btn btn--quiet" onClick={onClick} aria-haspopup="dialog">
+      New opportunity
+    </button>
+  );
 }
 
 function OtherEvidence({
@@ -113,6 +124,9 @@ export function PersonSheet({
 }) {
   const query = usePerson(id);
   const patch = usePatchPerson();
+  const navigate = useNavigate();
+  // Only one sheet shows at a time, so creating a deal replaces this sheet and Cancel brings it back.
+  const [creatingOpportunity, setCreatingOpportunity] = useState(false);
   const [openClaim, setOpenClaim] = useState<string | null>(null);
   const person = query.data;
   const name = person ? personName(person) : 'Person';
@@ -149,6 +163,19 @@ export function PersonSheet({
   };
 
   const due = person?.nextActionAt ? describeDue(person.nextActionAt) : null;
+
+  if (creatingOpportunity && person) {
+    return (
+      <NewOpportunitySheet
+        prefill={{
+          person: { id, name },
+          organization: person.organization ? { id: person.organization.id, name: person.organization.name } : null,
+        }}
+        onClose={() => setCreatingOpportunity(false)}
+        onCreated={(opportunityId) => navigate(`/pipeline?opportunity=${encodeURIComponent(opportunityId)}`)}
+      />
+    );
+  }
 
   return (
     <Sheet
@@ -245,7 +272,7 @@ export function PersonSheet({
             <Timeline activities={person.activities} prepareSend />
           </SheetSection>
 
-          <SheetSection title="Opportunities">
+          <SheetSection title="Opportunities" headerItems={<NewOpportunityAction onClick={() => setCreatingOpportunity(true)} />}>
             <OpportunityList opportunities={person.opportunities} />
           </SheetSection>
 
@@ -278,6 +305,8 @@ export function OrganizationSheet({
 }) {
   const query = useOrganization(id);
   const patch = usePatchOrganization();
+  const navigate = useNavigate();
+  const [creatingOpportunity, setCreatingOpportunity] = useState(false);
   const [openClaim, setOpenClaim] = useState<string | null>(null);
   const organization = query.data;
   useSelectedRecord(organization ? { kind: 'organization', id, label: organization.name } : null);
@@ -293,6 +322,16 @@ export function OrganizationSheet({
     });
     await query.refetch();
   };
+
+  if (creatingOpportunity && organization) {
+    return (
+      <NewOpportunitySheet
+        prefill={{ organization: { id, name: organization.name } }}
+        onClose={() => setCreatingOpportunity(false)}
+        onCreated={(opportunityId) => navigate(`/pipeline?opportunity=${encodeURIComponent(opportunityId)}`)}
+      />
+    );
+  }
 
   return (
     <Sheet
@@ -377,7 +416,7 @@ export function OrganizationSheet({
             <Timeline activities={organization.activities} />
           </SheetSection>
 
-          <SheetSection title="Opportunities">
+          <SheetSection title="Opportunities" headerItems={<NewOpportunityAction onClick={() => setCreatingOpportunity(true)} />}>
             <OpportunityList opportunities={organization.opportunities} />
           </SheetSection>
           <p className="muted sheet__foot">

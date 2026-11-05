@@ -795,6 +795,15 @@ export interface NewPersonInput {
   lifecycle?: Lifecycle;
 }
 
+export interface NewOpportunityInput {
+  name: string;
+  stageId: string;
+  personId?: string;
+  organizationId?: string;
+  amountTarget?: number;
+  currency?: string;
+}
+
 export interface ListParams {
   q?: string;
   sort?: string;
@@ -888,6 +897,8 @@ export const api = {
       }
       return counts;
     },
+    // The server derives the pipeline from the stage.
+    create: (input: NewOpportunityInput) => request<Opportunity>('POST', '/opportunities', { body: input }),
     moveStage: (id: string, stageId: string, expectedVersion: number) =>
       request<Opportunity>('POST', `/opportunities/${id}/stage`, { body: { stageId, expectedVersion } }),
     patch: (id: string, expectedVersion: number, fields: Record<string, unknown>) =>

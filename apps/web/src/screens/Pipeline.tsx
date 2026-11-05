@@ -25,6 +25,7 @@ import { NoteForm, SheetSection, Timeline } from '../components/record';
 import { VirtualTable, type Column } from '../components/VirtualTable';
 import { describeDue, formatAmount, humanize } from '../lib/format';
 import { useUI } from '../lib/ui';
+import { NewOpportunitySheet } from './NewOpportunitySheet';
 
 type View = 'board' | 'table';
 type StatusFilter = 'open' | 'nurture' | 'passed' | 'lost' | 'all';
@@ -52,6 +53,13 @@ function sumLabel(opportunities: Opportunity[]): string {
     .join(', ');
 }
 
+// A fresh workspace lands on the Open filter, so Open and All statuses both read as the pipeline having no deals yet.
+function emptyMessage(filter: StatusFilter): string {
+  if (filter === 'all') return 'No opportunities yet. Create one to start tracking a deal.';
+  if (filter === 'open') return 'No open opportunities yet. Create one to start tracking a deal.';
+  return 'No opportunities match this status. Choose another status or create one.';
+}
+
 function stageMenuItems(
   opportunity: Opportunity,
   stages: Stage[],
@@ -77,6 +85,7 @@ export function Pipeline() {
   const [pipelineId, setPipelineId] = useState<string | null>(null);
   const [view, setView] = useState<View>('board');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('open');
+  const [creating, setCreating] = useState(false);
   const move = useMoveStage();
 
   const activePipeline: PipelineType | undefined =
@@ -207,6 +216,9 @@ export function Pipeline() {
             Table
           </button>
         </div>
+        <button type="button" className="btn btn--primary" onClick={() => setCreating(true)} aria-haspopup="dialog">
+          New opportunity
+        </button>
       </PageHeader>
 
       <div className="table-region">
@@ -214,6 +226,14 @@ export function Pipeline() {
           <Loading what="opportunities" />
         ) : list.isError && !list.data ? (
           <ErrorState what="opportunities" error={list.error} onRetry={() => void list.refetch()} />
+        ) : opportunities.length === 0 ? (
+          <EmptyState
+            framed
+            icon="deal"
+            message={emptyMessage(statusFilter)}
+            actionLabel="New opportunity"
+            onAction={() => setCreating(true)}
+          />
         ) : view === 'board' ? (
           <Board
             stages={activePipeline.stages}
@@ -222,12 +242,6 @@ export function Pipeline() {
             onOpen={open}
             onMove={moveTo}
             onStatus={(opportunity) => open(opportunity.id)}
-          />
-        ) : opportunities.length === 0 ? (
-          <EmptyState
-            framed
-            icon="deal"
-            message="No opportunities match this status. Choose another status or move a record into the pipeline."
           />
         ) : (
           <OpportunityTable
@@ -239,7 +253,16 @@ export function Pipeline() {
           />
         )}
 
-        {openId ? (
+        {creating ? (
+          <NewOpportunitySheet
+            pipelineId={activePipeline.id}
+            onClose={() => setCreating(false)}
+            onCreated={(id) => {
+              setCreating(false);
+              open(id);
+            }}
+          />
+        ) : openId ? (
           openOpportunity ? (
             <OpportunitySheet opportunity={openOpportunity} stages={pipelines.data.flatMap((p) => p.stages)} onClose={close} />
           ) : (
