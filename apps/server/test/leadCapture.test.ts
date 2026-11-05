@@ -1131,6 +1131,7 @@ describe('lead capture connector settings', () => {
       reactionsActor: 'harvestapi/linkedin-post-reactions',
       commentsActor: 'harvestapi/linkedin-post-comments',
       profileActor: 'harvestapi/linkedin-profile-scraper',
+      companyActor: 'harvestapi/linkedin-company',
     });
     expect(entry.settings.allowlist).toEqual(fullAllowlist);
   });
@@ -1143,6 +1144,7 @@ describe('lead capture connector settings', () => {
       reactionsActor: 'my-user~my-reactions',
       commentsActor: 'my~comments',
       profileActor: 'another~profile',
+      companyActor: 'harvestapi/linkedin-company',
     });
     // Token, allowlist, and username are untouched.
     expect(saved.body.settings.allowlist).toEqual(fullAllowlist);
@@ -1158,13 +1160,15 @@ describe('lead capture connector settings', () => {
       reactionsActor: 'harvestapi/linkedin-post-reactions',
       commentsActor: 'my~comments',
       profileActor: 'another~profile',
+      companyActor: 'harvestapi/linkedin-company',
     });
-    const cleared = await putConnector({ leadCapture: { commentsActor: '', profileActor: '' } });
+    const cleared = await putConnector({ leadCapture: { commentsActor: '', profileActor: '', companyActor: '' } });
     expect(cleared.body.settings.leadCapture).toEqual({
       postActor: 'apimaestro/linkedin-post-detail',
       reactionsActor: 'harvestapi/linkedin-post-reactions',
       commentsActor: 'harvestapi/linkedin-post-comments',
       profileActor: 'harvestapi/linkedin-profile-scraper',
+      companyActor: 'harvestapi/linkedin-company',
     });
     const stored = JSON.parse((env.db.prepare("SELECT settings FROM connector WHERE kind = 'apify'").get() as { settings: string }).settings);
     expect(stored.leadCapture).toEqual({});
@@ -1177,6 +1181,25 @@ describe('lead capture connector settings', () => {
     const token = await putConnector({ token: stubToken });
     expect(token.body.settings.leadCapture.reactionsActor).toBe('keep~me');
     expect(token.body.settings.allowlist).toEqual(['keep/me']);
+  });
+
+  it('round trips companyActor with the same per field rules', async () => {
+    const saved = await putConnector({ leadCapture: { companyActor: ' My-User/My-Company ' } });
+    expect(saved.status).toBe(200);
+    expect(saved.body.settings.leadCapture.companyActor).toBe('my-user~my-company');
+    expect(saved.body.settings.leadCapture.profileActor).toBe('harvestapi/linkedin-profile-scraper');
+    expect((await listedApify()).settings.leadCapture.companyActor).toBe('my-user~my-company');
+    // A body that leaves the field out keeps it, and a token or allowlist change keeps it too.
+    expect((await putConnector({ leadCapture: { reactionsActor: 'keep~reactions' } })).body.settings.leadCapture.companyActor).toBe('my-user~my-company');
+    expect((await putConnector({ allowlist: ['keep/me'] })).body.settings.leadCapture.companyActor).toBe('my-user~my-company');
+    expect((await putConnector({ leadCapture: { companyActor: '..' } })).status).toBe(400);
+    // An empty string resets only that field.
+    const reset = await putConnector({ leadCapture: { companyActor: '' } });
+    expect(reset.body.settings.leadCapture.companyActor).toBe('harvestapi/linkedin-company');
+    expect(reset.body.settings.leadCapture.reactionsActor).toBe('keep~reactions');
+    const stored = JSON.parse((env.db.prepare("SELECT settings FROM connector WHERE kind = 'apify'").get() as { settings: string }).settings);
+    expect(stored.leadCapture).toEqual({ reactionsActor: 'keep~reactions' });
+    await configureApifyConnector(env.ctx, { allowlist: fullAllowlist, leadCapture: { reactionsActor: '' } });
   });
 
   it('rejects bad ids and empty bodies', async () => {
@@ -2321,6 +2344,7 @@ describe('lead capture post actor setting', () => {
       reactionsActor: 'harvestapi/linkedin-post-reactions',
       commentsActor: 'harvestapi/linkedin-post-comments',
       profileActor: 'harvestapi/linkedin-profile-scraper',
+      companyActor: 'harvestapi/linkedin-company',
     });
     expect((await listedApify()).settings.leadCapture.postActor).toBe('my-user~my-post-actor');
     // A body that leaves the field out keeps it. An empty string resets only that field.
@@ -2332,6 +2356,7 @@ describe('lead capture post actor setting', () => {
       reactionsActor: 'keep~reactions',
       commentsActor: 'harvestapi/linkedin-post-comments',
       profileActor: 'harvestapi/linkedin-profile-scraper',
+      companyActor: 'harvestapi/linkedin-company',
     });
     const stored = JSON.parse((env.db.prepare("SELECT settings FROM connector WHERE kind = 'apify'").get() as { settings: string }).settings);
     expect(stored.leadCapture).toEqual({ reactionsActor: 'keep~reactions' });

@@ -204,12 +204,14 @@ describe('web client contract', () => {
     try {
       const defaults = ['harvestapi/linkedin-post-reactions', 'harvestapi/linkedin-post-comments', 'harvestapi/linkedin-profile-scraper'];
       const defaultPost = 'apimaestro/linkedin-post-detail';
+      const defaultCompany = 'harvestapi/linkedin-company';
       const initial = (await call('GET', '/api/connectors')).body.items[0];
       expect(initial.settings.leadCapture).toEqual({
         postActor: defaultPost,
         reactionsActor: defaults[0],
         commentsActor: defaults[1],
         profileActor: defaults[2],
+        companyActor: defaultCompany,
       });
 
       // The web sends only leadCapture, with single fields and empty strings for resets.
@@ -220,6 +222,7 @@ describe('web client contract', () => {
         reactionsActor: 'harvestapi~linkedin-post-reactions',
         commentsActor: defaults[1],
         profileActor: 'custom~profile',
+        companyActor: defaultCompany,
       });
       expect(edited.body.tokenMasked).toBe('****1234');
       const single = await call('PUT', '/api/connectors/apify', { leadCapture: { profileActor: '' } });
@@ -234,6 +237,7 @@ describe('web client contract', () => {
         reactionsActor: 'harvestapi~linkedin-post-reactions',
         commentsActor: defaults[1],
         profileActor: defaults[2],
+        companyActor: defaultCompany,
       });
       // The post source needs a ready model provider, and the message names the fix.
       const noProvider = await call('POST', '/api/runs', { kind: 'lead_capture', scope: { postUrl, sources: ['post', 'reactions', 'comments'] } });

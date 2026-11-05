@@ -16,7 +16,7 @@ import {
   ProfileLink,
 } from '../components/record';
 import { Chip } from '../components/common';
-import { EnrichControl, EnrichmentSuggestions } from '../components/enrichment';
+import { EnrichControl, EnrichmentSuggestions, OrganizationEnrichControl, OrganizationEnrichmentSuggestions } from '../components/enrichment';
 import { PersonFollowupLine } from '../components/followups';
 import { QualificationSection } from '../components/qualification';
 import { describeDue, formatAgo, humanize, personName } from '../lib/format';
@@ -242,7 +242,7 @@ export function OrganizationSheet({
       {query.isError ? <ErrorState what="this organization" error={query.error} onRetry={() => void query.refetch()} /> : null}
       {organization ? (
         <>
-          <SheetSection title="Fields">
+          <SheetSection title="Fields" headerItems={<OrganizationEnrichControl organizationId={id} />}>
             <dl className="fields">
               <FieldRow label="Kind" openClaim={openClaim} onToggleClaim={toggleClaim}>
                 <span>{humanize(organization.kind)}</span>
@@ -276,6 +276,8 @@ export function OrganizationSheet({
               </FieldRow>
             </dl>
           </SheetSection>
+
+          <OrganizationEnrichmentSuggestions organizationId={id} version={organization.version} />
 
           <OtherEvidence
             claims={organization.claims}

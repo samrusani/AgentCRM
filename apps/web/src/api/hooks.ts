@@ -9,6 +9,7 @@ import { ApiError, api } from './client';
 import { useEventConnection } from './events';
 import type {
   AcceptEnrichmentInput,
+  AcceptOrganizationEnrichmentInput,
   AgentMessageInput,
   ApifyConnectorInput,
   ApifyRunInput,
@@ -179,6 +180,62 @@ export function useDismissEnrichment() {
     mutationFn: (input: { personId: string; runId: string }) => api.people.dismissEnrichment(input.personId, input.runId),
     onSettled: async (_data, _error, input) => {
       await queryClient.invalidateQueries({ queryKey: ['enrichment', input.personId] });
+    },
+  });
+}
+
+// The organization's newest enrich run and its pending suggestions, refetched like the person one.
+// The key carries 'organization' so a person id and an organization id can never share a cache entry.
+export function useOrganizationEnrichment(id: string | null) {
+  const connection = useEventConnection();
+  return useQuery({
+    queryKey: ['enrichment', 'organization', id],
+    queryFn: () => api.organizations.enrichment(id as string),
+    enabled: Boolean(id),
+    refetchInterval: (query) => {
+      const status = query.state.data?.run?.status;
+      return connection !== 'open' && status && isRunActive(status) ? 5000 : false;
+    },
+  });
+}
+
+export function useStartEnrichOrganization() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (organizationId: string) => api.runs.startEnrichOrganization(organizationId),
+    // Same as the person one: the mutation stays pending until the next enrichment read lands.
+    onSuccess: (run, organizationId) => {
+      queryClient.setQueryData(['run', run.id], run);
+      void queryClient.invalidateQueries({ queryKey: ['runs'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+      return queryClient.invalidateQueries({ queryKey: ['enrichment', 'organization', organizationId] });
+    },
+  });
+}
+
+export function useAcceptOrganizationEnrichment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AcceptOrganizationEnrichmentInput) =>
+      api.organizations.acceptEnrichment(input.organizationId, { runId: input.runId, field: input.field, expectedVersion: input.expectedVersion }),
+    // Returning the refetches keeps the mutation pending until the organization and enrichment reads land.
+    onSettled: async (_data, _error, input) => {
+      void queryClient.invalidateQueries({ queryKey: ['organizations'] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['organization', input.organizationId] }),
+        queryClient.invalidateQueries({ queryKey: ['enrichment', 'organization', input.organizationId] }),
+      ]);
+    },
+  });
+}
+
+export function useDismissOrganizationEnrichment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { organizationId: string; runId: string }) =>
+      api.organizations.dismissEnrichment(input.organizationId, input.runId),
+    onSettled: async (_data, _error, input) => {
+      await queryClient.invalidateQueries({ queryKey: ['enrichment', 'organization', input.organizationId] });
     },
   });
 }

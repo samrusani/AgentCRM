@@ -38,21 +38,28 @@ export function listRunSteps(db: Db, runId: string) {
   return (db.prepare('SELECT * FROM run_step WHERE run_id = ? ORDER BY seq, id').all(runId) as Row[]).map(toRunStep);
 }
 
-// Scope keys of an enrich_person run that hold scraped text. Agent facing reads leave them out so scraped text
-// reaches no model or agent surface before a person accepted it.
-const enrichAgentHiddenKeys = ['suggestions', 'profileUrl'] as const;
+// Scope keys of an enrichment run that hold scraped text or the frozen lookup target. Agent facing reads leave them
+// out so scraped text reaches no model or agent surface before a person accepted it.
+const enrichAgentHiddenKeys = new Map<string, readonly string[]>([
+  ['enrich_person', ['suggestions', 'profileUrl']],
+  ['enrich_organization', ['suggestions', 'target', 'sourceUrl']],
+]);
 
 export function getRunDetail(db: Db, workspaceId: string, id: string, options: { forAgent?: boolean } = {}) {
   const found = requireRun(db, workspaceId, id);
   let run = found;
-  if (options.forAgent && found.kind === 'enrich_person') {
+  const hiddenForAgent = enrichAgentHiddenKeys.get(found.kind);
+  if (options.forAgent && hiddenForAgent) {
     const scope = { ...found.scope };
-    for (const key of enrichAgentHiddenKeys) delete scope[key];
+    for (const key of hiddenForAgent) delete scope[key];
     run = { ...found, scope };
   }
+  // Agent reads of enrich runs also blank every step detail: a name mode detail names the scraped
+  // company, and scraped text reaches no agent surface before a human accepted it.
+  const steps = listRunSteps(db, id);
   return {
     ...run,
-    steps: listRunSteps(db, id),
+    steps: options.forAgent && hiddenForAgent ? steps.map((step) => ({ ...step, detail: null })) : steps,
     approvals: (
       db
         .prepare(
@@ -86,7 +93,7 @@ function parseStatuses(value: string): RunStatus[] {
 const bulkyScopeKeys = ['drafts', 'failures', 'skipped', 'audienceIds', 'extraction', 'extractionResult'] as const;
 
 function trimScopeForList(run: ReturnType<typeof toRun>): ReturnType<typeof toRun> {
-  const hidden: readonly string[] = run.kind === 'enrich_person' ? [...bulkyScopeKeys, ...enrichAgentHiddenKeys] : bulkyScopeKeys;
+  const hidden: readonly string[] = [...bulkyScopeKeys, ...(enrichAgentHiddenKeys.get(run.kind) ?? [])];
   if (!hidden.some((key) => key in run.scope)) return run;
   const scope = { ...run.scope };
   for (const key of hidden) delete scope[key];

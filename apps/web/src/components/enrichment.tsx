@@ -2,39 +2,55 @@ import { useEffect, useState } from 'react';
 import { ApiError } from '../api/client';
 import {
   useAcceptEnrichment,
+  useAcceptOrganizationEnrichment,
   useApifyConnector,
   useDismissEnrichment,
+  useDismissOrganizationEnrichment,
+  useOrganizationEnrichment,
   usePersonEnrichment,
+  useStartEnrichOrganization,
   useStartEnrichPerson,
 } from '../api/hooks';
+import type { EnrichmentState } from '../api/types';
 import { ENRICH_FIELD_LABELS } from '../lib/enrichment';
 import { isRunActive } from '../lib/format';
 import { errorMessage } from './common';
 import { SheetSection } from './record';
 
 export const ENRICH_COST_LINE = 'Runs one profile scrape on your Apify account.';
+export const ENRICH_ORG_COST_LINE = 'Runs one company lookup on your Apify account.';
 export const ENRICH_NEEDS_APIFY = 'Connect Apify in Settings to enrich';
 export const ENRICH_NEEDS_LINKEDIN = 'Add a LinkedIn profile first';
 export const ENRICH_NOTHING_NEW = 'Nothing new to suggest.';
 export const ENRICH_FAILED = 'The enrich run did not finish.';
 
+interface EnrichControlViewProps {
+  subjectId: string;
+  costLine: string;
+  // Person enrichment needs a saved LinkedIn profile; organization enrichment can run by name.
+  needsLinkedin: boolean;
+  linkedinUrl?: string | null;
+  enrichment: { data: EnrichmentState | undefined };
+  start: { isPending: boolean; isError: boolean; error: unknown; mutate: (id: string) => void };
+}
+
 // The Enrich button and its lines. Rendered beside the Fields title, so the lines wrap below it.
-export function EnrichControl({ personId, linkedinUrl }: { personId: string; linkedinUrl: string | null | undefined }) {
+function EnrichControlView({ subjectId, costLine, needsLinkedin, linkedinUrl, enrichment, start }: EnrichControlViewProps) {
   const { query: connectorQuery, connector } = useApifyConnector();
-  const enrichment = usePersonEnrichment(personId);
-  const start = useStartEnrichPerson();
 
   const connected = Boolean(connector) && connector?.status !== 'error';
   const runOpen = Boolean(enrichment.data?.run && isRunActive(enrichment.data.run.status));
   const enriching = runOpen || start.isPending;
 
+  const missingLinkedin = needsLinkedin && !linkedinUrl;
+
   // Name the missing piece once the connector check has settled, so the line never flashes while loading.
   let reason: string | null = null;
   if (!connected && !connectorQuery.isPending) reason = ENRICH_NEEDS_APIFY;
-  else if (connected && !linkedinUrl) reason = ENRICH_NEEDS_LINKEDIN;
+  else if (connected && missingLinkedin) reason = ENRICH_NEEDS_LINKEDIN;
 
-  const blocked = !connected || !linkedinUrl;
-  const reasonId = `enrich-reason-${personId}`;
+  const blocked = !connected || missingLinkedin;
+  const reasonId = `enrich-reason-${subjectId}`;
 
   return (
     <>
@@ -43,11 +59,11 @@ export function EnrichControl({ personId, linkedinUrl }: { personId: string; lin
         className="btn"
         disabled={enriching || blocked}
         aria-describedby={reason ? reasonId : undefined}
-        onClick={() => start.mutate(personId)}
+        onClick={() => start.mutate(subjectId)}
       >
         {enriching ? 'Enriching' : 'Enrich'}
       </button>
-      <p className="muted sheet-section__note">{ENRICH_COST_LINE}</p>
+      <p className="muted sheet-section__note">{costLine}</p>
       {reason ? (
         <p className="muted sheet-section__note" id={reasonId}>
           {reason}
@@ -62,11 +78,52 @@ export function EnrichControl({ personId, linkedinUrl }: { personId: string; lin
   );
 }
 
-// Pending suggestions from the newest enrich run, between Fields and Qualification.
-export function EnrichmentSuggestions({ personId, version }: { personId: string; version: number }) {
+export function EnrichControl({ personId, linkedinUrl }: { personId: string; linkedinUrl: string | null | undefined }) {
   const enrichment = usePersonEnrichment(personId);
-  const accept = useAcceptEnrichment();
-  const dismiss = useDismissEnrichment();
+  const start = useStartEnrichPerson();
+  return (
+    <EnrichControlView
+      subjectId={personId}
+      costLine={ENRICH_COST_LINE}
+      needsLinkedin
+      linkedinUrl={linkedinUrl}
+      enrichment={enrichment}
+      start={start}
+    />
+  );
+}
+
+export function OrganizationEnrichControl({ organizationId }: { organizationId: string }) {
+  const enrichment = useOrganizationEnrichment(organizationId);
+  const start = useStartEnrichOrganization();
+  return (
+    <EnrichControlView
+      subjectId={organizationId}
+      costLine={ENRICH_ORG_COST_LINE}
+      needsLinkedin={false}
+      enrichment={enrichment}
+      start={start}
+    />
+  );
+}
+
+interface AcceptVars {
+  runId: string;
+  field: string;
+  expectedVersion: number;
+}
+
+interface SuggestionsViewProps {
+  version: number;
+  // Organization runs can match by name, so the run detail names the company found. It shows above the
+  // list there; the person sheet shows the detail only when nothing is pending.
+  detailAbovePending: boolean;
+  enrichment: { data: EnrichmentState | undefined; refetch: () => unknown };
+  accept: { isPending: boolean; mutate: (vars: AcceptVars, options: { onError: (error: unknown) => void; onSettled: () => void }) => void };
+  dismiss: { isPending: boolean; isError: boolean; error: unknown; mutate: (runId: string) => void };
+}
+
+function SuggestionsView({ version, detailAbovePending, enrichment, accept, dismiss }: SuggestionsViewProps) {
   const [problem, setProblem] = useState<{ field: string; message: string } | null>(null);
   const [acceptingField, setAcceptingField] = useState<string | null>(null);
 
@@ -99,7 +156,7 @@ export function EnrichmentSuggestions({ personId, version }: { personId: string;
     setProblem(null);
     setAcceptingField(field);
     accept.mutate(
-      { personId, runId: run.id, field, expectedVersion: version },
+      { runId: run.id, field, expectedVersion: version },
       {
         onError: (error) => {
           const conflict = error instanceof ApiError && error.status === 409;
@@ -120,6 +177,7 @@ export function EnrichmentSuggestions({ personId, version }: { personId: string;
 
   return (
     <SheetSection title="Suggestions">
+      {detailAbovePending && !isRunActive(run.status) && run.detail ? <p className="muted">{run.detail}</p> : null}
       <ul className="suggestion-list">
         {suggestions.map((suggestion) => {
           const label = ENRICH_FIELD_LABELS[suggestion.field] ?? suggestion.field;
@@ -165,7 +223,7 @@ export function EnrichmentSuggestions({ personId, version }: { personId: string;
           disabled={busy}
           onClick={() => {
             setProblem(null);
-            dismiss.mutate({ personId, runId: run.id });
+            dismiss.mutate(run.id);
           }}
         >
           Dismiss
@@ -173,5 +231,47 @@ export function EnrichmentSuggestions({ personId, version }: { personId: string;
         {dismiss.isError ? <span className="inline-error">{errorMessage(dismiss.error)}</span> : null}
       </div>
     </SheetSection>
+  );
+}
+
+// Pending suggestions from the newest enrich run, between Fields and Qualification.
+export function EnrichmentSuggestions({ personId, version }: { personId: string; version: number }) {
+  const enrichment = usePersonEnrichment(personId);
+  const accept = useAcceptEnrichment();
+  const dismiss = useDismissEnrichment();
+  return (
+    <SuggestionsView
+      version={version}
+      detailAbovePending={false}
+      enrichment={enrichment}
+      accept={{ isPending: accept.isPending, mutate: (vars, options) => accept.mutate({ personId, ...vars }, options) }}
+      dismiss={{
+        isPending: dismiss.isPending,
+        isError: dismiss.isError,
+        error: dismiss.error,
+        mutate: (runId) => dismiss.mutate({ personId, runId }),
+      }}
+    />
+  );
+}
+
+// The same list for an organization, plus the run detail above it (it names the company a name lookup found).
+export function OrganizationEnrichmentSuggestions({ organizationId, version }: { organizationId: string; version: number }) {
+  const enrichment = useOrganizationEnrichment(organizationId);
+  const accept = useAcceptOrganizationEnrichment();
+  const dismiss = useDismissOrganizationEnrichment();
+  return (
+    <SuggestionsView
+      version={version}
+      detailAbovePending
+      enrichment={enrichment}
+      accept={{ isPending: accept.isPending, mutate: (vars, options) => accept.mutate({ organizationId, ...vars }, options) }}
+      dismiss={{
+        isPending: dismiss.isPending,
+        isError: dismiss.isError,
+        error: dismiss.error,
+        mutate: (runId) => dismiss.mutate({ organizationId, runId }),
+      }}
+    />
   );
 }

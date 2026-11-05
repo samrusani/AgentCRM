@@ -73,7 +73,13 @@ const configureSchema = z
       .optional(),
     // Fields that are sent change; fields that are left out stay as they are. An empty string resets one to its default.
     leadCapture: z
-      .object({ postActor: leadCaptureField, reactionsActor: leadCaptureField, commentsActor: leadCaptureField, profileActor: leadCaptureField })
+      .object({
+        postActor: leadCaptureField,
+        reactionsActor: leadCaptureField,
+        commentsActor: leadCaptureField,
+        profileActor: leadCaptureField,
+        companyActor: leadCaptureField,
+      })
       .strict()
       .optional(),
   })

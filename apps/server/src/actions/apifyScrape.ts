@@ -14,7 +14,9 @@ import { markConnectorError } from './connectors.js';
 import { type ActionContext, mutate, type Tx, withTxActor } from './context.js';
 import { setCounts, startStep, type AdvanceResult } from './demoResearch.js';
 import { enqueueJobIn } from './jobs.js';
-import { abortEnrichPersonRun, enrichPersonKind, failActiveEnrichPersonRuns } from './enrichPerson.js';
+import { enrichOrganizationFlavor } from './enrichOrganization.js';
+import { enrichPersonFlavor } from './enrichPerson.js';
+import { abortEnrichRun, failActiveEnrichRuns } from './enrichRun.js';
 import { abortLeadCaptureCalls, failActiveLeadCaptureRuns, leadCaptureKind } from './leadCapture.js';
 import {
   completeStep,
@@ -89,7 +91,7 @@ export function failActiveApifyRuns(ctx: ActionContext, detail: string): string[
         .all(tx.workspaceId, apifyKind) as { id: string }[]
     ).map((row) => row.id);
     for (const id of ids) failImportRunIn(tx, id, detail);
-    return [...ids, ...failActiveLeadCaptureRuns(tx, detail), ...failActiveEnrichPersonRuns(tx, detail)];
+    return [...ids, ...failActiveLeadCaptureRuns(tx, detail), ...failActiveEnrichRuns(tx, enrichPersonFlavor, detail), ...failActiveEnrichRuns(tx, enrichOrganizationFlavor, detail)];
   });
 }
 
@@ -135,7 +137,8 @@ function appendStepNote(tx: Tx, runId: string, seq: number, note: string): void 
 export async function abortRemoteRunIfNeeded(ctx: ActionContext, runId: string): Promise<void> {
   const run = getRun(ctx.db, ctx.workspaceId, runId);
   if (run?.kind === leadCaptureKind) return abortLeadCaptureCalls(ctx, runId);
-  if (run?.kind === enrichPersonKind) return abortEnrichPersonRun(ctx, runId);
+  if (run?.kind === enrichPersonFlavor.kind) return abortEnrichRun(ctx, enrichPersonFlavor, runId);
+  if (run?.kind === enrichOrganizationFlavor.kind) return abortEnrichRun(ctx, enrichOrganizationFlavor, runId);
   if (!run || run.kind !== apifyKind || (run.status !== 'cancelled' && run.status !== 'failed')) return;
   const scope = readScope(run.scope);
   const remoteId = scope.apifyRunId;

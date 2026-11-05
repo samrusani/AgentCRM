@@ -3,6 +3,7 @@ import { conflict, validationError } from '../errors.js';
 import { getRunDetail, listRunSteps, requireRun } from '../queries/runs.js';
 import { dotSegmentMessage, hasDotSegment } from '../providers/apify.js';
 import { getConnector } from '../queries/connectors.js';
+import { requireOrganization } from '../queries/organizations.js';
 import { requirePerson } from '../queries/people.js';
 import { isActiveModelReady } from '../queries/modelProvider.js';
 import { terminalRunStatuses, type RunCounts } from '../records.js';
@@ -29,12 +30,17 @@ import { isLinkedinPostUrl, postUrlShapesMessage } from './leadCaptureMapping.js
 import { defaultAgentBudgetUsd, draftKind, draftScopeSchema, draftStepTitlesFor, scheduleDraftRun } from './draftOutreach.js';
 import {
   enrichByAgentMessage,
-  enrichPersonKind,
   enrichPersonStartScope,
   enrichPersonStepTitles,
-  noteUnknownStartOnCancelIn,
   scheduleEnrichPersonRun,
 } from './enrichPerson.js';
+import {
+  enrichOrganizationByAgentMessage,
+  enrichOrganizationStartScope,
+  enrichOrganizationStepTitles,
+  scheduleEnrichOrganizationRun,
+} from './enrichOrganization.js';
+import { enrichOrganizationKind, enrichPersonKind, isEnrichKind, noteUnknownStartOnCancelIn } from './enrichRun.js';
 import { closeImportBatchForRun } from './importReview.js';
 import { idSchema } from './schemas.js';
 import { cancelIntentsForRunIn } from './sendIntents.js';
@@ -125,6 +131,14 @@ const enrichPersonRunSchema = z
   })
   .strict();
 
+const enrichOrganizationRunSchema = z
+  .object({
+    kind: z.literal('enrich_organization'),
+    title: z.string().trim().min(1).max(200).optional(),
+    scope: z.object({ organizationId: idSchema }).strict(),
+  })
+  .strict();
+
 const startRunSchema = z.discriminatedUnion('kind', [
   demoRunSchema,
   apifyRunSchema,
@@ -132,6 +146,7 @@ const startRunSchema = z.discriminatedUnion('kind', [
   draftRunSchema,
   leadCaptureRunSchema,
   enrichPersonRunSchema,
+  enrichOrganizationRunSchema,
 ]);
 
 export interface StartRunOptions {
@@ -207,6 +222,7 @@ export function scheduleRunJob(tx: Tx, kind: string, runId: string, runAt: strin
   if (kind === apifyKind) scheduleApifyRun(tx, runId, runAt);
   else if (kind === leadCaptureKind) scheduleLeadCaptureRun(tx, runId, runAt);
   else if (kind === enrichPersonKind) scheduleEnrichPersonRun(tx, runId, runAt);
+  else if (kind === enrichOrganizationKind) scheduleEnrichOrganizationRun(tx, runId, runAt);
   else if (kind === draftKind) scheduleDraftRun(tx, runId, runAt);
   else if (kind === csvImportKind) scheduleCsvImportRun(tx, runId, runAt);
   else if (kind === qualifyKind) scheduleQualifyRun(tx, runId, runAt);
@@ -216,8 +232,9 @@ export function scheduleRunJob(tx: Tx, kind: string, runId: string, runAt: strin
 export function startRun(ctx: ActionContext, input: unknown, options: StartRunOptions = {}) {
   const parsed = parseInput(startRunSchema, input);
   const origin = options.origin ?? 'user';
-  // Enrichment spends the user's Apify credit on one scrape and is started from the person sheet only.
+  // Enrichment spends the user's Apify credit on one scrape or lookup and is started from the record sheet only.
   if (parsed.kind === 'enrich_person' && origin === 'agent') throw validationError(enrichByAgentMessage);
+  if (parsed.kind === 'enrich_organization' && origin === 'agent') throw validationError(enrichOrganizationByAgentMessage);
   const data =
     parsed.kind === 'lead_capture'
       ? { ...parsed, scope: { ...parsed.scope, sources: resolveLeadSources(ctx, parsed.scope.sources, origin) } }
@@ -316,6 +333,14 @@ export function startRun(ctx: ActionContext, input: unknown, options: StartRunOp
       counts = { processed: 0, found: 0, flagged: 0 };
       storedScope = { ...enrichScope };
       auditScope = { personId: enrichScope.personId, actorId: enrichScope.actorId, origin };
+    } else if (data.kind === 'enrich_organization') {
+      const enrichScope = enrichOrganizationStartScope(tx, data.scope.organizationId);
+      const organization = requireOrganization(tx.db, tx.workspaceId, data.scope.organizationId);
+      title = data.title ?? `Enrich ${organization.name}`;
+      stepTitles = enrichOrganizationStepTitles;
+      counts = { processed: 0, found: 0, flagged: 0 };
+      storedScope = { ...enrichScope };
+      auditScope = { organizationId: enrichScope.organizationId, actorId: enrichScope.actorId, origin };
     } else if (data.kind === 'qualify') {
       title = data.title ?? (data.scope.tag ? `Qualify people tagged ${data.scope.tag}` : 'Qualify people');
       stepTitles = qualifyStepTitles;
@@ -380,8 +405,8 @@ export function controlRun(ctx: ActionContext, runId: string, input: unknown) {
         scheduleRunJob(tx, run.kind, runId, now);
       }
       // A lead capture run may have several remote calls. The job asks Apify to stop every unfinished one.
-      if (run.kind === enrichPersonKind) noteUnknownStartOnCancelIn(tx, runId, run.scope);
-      if (run.kind === enrichPersonKind && scope.apifyRunId && !scope.apifyFinished && !scope.abortRequested) {
+      if (isEnrichKind(run.kind)) noteUnknownStartOnCancelIn(tx, runId, run.scope);
+      if (isEnrichKind(run.kind) && scope.apifyRunId && !scope.apifyFinished && !scope.abortRequested) {
         scheduleRunJob(tx, run.kind, runId, now);
       }
       if (run.kind === leadCaptureKind && hasUnfinishedCall(run.scope)) {

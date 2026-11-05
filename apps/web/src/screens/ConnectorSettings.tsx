@@ -125,6 +125,7 @@ const LEAD_FIELDS: Array<{ key: keyof LeadCaptureSettings; label: string }> = [
   { key: 'reactionsActor', label: 'Reactions' },
   { key: 'commentsActor', label: 'Comments' },
   { key: 'profileActor', label: 'Profile enrichment' },
+  { key: 'companyActor', label: 'Company lookup' },
 ];
 
 function sameActor(a: string, b: string): boolean {

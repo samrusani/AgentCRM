@@ -5,6 +5,7 @@ import {
   advanceCsvImportRun,
   advanceDemoRun,
   advanceDraftRun,
+  advanceEnrichOrganizationRun,
   advanceEnrichPersonRun,
   advanceLeadCaptureRun,
   advanceQualifyRun,
@@ -13,6 +14,7 @@ import {
   csvImportJobKind,
   completeJob,
   draftJobKind,
+  enrichOrganizationJobKind,
   enrichPersonJobKind,
   failJob,
   failRun,
@@ -71,7 +73,13 @@ async function runApifyJob(ctx: ActionContext, job: JobRecord): Promise<void> {
   const jobContext: ActionContext = { ...ctx, workspaceId: String(job.payload.workspaceId), actor: 'system' };
   try {
     const advance =
-      job.kind === leadCaptureJobKind ? advanceLeadCaptureRun : job.kind === enrichPersonJobKind ? advanceEnrichPersonRun : advanceApifyRun;
+      job.kind === leadCaptureJobKind
+        ? advanceLeadCaptureRun
+        : job.kind === enrichPersonJobKind
+          ? advanceEnrichPersonRun
+          : job.kind === enrichOrganizationJobKind
+            ? advanceEnrichOrganizationRun
+            : advanceApifyRun;
     const result = await advance(jobContext, runId);
     if (result.nextRunAt) rescheduleJob(ctx, job.id, result.nextRunAt, true);
     else completeJob(ctx, job.id);
@@ -112,14 +120,14 @@ async function runDraftJob(ctx: ActionContext, job: JobRecord): Promise<void> {
 
 // Processes every simulated job that is due. Single writer: this runs on the server's event loop, one job at a time.
 export function processJobs(ctx: ActionContext): number {
-  const jobs = claimDueJobs(ctx, 10, { excludeKinds: [apifyJobKind, enrichPersonJobKind, leadCaptureJobKind, draftJobKind, mailReconcileJobKind] });
+  const jobs = claimDueJobs(ctx, 10, { excludeKinds: [apifyJobKind, enrichPersonJobKind, enrichOrganizationJobKind, leadCaptureJobKind, draftJobKind, mailReconcileJobKind] });
   for (const job of jobs) runJob(ctx, job);
   return jobs.length;
 }
 
-// Apify imports and profile enrichment runs share a lane of their own: polling runs and reading datasets, which never waits on a model call.
+// Apify imports and field enrichment runs share a lane of their own: polling runs and reading datasets, which never waits on a model call.
 export async function processApifyJobs(ctx: ActionContext): Promise<number> {
-  const jobs = claimDueJobs(ctx, 10, { kinds: [apifyJobKind, enrichPersonJobKind] });
+  const jobs = claimDueJobs(ctx, 10, { kinds: [apifyJobKind, enrichPersonJobKind, enrichOrganizationJobKind] });
   for (const job of jobs) await runApifyJob(ctx, job);
   return jobs.length;
 }

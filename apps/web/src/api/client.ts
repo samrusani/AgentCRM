@@ -295,7 +295,7 @@ function messageFrom(...candidates: unknown[]): string | null {
   return null;
 }
 
-// Apify connectors always carry the four actors. An older server that omits them gets the documented defaults.
+// Apify connectors always carry the five actors. An older server that omits them gets the documented defaults.
 function normalizeLeadCapture(kind: unknown, raw: unknown): LeadCaptureSettings | null {
   if (textOrNull(kind) !== 'apify') return null;
   const record = objectOrEmpty(raw);
@@ -304,6 +304,7 @@ function normalizeLeadCapture(kind: unknown, raw: unknown): LeadCaptureSettings 
     reactionsActor: textOrNull(record.reactionsActor) ?? DEFAULT_LEAD_ACTORS.reactionsActor,
     commentsActor: textOrNull(record.commentsActor) ?? DEFAULT_LEAD_ACTORS.commentsActor,
     profileActor: textOrNull(record.profileActor) ?? DEFAULT_LEAD_ACTORS.profileActor,
+    companyActor: textOrNull(record.companyActor) ?? DEFAULT_LEAD_ACTORS.companyActor,
   };
 }
 
@@ -836,6 +837,16 @@ export const api = {
       normalizeOrganizationDetail(await request<unknown>('GET', `/organizations/${id}`)),
     patch: (id: string, expectedVersion: number, fields: Record<string, unknown>) =>
       request<Organization>('PATCH', `/organizations/${id}`, { body: { expectedVersion, fields } }),
+    // The organization's newest enrich run and the suggestions still waiting for a decision.
+    enrichment: async (id: string): Promise<EnrichmentState> => {
+      const data = objectOrEmpty(await request<unknown>('GET', `/organizations/${id}/enrichment`));
+      const run = data.run && typeof data.run === 'object' ? (data.run as EnrichmentState['run']) : null;
+      return { run, suggestions: Array.isArray(data.suggestions) ? (data.suggestions as EnrichmentState['suggestions']) : [] };
+    },
+    acceptEnrichment: (id: string, input: { runId: string; field: string; expectedVersion: number }) =>
+      request<unknown>('POST', `/organizations/${id}/enrichment`, { body: input }),
+    dismissEnrichment: (id: string, runId: string) =>
+      request<unknown>('DELETE', `/organizations/${id}/enrichment`, { query: { runId } }),
   },
 
   pipelines: async () => asPage<Pipeline>(await request<unknown>('GET', '/pipelines')).items.map((pipeline) => ({
@@ -905,6 +916,8 @@ export const api = {
     },
     startEnrichPerson: async (personId: string) =>
       normalizeRun(await request<Run>('POST', '/runs', { body: { kind: 'enrich_person', scope: { personId } } })),
+    startEnrichOrganization: async (organizationId: string) =>
+      normalizeRun(await request<Run>('POST', '/runs', { body: { kind: 'enrich_organization', scope: { organizationId } } })),
     startQualify: async (scope: { tag?: string } = {}) =>
       normalizeRun(await request<Run>('POST', '/runs', { body: { kind: 'qualify', scope } })),
     get: async (id: string) => normalizeRun(await request<Run>('GET', `/runs/${id}`)),

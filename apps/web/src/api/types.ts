@@ -377,12 +377,13 @@ export interface OllamaModel {
   name: string;
 }
 
-// The four actors lead capture runs. The server always sends effective values, with defaults applied.
+// The actors lead capture and enrichment run. The server always sends effective values, with defaults applied.
 export interface LeadCaptureSettings {
   postActor: string;
   reactionsActor: string;
   commentsActor: string;
   profileActor: string;
+  companyActor: string;
 }
 
 export interface ApifyConnectorInput {
@@ -652,7 +653,7 @@ export interface QualificationResult extends QualificationSummary {
   criteria: CriterionResult[];
 }
 
-export type EnrichmentField = 'title' | 'location' | 'email';
+export type EnrichmentField = 'title' | 'location' | 'email' | 'linkedinUrl' | 'domain';
 
 export interface EnrichmentRun {
   id: string;
@@ -677,6 +678,13 @@ export interface EnrichmentState {
 
 export interface AcceptEnrichmentInput {
   personId: string;
+  runId: string;
+  field: string;
+  expectedVersion: number;
+}
+
+export interface AcceptOrganizationEnrichmentInput {
+  organizationId: string;
   runId: string;
   field: string;
   expectedVersion: number;

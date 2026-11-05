@@ -14,6 +14,8 @@ export interface LeadCaptureActors {
   reactionsActor: string;
   commentsActor: string;
   profileActor: string;
+  // The company lookup actor used by organization enrichment, not by lead capture runs.
+  companyActor: string;
 }
 
 export const defaultLeadCaptureActors: LeadCaptureActors = {
@@ -21,9 +23,10 @@ export const defaultLeadCaptureActors: LeadCaptureActors = {
   reactionsActor: 'harvestapi/linkedin-post-reactions',
   commentsActor: 'harvestapi/linkedin-post-comments',
   profileActor: 'harvestapi/linkedin-profile-scraper',
+  companyActor: 'harvestapi/linkedin-company',
 };
 
-export const leadCaptureActorFields = ['postActor', 'reactionsActor', 'commentsActor', 'profileActor'] as const;
+export const leadCaptureActorFields = ['postActor', 'reactionsActor', 'commentsActor', 'profileActor', 'companyActor'] as const;
 
 export interface ApifyConnectorSettings {
   allowlist: string[];

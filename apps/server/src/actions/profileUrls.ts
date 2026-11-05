@@ -84,6 +84,9 @@ export function canonicalPersonLinkedinUrl(value: unknown): string | null {
 
 // https://www.linkedin.com/company/<slug> for an organization's LinkedIn page, or null for any other link.
 // The slug keeps its case and percent encoding; query, fragment, trailing slash, and deeper path are dropped.
+// A link whose canonical form would pass 500 characters is refused, the same bound the extraction schema puts on URLs.
+export const maxCompanyLinkedinUrlLength = 500;
+
 export function canonicalCompanyLinkedinUrl(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const url = parseUrl(value);
@@ -92,7 +95,17 @@ export function canonicalCompanyLinkedinUrl(value: unknown): string | null {
   if (!linkedinHost(url.hostname)) return null;
   const match = /^\/company\/([^/]+)/.exec(url.pathname);
   if (!match || !match[1]) return null;
-  return `https://www.linkedin.com/company/${match[1]}`;
+  const canonicalUrl = `https://www.linkedin.com/company/${match[1]}`;
+  return canonicalUrl.length > maxCompanyLinkedinUrlLength ? null : canonicalUrl;
+}
+
+// encodeURIComponent throws on a lone surrogate. An identifier that cannot be percent encoded counts as absent.
+export function encodeIdentifier(value: string): string | null {
+  try {
+    return encodeURIComponent(value);
+  } catch {
+    return null;
+  }
 }
 
 const reservedXPaths = new Set([

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   abortRemoteRunIfNeeded,
   acceptEnrichmentSuggestion,
+  acceptOrganizationEnrichmentSuggestion,
   addSuppression,
   bearerToken,
   capturePerson,
@@ -35,10 +36,12 @@ import {
   disconnectMicrosoftConnector,
   disconnectModelConnector,
   dismissEnrichment,
+  dismissOrganizationEnrichment,
   generateCaptureToken,
   getApifyActor,
   getCaptureSettings,
   getEnrichment,
+  getOrganizationEnrichment,
   getMailProvider,
   getModelProvider,
   liftSuppression,
@@ -226,6 +229,17 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   app.patch('/api/organizations/:id', async (request) =>
     updateOrganization(context(), idParam(request.params), request.body),
   );
+  app.get('/api/organizations/:id/enrichment', async (request) =>
+    getOrganizationEnrichment({ db, workspaceId: workspaceId() }, idParam(request.params)),
+  );
+  app.post('/api/organizations/:id/enrichment', async (request) =>
+    acceptOrganizationEnrichmentSuggestion(context(), idParam(request.params), request.body),
+  );
+  app.delete('/api/organizations/:id/enrichment', async (request, reply) => {
+    const { runId } = parseInput(z.object({ runId: z.string().min(1) }), request.query);
+    dismissOrganizationEnrichment(context(), idParam(request.params), runId);
+    return reply.status(204).send();
+  });
 
   app.get('/api/pipelines', async () => ({ items: listPipelines(db, workspaceId()), nextCursor: null }));
 
