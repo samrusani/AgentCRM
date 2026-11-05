@@ -1359,7 +1359,7 @@ describe('lead capture post source with a model provider', () => {
     for (const step of detail.steps) expect(step.detail, step.title).toBeTruthy();
     expect(stub.state.startActors).toEqual([postActorId, reactionsActorId, commentsActorId, profileActorId]);
     expect(stub.state.startBodies[0]).toEqual({ post_urls: [postUrl] });
-    expect(stub.state.startQueries[0]).toContain('maxItems=1');
+    expect(stub.state.startQueries[0]).toContain('maxItems=5');
     expect(anthropic.state.messageCalls).toBe(1);
 
     const calls = detail.scope.calls as Record<string, Record<string, unknown>>;

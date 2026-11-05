@@ -2,6 +2,7 @@ import {
   abortRun as abortApifyRun,
   ApifyError,
   getRun as getApifyRun,
+  minimumCapItems,
   startRun as startApifyRun,
 } from '../providers/apify.js';
 import { apifyPollMilliseconds, apifyTimeoutMilliseconds } from '../config.js';
@@ -284,7 +285,8 @@ async function startScrapeStep<S extends EnrichScopeBase>(
   let started;
   try {
     started = await startApifyRun(token, scope.actorId, flavor.startInput(scope), {
-      maxItems: 1,
+      // One target in the input bounds the work; the floor only clears Apify's minimum charge cap.
+      maxItems: minimumCapItems,
       timeoutSeconds: Math.max(1, Math.ceil(apifyTimeoutMilliseconds() / 1000)),
     });
   } catch (error) {

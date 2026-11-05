@@ -4,6 +4,7 @@ import {
   ApifyError,
   getDatasetItems,
   getRun as getApifyRun,
+  minimumCapItems,
   startRun as startApifyRun,
 } from '../providers/apify.js';
 import { apifyPollMilliseconds, apifyTimeoutMilliseconds } from '../config.js';
@@ -625,7 +626,8 @@ async function startCall(ctx: ActionContext, runId: string, scope: LeadScope, ke
   let started;
   try {
     started = await startApifyRun(token, actorId, request.input, {
-      maxItems: request.maxItems,
+      // The inputs bound the work to the requested targets; the floor only clears Apify's minimum charge cap.
+      maxItems: Math.max(request.maxItems, minimumCapItems),
       timeoutSeconds: Math.max(1, Math.ceil(apifyTimeoutMilliseconds() / 1000)),
     });
   } catch (error) {

@@ -235,6 +235,12 @@ function runInfo(data: Json): ApifyRunInfo {
   return { id, status, statusMessage: text(data.statusMessage), datasetId: text(data.defaultDatasetId) };
 }
 
+// Apify refuses a charge cap below an actor's own minimum charge per run (a one item cap on
+// harvestapi/linkedin-company is rejected with HTTP 400, minimum $0.00405). Caps the app computes
+// itself are floored here before being sent; the call inputs bound the actual work, so the floor
+// raises only the ceiling, never the bill. A user-set apify_scrape maxItems is sent as given.
+export const minimumCapItems = 5;
+
 // maxItems and timeoutSeconds are Apify's own caps, so the user's account is not charged past them.
 export async function startRun(
   token: string,

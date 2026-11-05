@@ -155,7 +155,7 @@ describe('enrich_organization run in url mode', () => {
     expect(stub.state.startCalls).toBe(1);
     expect(stub.state.startActors).toEqual([companyActorKey]);
     expect(stub.state.startBodies[0]).toEqual({ companies: [orgUrl] });
-    expect(stub.state.startQueries[0]).toContain('maxItems=1');
+    expect(stub.state.startQueries[0]).toContain('maxItems=5');
     // The run writes nothing to the organization.
     expect(env.db.prepare('SELECT domain, location, version FROM organization WHERE id = ?').get(org.id)).toEqual({
       domain: null,
@@ -259,7 +259,7 @@ describe('enrich_organization run in name mode', () => {
     const { status, detail } = await enrich(org);
     expect(status).toBe('succeeded');
     expect(stub.state.startBodies[0]).toEqual({ searches: [org.name] });
-    expect(stub.state.startQueries[0]).toContain('maxItems=1');
+    expect(stub.state.startQueries[0]).toContain('maxItems=5');
     expect(detail.scope).toMatchObject({ target: org.name, targetKind: 'name', sourceUrl: orgUrl });
     expect(suggestionFields(detail)).toEqual(['linkedinUrl', 'domain', 'location']);
     // The final step detail names what the lookup returned so a person can judge the match.

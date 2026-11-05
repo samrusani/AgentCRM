@@ -108,7 +108,9 @@ describe('enrich_person run', () => {
     expect(stub.state.startCalls).toBe(1);
     expect(stub.state.startActors).toEqual([profileActorKey]);
     expect(stub.state.startBodies[0]).toEqual({ queries: [profileUrl], profileUrls: [profileUrl], usernames: [profileUrl] });
-    expect(stub.state.startQueries[0]).toContain('maxItems=1');
+    // The cap is floored at 5 items: Apify refuses a charge cap below the actor's minimum charge
+    // per run (live finding, HTTP 400 on a one item cap). The one target input bounds the bill.
+    expect(stub.state.startQueries[0]).toContain('maxItems=5');
     // The run writes nothing to the person.
     expect(env.db.prepare('SELECT title, location, email, version FROM person WHERE id = ?').get(person.id)).toEqual({
       title: null,
