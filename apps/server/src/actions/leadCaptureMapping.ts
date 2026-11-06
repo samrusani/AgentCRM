@@ -4,7 +4,7 @@ import { clean, hostnameOf, type Item, mapItem, type MappedRow, normalizeName, s
 export { normalizeProfileUrl };
 
 export const postUrlShapesMessage =
-  'The link must start with http:// or https:// and be a linkedin.com post link. Accepted shapes: https://www.linkedin.com/posts/name-topic-activity-1234567890123456789-AbCd (ugcPost and share slugs work too) and https://www.linkedin.com/feed/update/urn:li:activity:1234567890123456789 (urn:li:ugcPost and urn:li:share work too). A lnkd.in short link such as https://lnkd.in/aBc-12_3 also works, and the run resolves it to the full post link. At most 500 characters';
+  'The link must start with http:// or https:// and be a linkedin.com post link. Accepted shapes: https://www.linkedin.com/posts/name-topic-activity-1234567890123456789-AbCd (ugcPost and share slugs work too) and https://www.linkedin.com/feed/update/urn:li:activity:1234567890123456789 (urn:li:ugcPost and urn:li:share work too). A lnkd.in short link such as https://lnkd.in/aBc-12_3 or https://lnkd.in/p/aBc-12_3 also works, and the run resolves it to the full post link. At most 500 characters';
 
 const maxPostUrlLength = 500;
 
@@ -27,8 +27,9 @@ export function isLinkedinPostUrl(value: unknown): boolean {
 }
 
 // Accepts a lnkd.in short link: http or https, host lnkd.in or www.lnkd.in, no userinfo and no port, and a path of one
-// slug of 1 to 64 letters, numbers, hyphens, or underscores with an optional trailing slash. Query and fragment are
-// allowed and ignored.
+// slug of 1 to 64 letters, numbers, hyphens, or underscores with an optional trailing slash. The slug may sit behind
+// one single letter path section, as in lnkd.in/p/<slug>, which the LinkedIn mobile app's share sheet produces.
+// Query and fragment are allowed and ignored.
 // True when the link text names a port in its authority, even a default one. new URL() drops :443 on https and :80
 // on http, so the parsed object cannot tell. Mirrors what the URL parser ignores (tabs, newlines) and treats as a
 // slash (a backslash) so a disguised form is still seen.
@@ -54,7 +55,7 @@ export function isLnkdInShortUrl(value: unknown): boolean {
   }
   if (hasExplicitPort(value)) return false;
   if (url.hostname !== 'lnkd.in' && url.hostname !== 'www.lnkd.in') return false;
-  return /^\/[A-Za-z0-9_-]{1,64}\/?$/.test(url.pathname);
+  return /^\/(?:[A-Za-z]\/)?[A-Za-z0-9_-]{1,64}\/?$/.test(url.pathname);
 }
 
 function isItem(value: unknown): value is Item {

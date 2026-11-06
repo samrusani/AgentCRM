@@ -137,10 +137,11 @@ describe('mode switching never leaks the other mode fields', () => {
 
 describe('link shapes', () => {
   it('KILLS: the client link check matches the server shape for short links', () => {
-    for (const ok of ['https://lnkd.in/aBc', 'http://www.lnkd.in/a_b-C/', 'https://LNKD.IN/ABC', 'https://lnkd.in/abc?trk=1#x', `https://lnkd.in/${'a'.repeat(64)}`]) {
+    // lnkd.in/p/<slug> joined the accepted shape when the contract gained the mobile share sheet's one letter section.
+    for (const ok of ['https://lnkd.in/aBc', 'http://www.lnkd.in/a_b-C/', 'https://LNKD.IN/ABC', 'https://lnkd.in/abc?trk=1#x', `https://lnkd.in/${'a'.repeat(64)}`, 'https://lnkd.in/p/eiR7_BHD']) {
       expect(isLnkdInShortUrl(ok), ok).toBe(true);
     }
-    for (const bad of ['https://lnkd.in/', 'https://lnkd.in/a/b', `https://lnkd.in/${'a'.repeat(65)}`, 'https://lnkd.in:8443/a', 'https://u@lnkd.in/a', 'https://lnkd.in.evil.com/a', 'https://xlnkd.in/a', 'ftp://lnkd.in/a', 'https://lnkd.in/a b']) {
+    for (const bad of ['https://lnkd.in/', 'https://lnkd.in/ab/cd', 'https://lnkd.in/p/ab/cd', `https://lnkd.in/${'a'.repeat(65)}`, 'https://lnkd.in:8443/a', 'https://u@lnkd.in/a', 'https://lnkd.in.evil.com/a', 'https://xlnkd.in/a', 'ftp://lnkd.in/a', 'https://lnkd.in/a b']) {
       expect(isLnkdInShortUrl(bad), bad).toBe(false);
     }
     expect(withHttps('LNKD.IN/aBc')).toBe('https://LNKD.IN/aBc');

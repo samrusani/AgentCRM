@@ -2405,6 +2405,10 @@ describe('lnkd.in short link shape', () => {
     'https://lnkd.in/abc?trk=share#section',
     `https://lnkd.in/${'a'.repeat(64)}`,
     'https://lnkd.in/a',
+    'https://lnkd.in/p/eiR7_BHD',
+    'https://lnkd.in/p/aBc-12_3/',
+    'http://www.lnkd.in/e/abc',
+    'https://lnkd.in/p/abc?trk=share',
   ];
   const rejected = [
     '',
@@ -2419,6 +2423,10 @@ describe('lnkd.in short link shape', () => {
     'https://lnkd.in/ab$c',
     'https://lnkd.in/a%20b',
     'https://lnkd.in/ab/cd',
+    'https://lnkd.in/pp/abc',
+    'https://lnkd.in/1/abc',
+    'https://lnkd.in/p/ab/cd',
+    `https://lnkd.in/p/${'a'.repeat(65)}`,
     'https://user@lnkd.in/abc',
     'https://user:pass@lnkd.in/abc',
     'https://lnkd.in:8443/abc',

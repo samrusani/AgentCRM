@@ -21,7 +21,7 @@ export const DEFAULT_LEAD_ACTORS: LeadCaptureSettings = {
 };
 
 export const ACCEPTED_POST_SHAPES =
-  'linkedin.com/posts/<name>-activity-<digits> (ugcPost and share work too), linkedin.com/feed/update/urn:li:activity:<digits>, or a lnkd.in short link such as lnkd.in/aBc-12_3';
+  'linkedin.com/posts/<name>-activity-<digits> (ugcPost and share work too), linkedin.com/feed/update/urn:li:activity:<digits>, or a lnkd.in short link such as lnkd.in/aBc-12_3 or lnkd.in/p/aBc-12_3';
 
 function linkedinHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
@@ -73,7 +73,8 @@ export function isLinkedinPostUrl(url: string): boolean {
 
 // Same shape as the server: a lnkd.in short link. The run resolves it to the full post link before fetching anything.
 // http or https, host lnkd.in or www.lnkd.in, no userinfo and no port, and one slug of 1 to 64 letters, numbers,
-// hyphens, or underscores. Query and fragment are ignored.
+// hyphens, or underscores, optionally behind one single letter path section as in lnkd.in/p/<slug> (the LinkedIn
+// mobile app's share sheet produces that form). Query and fragment are ignored.
 export function isLnkdInShortUrl(url: string): boolean {
   const value = url.trim();
   if (value.length === 0 || value.length > MAX_POST_URL_LENGTH) return false;
@@ -87,7 +88,7 @@ export function isLnkdInShortUrl(url: string): boolean {
     return false;
   }
   if (parsed.hostname !== 'lnkd.in' && parsed.hostname !== 'www.lnkd.in') return false;
-  return /^\/[A-Za-z0-9_-]{1,64}\/?$/.test(parsed.pathname);
+  return /^\/(?:[A-Za-z]\/)?[A-Za-z0-9_-]{1,64}\/?$/.test(parsed.pathname);
 }
 
 // A full post link or a short link: what the link field accepts.

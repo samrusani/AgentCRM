@@ -504,7 +504,9 @@ describe('zod boundaries', () => {
     expect(bad({})).toBe('validation: scope.postUrl: Give a LinkedIn post link, or paste the post text with postText.');
     expect(bad({ postText: '   ', postUrl: 'https://example.com/x' })).toMatch(/^validation: scope\.(postText|postUrl)/);
     expect(bad({ postText, postUrl: 'ftp://www.linkedin.com/posts/x-activity-1' })).toMatch(/^validation: scope\.postUrl: /);
-    expect(bad({ postText, postUrl: 'https://lnkd.in/a/b' })).toMatch(/^validation: scope\.postUrl: /);
+    // lnkd.in/a/b stopped being refused when the contract gained the mobile share sheet's one letter section (lnkd.in/p/<slug>).
+    expect(bad({ postText, postUrl: 'https://lnkd.in/ab/cd' })).toMatch(/^validation: scope\.postUrl: /);
+    expect(bad({ postText, postUrl: 'https://lnkd.in/p/ab/cd' })).toMatch(/^validation: scope\.postUrl: /);
     expect(bad({ postText, postUrl: `https://lnkd.in/${'a'.repeat(65)}` })).toMatch(/^validation: scope\.postUrl: /);
     expect(bad({ postText, postUrl: 'https://lnkd.in:8443/abc' })).toMatch(/^validation: scope\.postUrl: /);
     expect(bad({ postText, postUrl: 'https://user@lnkd.in/abc' })).toMatch(/^validation: scope\.postUrl: /);

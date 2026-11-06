@@ -19,6 +19,9 @@ describe('isLnkdInShortUrl', () => {
       'https://lnkd.in/abc?trk=share#section',
       `https://lnkd.in/${'a'.repeat(64)}`,
       '  https://lnkd.in/abc  ',
+      'https://lnkd.in/p/eiR7_BHD',
+      'https://lnkd.in/p/aBc-12_3/',
+      'http://www.lnkd.in/e/abc',
     ]) {
       expect(isLnkdInShortUrl(url), url).toBe(true);
     }
@@ -36,6 +39,8 @@ describe('isLnkdInShortUrl', () => {
       `https://lnkd.in/${'a'.repeat(65)}`,
       'https://lnkd.in/ab$c',
       'https://lnkd.in/ab/cd',
+      'https://lnkd.in/pp/abc',
+      'https://lnkd.in/p/ab/cd',
       'https://user@lnkd.in/abc',
       'https://lnkd.in:8443/abc',
       'ftp://lnkd.in/abc',
