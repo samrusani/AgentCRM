@@ -4,7 +4,7 @@
 
 **The CRM that people and AI agents operate together.**
 
-<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-2193-15685b?style=flat" alt="2193 tests">
+<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-2256-15685b?style=flat" alt="2256 tests">
 
 [Quick start](#quick-start) · [What works](#what-works-today) · [Architecture docs](docs/architecture.md)
 
@@ -89,7 +89,7 @@ Run it from the repository root, or make the `--prefix` path absolute. Keep `--s
 
 ## What works today
 
-Every row below is backed by tests: 2,193 across the server (1,493), the web app (418), and the browser extension (282). "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
+Every row below is backed by tests: 2,256 across the server (1,556), the web app (418), and the browser extension (282). "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
 
 ### Core CRM
 
@@ -113,7 +113,7 @@ Every row below is backed by tests: 2,193 across the server (1,493), the web app
 | Draft outreach: model written drafts with budgets, review before saving | Working, verified against stubbed provider APIs; drafts are never sent |
 | Model costs: per call usage rows, per run estimates from list prices | Working, always labelled estimates |
 | Research: runs with live steps, counts, and partial results | Simulated demo run only |
-| MCP server over stdio | Working, read and propose tools; can start qualify runs, allowlisted Apify runs, allowlisted lead captures, and budgeted draft runs |
+| MCP server over stdio | Working, read and propose tools; can start qualify runs, allowlisted Apify runs, allowlisted lead captures, and budgeted draft runs; a database wide worker lease keeps exactly one job worker active, with the API server preferred, so a long lived MCP process never runs steps while the server is up |
 | CLI: doctor, seed, serve, search, runs | Working |
 
 ### Getting data in

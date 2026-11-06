@@ -22,14 +22,20 @@ import {
   leadCaptureJobKind,
   mailReconcileJobKind,
   maxJobAttempts,
+  newWorkerLeaseIdentity,
   processQueuedIntents,
   qualifyJobKind,
   reconcileIntent,
   recoverStaleJobs,
   recoverSubmittingIntents,
+  releaseWorkerLease,
   rescheduleJob,
+  settleWorkerLease,
+  type SettleWorkerLeaseOptions,
   syncMailIfDue,
   tickFollowupRulesIfDue,
+  type WorkerLeaseIdentity,
+  type WorkerLeaseKind,
 } from '../actions/index.js';
 import { workerTickMilliseconds } from '../config.js';
 
@@ -176,25 +182,33 @@ export interface Worker {
   stop: () => void;
 }
 
-// Only the main server process recovers jobs left in "running" by a crash. Other processes must not.
-export function startWorker(
+export interface WorkerTickOptions {
+  mail?: boolean;
+  // Tests pass these to fake pid liveness and a short timeout. Production uses the defaults.
+  lease?: SettleWorkerLeaseOptions;
+}
+
+// One worker tick as a function, so tests can drive it without timers. The lease is settled first, and a tick that
+// does not hold it does nothing at all: no lanes, no mail, no follow-ups, no sync.
+export function createWorkerTick(
   ctx: ActionContext,
+  identity: WorkerLeaseIdentity,
   onError: (error: unknown) => void,
-  // Only the API server sends and syncs mail. The MCP process never does, so an agent session cannot submit a message.
-  options: { recover?: boolean; mail?: boolean } = {},
-): Worker {
+  options: WorkerTickOptions = {},
+): () => void {
   const mail = options.mail ?? true;
-  if (options.recover ?? true) {
-    recoverStaleJobs(ctx);
-    // A message that was on the wire when the process stopped has an unknown outcome.
-    if (mail) recoverSubmittingIntents(ctx);
-  }
   let apifyBusy = false;
   let leadCaptureBusy = false;
   let draftBusy = false;
   let mailBusy = false;
   let syncBusy = false;
-  const timer = setInterval(() => {
+  return () => {
+    try {
+      if (!settleWorkerLease(ctx, identity, options.lease)) return;
+    } catch (error) {
+      onError(error);
+      return;
+    }
     try {
       processJobs(ctx);
     } catch (error) {
@@ -250,10 +264,29 @@ export function startWorker(
           syncBusy = false;
         });
     }
-  }, workerTickMilliseconds);
+  };
+}
+
+// Only the main server process recovers jobs left in "running" by a crash. Other processes must not.
+export function startWorker(
+  ctx: ActionContext,
+  onError: (error: unknown) => void,
+  // Only the API server sends and syncs mail. The MCP process never does, so an agent session cannot submit a message.
+  // leaseKind says which kind of process this is for the worker lease; the API server is the preferred worker.
+  options: { recover?: boolean; mail?: boolean; leaseKind?: WorkerLeaseKind } = {},
+): Worker {
+  const mail = options.mail ?? true;
+  if (options.recover ?? true) {
+    recoverStaleJobs(ctx);
+    // A message that was on the wire when the process stopped has an unknown outcome.
+    if (mail) recoverSubmittingIntents(ctx);
+  }
+  const identity = newWorkerLeaseIdentity(options.leaseKind ?? 'server');
+  const timer = setInterval(createWorkerTick(ctx, identity, onError, { mail }), workerTickMilliseconds);
   return {
     stop: () => {
       clearInterval(timer);
+      releaseWorkerLease(ctx, identity);
     },
   };
 }

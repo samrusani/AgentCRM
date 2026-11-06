@@ -2,7 +2,7 @@
 
 AgentCRM runs as two local processes over one SQLite file.
 
-- `apps/server`: a Fastify API on http://127.0.0.1:4720, an in-process job worker, a CLI, and an MCP server over stdio. The API server is the primary writer. The MCP server runs as a separate local process against the same SQLite file and runs its own worker tick, so runs it starts advance even when the API server is down; both writers use short immediate transactions through the same action service. The API server watches SQLite's data_version and relays commits from the MCP process as server sent events.
+- `apps/server`: a Fastify API on http://127.0.0.1:4720, an in-process job worker, a CLI, and an MCP server over stdio. The API server is the primary writer. The MCP server runs as a separate local process against the same SQLite file and runs its own worker tick, so runs it starts advance even when the API server is down; both writers use short immediate transactions through the same action service, and a single database wide worker lease decides which process's worker claims jobs (see The worker lease). The API server watches SQLite's data_version and relays commits from the MCP process as server sent events.
 - `apps/web`: a React app served by Vite on http://127.0.0.1:5173 in development, proxying `/api` to the server.
 
 The database lives at `data/agentcrm.db` relative to the repository root, in WAL mode. The `data/` folder is created on demand and never committed.
@@ -39,6 +39,7 @@ IDs are prefixed strings, for example `per_a1b2c3`, generated from random bytes.
 | run_step | run_id, seq, title, status (pending, running, done, skipped, failed), detail, started_at, finished_at |
 | approval | workspace_id, run_id, kind, title, payload (JSON), payload_hash, status (pending, approved, rejected), note, decided_at, decided_by |
 | job | kind, payload (JSON), run_at, attempts, status (queued, running, done, failed), updated_at |
+| worker_lease | one row, id fixed to 'worker' (migration 021): holder (process token), kind (server or mcp), pid, acquired_at, renewed_at |
 | audit_event | workspace_id, actor, action, entity_type, entity_id, detail (JSON) |
 | connector | workspace_id, kind (apify, anthropic, openai, deepseek, zai, ollama, agentmail), settings (JSON, no secrets), secret (API token; empty for ollama; never returned by any endpoint), status (connected, error), updated_at |
 | email_message | workspace_id, provider_message_id (unique), provider_thread_id, direction (in, out), person_id (nullable), from_email, to (JSON array), subject, preview, body_text (nullable until fetched), labels (JSON), provider_timestamp, created_at |
@@ -67,6 +68,17 @@ Rules:
 - `waiting_approval` means a pending approval row references the run. Deciding the approval moves the run forward.
 - Pause and cancel are user actions. Cancel is final.
 - Counts report `{ processed, found, flagged }` and update as steps complete. A run that cannot meet its requested scope finishes as `partial` with honest counts, never with invented results.
+
+## The worker lease
+
+Several processes can run a worker tick against one database file: the API server, and every MCP server a client spawns. Job claims are atomic (one immediate transaction flips queued rows to running), so a job never runs twice, but without coordination any process can win a claim, and a long lived MCP process left over from before a deploy then executes steps with stale code. The worker lease removes that race: exactly one process's worker claims jobs at a time.
+
+- The lease is the one `worker_lease` row. A ticking worker settles the lease in one immediate transaction at the start of every tick and touches the job queue only when it holds the lease; a tick that does not hold the lease does nothing at all, mail and follow-up lanes included.
+- Taking the lease: a worker takes the lease when there is no row, when the row is stale, or when the holder's pid is no longer alive (`process.kill(pid, 0)`; EPERM counts as alive, so pid reuse at worst delays the handover by the timeout). A row is fresh only when now minus `renewed_at` is a number whose absolute value is at most the timeout (`workerLeaseTimeoutMilliseconds`, 10 seconds): a stamp in the future past the timeout (a stepped clock) and a stamp that does not parse both count as stale, so a corrupted or future dated row can never block the queue for longer than the timeout. The holder token is `<kind>:<pid>:<random>`, unique per process.
+- Holding and yielding: the holder renews `renewed_at` every tick. A server worker also takes the lease from a fresh mcp holder, because the API server is the preferred worker; an mcp worker never takes a fresh lease, and a server worker never takes a fresh lease from another server. Preemption only stops the old holder claiming new jobs; jobs it already claimed finish on it, and the atomic claim means a claim is never handed out twice. Server startup is the one exception: it re-queues jobs left in running before any lease settle, so a step in flight on another process at that moment can run twice; steps tolerate this, because they are idempotent per run state, and this predates the lease.
+- Release: `stop()` deletes the row when this process still holds it, so a clean shutdown hands over on the next tick. A killed process hands over when its pid is seen dead or the timeout passes, so after a crash jobs can wait up to the timeout before the next worker picks them up.
+- Scope: the lease gates the ticking workers in `startWorker` only. Tests and code that advance jobs directly are unchanged, because the race the lease removes is between long lived ticking workers. Lease settling writes no audit events; it is plumbing, not user action. `crm doctor` reports the lease: the holder kind and pid and how old its renewal is, or that no process holds it. It judges stale by the same freshness rule as the workers, and an unreadable or future dated renewal time is named as such, with a warn; it does not check the holder's pid, so a fresh row left by a dead process reads as ok for up to the timeout.
+- What it does not fix: when no API server runs, the surviving MCP worker that takes the lease still executes whatever code it started with. A long lived MCP client should still be restarted after a deploy; the lease only guarantees a running API server's worker is the one doing the work. A process started before the lease existed has no lease code at all and keeps claiming ungated, so the protection holds only once every long lived process runs code with the lease; restart them once after this release. The pid liveness check assumes every worker shares one host and one pid namespace, which is the product's premise (the database is a local file); workers split across pid namespaces would take the lease from each other every tick.
 
 ## The simulated demo run
 

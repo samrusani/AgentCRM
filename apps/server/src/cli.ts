@@ -88,7 +88,8 @@ function portIsFree(port: number): Promise<boolean> {
 async function doctor(parsed: Parsed): Promise<number> {
   const { default: Database } = await import('better-sqlite3');
   const { listMigrationFiles } = await import('./db.js');
-  const { apiPort } = await import('./config.js');
+  const { apiPort, workerLeaseTimeoutMilliseconds } = await import('./config.js');
+  const { readWorkerLease } = await import('./actions/workerLease.js');
   const { displayDatabasePath, resolveDatabasePath } = await import('./paths.js');
   const checks: Check[] = [];
 
@@ -123,6 +124,26 @@ async function doctor(parsed: Parsed): Promise<number> {
           status: people > 0 ? 'ok' : 'warn',
           detail: people > 0 ? `${people} people` : 'The database is empty. Run "npm run seed".',
         });
+        // The lease table exists once migration 021 has been applied.
+        if (db.prepare("SELECT name FROM sqlite_master WHERE name = 'worker_lease'").get()) {
+          const lease = readWorkerLease({ db });
+          if (!lease) {
+            checks.push({ name: 'Worker lease', status: 'ok', detail: 'No process holds it, so no worker is claiming jobs.' });
+          } else {
+            // The same freshness rule as the workers: a future dated or unreadable stamp is stale too.
+            const ageMilliseconds = Date.now() - Date.parse(lease.renewedAt);
+            const fresh = Math.abs(ageMilliseconds) <= workerLeaseTimeoutMilliseconds;
+            const held = `Held by the ${lease.kind} process with pid ${lease.pid}`;
+            const detail = fresh
+              ? `${held}, renewed ${Math.round(Math.abs(ageMilliseconds) / 1000)} seconds ago.`
+              : Number.isNaN(ageMilliseconds)
+                ? `${held}, but its renewal time is unreadable, so it is stale and the next worker will take it.`
+                : ageMilliseconds < 0
+                  ? `${held}, but its renewal time is ${Math.round(-ageMilliseconds / 1000)} seconds in the future, so it is stale and the next worker will take it.`
+                  : `${held}, last renewed ${Math.round(ageMilliseconds / 1000)} seconds ago, so it is stale and the next worker will take it.`;
+            checks.push({ name: 'Worker lease', status: fresh ? 'ok' : 'warn', detail });
+          }
+        }
       }
       db.close();
     } catch (error) {

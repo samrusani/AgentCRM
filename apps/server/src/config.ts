@@ -163,6 +163,10 @@ export const dailySendCap = 50;
 export const maxIntentsPerApproval = 25;
 
 export const workerTickMilliseconds = 300;
+
+// A worker lease not renewed for this long is stale and any worker may take it.
+export const workerLeaseTimeoutMilliseconds = 10_000;
+
 export const serverVersion = '0.1.0';
 
 // Model providers other than Anthropic. Each base URL can be replaced for tests.

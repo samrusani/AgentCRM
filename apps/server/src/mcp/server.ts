@@ -54,8 +54,9 @@ export async function startMcpServer(): Promise<void> {
   const db = openDatabase();
   const workspace = ensureWorkspace(db);
   const ctx = createContext(db, workspace.id, { actor: 'agent:mcp' });
-  // Runs started here must advance even when the API server is not running.
-  const worker = startWorker(ctx, (error) => console.error(error), { recover: false, mail: false });
+  // Runs started here advance even when the API server is not running, but only while this process holds the worker
+  // lease. A running API server takes the lease from this process, and then the server's worker advances the runs.
+  const worker = startWorker(ctx, (error) => console.error(error), { recover: false, mail: false, leaseKind: 'mcp' });
   const server = new McpServer({ name: 'agentcrm', version: serverVersion });
 
   server.registerTool(
