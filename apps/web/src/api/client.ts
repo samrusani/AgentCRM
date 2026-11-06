@@ -634,6 +634,7 @@ function normalizeImportBatch(raw: Record<string, unknown>): ImportBatch {
     sourceKind: textOrNull(raw.sourceKind) ?? 'apify',
     actorId: textOrNull(sourceRef.actorId),
     postUrl: textOrNull(sourceRef.postUrl),
+    pasted: sourceRef.pasted === true,
     apifyRunId: textOrNull(sourceRef.apifyRunId ?? sourceRef.runId),
     datasetId: textOrNull(sourceRef.datasetId),
     status: textOrNull(raw.status) ?? 'staging',

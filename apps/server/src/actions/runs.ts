@@ -21,12 +21,14 @@ import {
   leadCaptureKind,
   leadCaptureStepTitles,
   requestedPeople,
+  maxPostTextCharacters,
+  pastedNeedsProviderMessage,
   postNeedsProviderMessage,
   type SourceName,
   scheduleLeadCaptureRun,
   sourceNames,
 } from './leadCapture.js';
-import { isLinkedinPostUrl, postUrlShapesMessage } from './leadCaptureMapping.js';
+import { isLinkedinPostUrl, isLnkdInShortUrl, postUrlShapesMessage } from './leadCaptureMapping.js';
 import { defaultAgentBudgetUsd, draftKind, draftScopeSchema, draftStepTitlesFor, scheduleDraftRun } from './draftOutreach.js';
 import {
   enrichByAgentMessage,
@@ -96,18 +98,31 @@ const draftRunSchema = z
   })
   .strict();
 
+// The final period comes from parseInput, so the sentence reads exactly as the contract words it.
+const pastedSourcesMessage = 'A pasted capture reads only the pasted text. Reactions and comments need a post link';
+
 const leadCaptureRunSchema = z
   .object({
     kind: z.literal('lead_capture'),
     title: z.string().trim().min(1).max(200).optional(),
     scope: z
       .object({
+        // A linkedin.com post link, or a lnkd.in short link that the validate step resolves. In a pasted capture the
+        // link is optional provenance and is never fetched or resolved.
         postUrl: z
           .string()
           .trim()
           .min(1)
           .max(500, 'Use a post link of at most 500 characters')
-          .refine(isLinkedinPostUrl, postUrlShapesMessage),
+          .refine((value) => isLinkedinPostUrl(value) || isLnkdInShortUrl(value), postUrlShapesMessage)
+          .optional(),
+        // Setting it makes the run a pasted capture: the post is not fetched and the model reads this text.
+        postText: z
+          .string()
+          .trim()
+          .min(1, 'Paste the post text')
+          .max(maxPostTextCharacters, `Use pasted text of at most ${maxPostTextCharacters.toLocaleString('en-US')} characters`)
+          .optional(),
         // Left out, a user's sources default to all three when a model provider is ready, else reactions and comments.
         // An agent's default is always reactions and comments: reading the post text must be asked for.
         sources: z
@@ -116,10 +131,20 @@ const leadCaptureRunSchema = z
           .optional()
           .transform((chosen) => (chosen ? sourceNames.filter((name) => chosen.includes(name)) : undefined)),
         maxPeople: z.number().int().min(1).max(hardMaxPeople).default(defaultMaxPeople),
-        enrich: z.boolean().default(true),
+        // Left out, enrichment is on for a post link and off for a pasted capture.
+        enrich: z.boolean().optional(),
         enrichLimit: z.number().int().min(1).max(hardEnrichLimit).default(defaultEnrichLimit),
       })
-      .strict(),
+      .strict()
+      .superRefine((scope, context) => {
+        if (scope.postUrl === undefined && scope.postText === undefined) {
+          context.addIssue({ code: z.ZodIssueCode.custom, path: ['postUrl'], message: 'Give a LinkedIn post link, or paste the post text with postText' });
+        }
+        if (scope.postText !== undefined && scope.sources !== undefined && (scope.sources.length !== 1 || scope.sources[0] !== 'post')) {
+          context.addIssue({ code: z.ZodIssueCode.custom, path: ['sources'], message: pastedSourcesMessage });
+        }
+      })
+      .transform((scope) => ({ ...scope, enrich: scope.enrich ?? scope.postText === undefined })),
   })
   .strict();
 
@@ -168,7 +193,7 @@ function assertApifyRunAllowed(ctx: ActionContext, actorId: string, origin: 'use
 // Resolves the three actor ids from the connector settings. The run freezes them, so a later settings edit changes nothing.
 function assertLeadCaptureAllowed(
   ctx: ActionContext,
-  scope: { sources: readonly string[]; enrich: boolean },
+  scope: { sources: readonly string[]; enrich: boolean; pasted: boolean },
   origin: 'user' | 'agent',
 ) {
   const connector = getConnector(ctx.db, ctx.workspaceId, 'apify');
@@ -177,12 +202,17 @@ function assertLeadCaptureAllowed(
   const configured = connector.settings.leadCapture;
   const actors = { post: configured.postActor, reactions: configured.reactionsActor, comments: configured.commentsActor, profile: configured.profileActor };
   if (origin === 'agent') {
-    const involved = [
-      ...(scope.sources.includes('post') ? [actors.post] : []),
-      ...(scope.sources.includes('reactions') ? [actors.reactions] : []),
-      ...(scope.sources.includes('comments') ? [actors.comments] : []),
-      ...(scope.enrich ? [actors.profile] : []),
-    ];
+    // A pasted capture runs no source actor, so only the profile actor can be involved.
+    const involved = scope.pasted
+      ? scope.enrich
+        ? [actors.profile]
+        : []
+      : [
+          ...(scope.sources.includes('post') ? [actors.post] : []),
+          ...(scope.sources.includes('reactions') ? [actors.reactions] : []),
+          ...(scope.sources.includes('comments') ? [actors.comments] : []),
+          ...(scope.enrich ? [actors.profile] : []),
+        ];
     const missing = involved.filter((actorId) => !allowlistIncludes(connector, actorId));
     if (missing.length > 0) {
       throw conflict(
@@ -195,8 +225,13 @@ function assertLeadCaptureAllowed(
 
 // The sources a lead capture starts with. Reading the post text needs a ready model provider, and it spends the
 // user's model credit, so an agent gets it only when it names the source.
-function resolveLeadSources(ctx: ActionContext, chosen: SourceName[] | undefined, origin: 'user' | 'agent'): SourceName[] {
+function resolveLeadSources(ctx: ActionContext, chosen: SourceName[] | undefined, origin: 'user' | 'agent', pasted: boolean): SourceName[] {
   const ready = isActiveModelReady(ctx.db, ctx.workspaceId);
+  // A pasted capture always reads the text, whoever started it, so it always needs the provider.
+  if (pasted) {
+    if (!ready) throw validationError(`scope.postText: ${pastedNeedsProviderMessage}`);
+    return ['post'];
+  }
   if (!chosen) return origin === 'agent' || !ready ? sourceNames.filter((name) => name !== 'post') : [...sourceNames];
   if (chosen.includes('post') && !ready) throw validationError(`scope.sources: ${postNeedsProviderMessage}`);
   return chosen;
@@ -235,12 +270,19 @@ export function startRun(ctx: ActionContext, input: unknown, options: StartRunOp
   // Enrichment spends the user's Apify credit on one scrape or lookup and is started from the record sheet only.
   if (parsed.kind === 'enrich_person' && origin === 'agent') throw validationError(enrichByAgentMessage);
   if (parsed.kind === 'enrich_organization' && origin === 'agent') throw validationError(enrichOrganizationByAgentMessage);
+  const pasted = parsed.kind === 'lead_capture' && parsed.scope.postText !== undefined;
   const data =
     parsed.kind === 'lead_capture'
-      ? { ...parsed, scope: { ...parsed.scope, sources: resolveLeadSources(ctx, parsed.scope.sources, origin) } }
+      ? { ...parsed, scope: { ...parsed.scope, sources: resolveLeadSources(ctx, parsed.scope.sources, origin, pasted) } }
       : parsed;
   if (data.kind === 'apify_scrape') assertApifyRunAllowed(ctx, data.scope.actorId, origin);
-  const leadActors = data.kind === 'lead_capture' ? assertLeadCaptureAllowed(ctx, data.scope, origin) : null;
+  // A pasted capture with enrichment off needs no Apify connector and freezes no actors.
+  const leadActors =
+    data.kind === 'lead_capture'
+      ? pasted && !data.scope.enrich
+        ? {}
+        : assertLeadCaptureAllowed(ctx, { ...data.scope, pasted }, origin)
+      : null;
   const draftConnector = data.kind === 'draft_outreach' ? assertDraftRunAllowed(ctx) : null;
   const runId = mutate(ctx, (tx) => {
     const id = tx.newId('run');
@@ -308,7 +350,8 @@ export function startRun(ctx: ActionContext, input: unknown, options: StartRunOp
       };
       auditScope = { actorId: data.scope.actorId, maxItems: data.scope.maxItems, origin };
     } else if (data.kind === 'lead_capture') {
-      title = data.title ?? `LinkedIn lead capture: ${postUrlLabel(data.scope.postUrl)}`;
+      title =
+        data.title ?? (data.scope.postUrl ? `LinkedIn lead capture: ${postUrlLabel(data.scope.postUrl)}` : 'LinkedIn lead capture: pasted text');
       stepTitles = leadCaptureStepTitles;
       counts = {
         processed: 0,
@@ -324,7 +367,15 @@ export function startRun(ctx: ActionContext, input: unknown, options: StartRunOp
       // A run that reads the post text pins the provider and model it will use, like a draft run does.
       const pinned = data.scope.sources.includes('post') ? requireActiveModel(ctx) : null;
       storedScope = { ...storedScope, actors: leadActors!, calls: {}, ...(pinned ? { provider: pinned.kind, model: pinned.model } : {}) };
-      auditScope = { ...data.scope, actors: leadActors, origin, ...(pinned ? { provider: pinned.kind, model: pinned.model } : {}) };
+      // The pasted text is untrusted content that reaches no agent surface, so the audit trail records only its length.
+      const { postText: pastedText, ...auditable } = data.scope;
+      auditScope = {
+        ...auditable,
+        ...(pastedText !== undefined ? { pasted: true, postTextCharacters: pastedText.length } : {}),
+        actors: leadActors,
+        origin,
+        ...(pinned ? { provider: pinned.kind, model: pinned.model } : {}),
+      };
     } else if (data.kind === 'enrich_person') {
       const enrichScope = enrichPersonStartScope(tx, data.scope.personId);
       const person = requirePerson(tx.db, tx.workspaceId, data.scope.personId);

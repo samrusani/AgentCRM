@@ -3,6 +3,9 @@ import type { LeadCaptureSettings } from '../api/types';
 // Client side checks for the LinkedIn lead capture form. The server validates again and its answer is final.
 
 export const MAX_POST_URL_LENGTH = 500;
+// A pasted capture reads at most this many characters. The count appears once the text is this close to the limit.
+export const MAX_POST_TEXT_LENGTH = 15000;
+export const POST_TEXT_COUNT_WINDOW = 1000;
 export const DEFAULT_MAX_PEOPLE = 50;
 export const MAX_PEOPLE = 500;
 export const DEFAULT_ENRICH_LIMIT = 25;
@@ -18,7 +21,7 @@ export const DEFAULT_LEAD_ACTORS: LeadCaptureSettings = {
 };
 
 export const ACCEPTED_POST_SHAPES =
-  'linkedin.com/posts/<name>-activity-<digits> (ugcPost and share work too) or linkedin.com/feed/update/urn:li:activity:<digits>';
+  'linkedin.com/posts/<name>-activity-<digits> (ugcPost and share work too), linkedin.com/feed/update/urn:li:activity:<digits>, or a lnkd.in short link such as lnkd.in/aBc-12_3';
 
 function linkedinHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
@@ -33,10 +36,10 @@ function safeDecode(value: string): string {
   }
 }
 
-// A bare linkedin.com link gets https:// in front, so a paste without the scheme works. Anything else stays as typed.
+// A bare linkedin.com or lnkd.in link gets https:// in front, so a paste without the scheme works. Anything else stays as typed.
 export function withHttps(url: string): string {
   const value = url.trim();
-  return /^(?:[a-z0-9-]+\.)*linkedin\.com(?:[/?#]|$)/i.test(value) ? `https://${value}` : value;
+  return /^(?:(?:[a-z0-9-]+\.)*linkedin\.com|(?:www\.)?lnkd\.in)(?:[/?#]|$)/i.test(value) ? `https://${value}` : value;
 }
 
 // Same shapes as the server: a post slug ending in -activity-, -ugcPost-, or -share- plus digits, or a feed
@@ -57,6 +60,30 @@ export function isLinkedinPostUrl(url: string): boolean {
   const path = safeDecode(parsed.pathname);
   if (/^\/posts\/[^/]+-(?:activity|ugcPost|share)-\d+(?:-[A-Za-z0-9_-]*)?\/?$/.test(path)) return true;
   return /^\/feed\/update\/urn:li:(?:activity|ugcPost|share):\d+\/?$/.test(path);
+}
+
+// Same shape as the server: a lnkd.in short link. The run resolves it to the full post link before fetching anything.
+// http or https, host lnkd.in or www.lnkd.in, no userinfo and no port, and one slug of 1 to 64 letters, numbers,
+// hyphens, or underscores. Query and fragment are ignored.
+export function isLnkdInShortUrl(url: string): boolean {
+  const value = url.trim();
+  if (value.length === 0 || value.length > MAX_POST_URL_LENGTH) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  if ((parsed.protocol !== 'https:' && parsed.protocol !== 'http:') || parsed.username !== '' || parsed.password !== '' || parsed.port !== '') {
+    return false;
+  }
+  if (parsed.hostname !== 'lnkd.in' && parsed.hostname !== 'www.lnkd.in') return false;
+  return /^\/[A-Za-z0-9_-]{1,64}\/?$/.test(parsed.pathname);
+}
+
+// A full post link or a short link: what the link field accepts.
+export function isPostLink(url: string): boolean {
+  return isLinkedinPostUrl(url) || isLnkdInShortUrl(url);
 }
 
 // Whole number inside 1..max, or null.

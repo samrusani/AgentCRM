@@ -1,5 +1,8 @@
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import path from 'node:path';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   configureAnthropicConnector,
   configureApifyConnector,
@@ -18,11 +21,14 @@ import {
 } from '../src/actions/index.js';
 import {
   isLinkedinPostUrl,
+  isLnkdInShortUrl,
   mapEngagementItem,
   mapProfileItem,
   normalizeProfileUrl,
 } from '../src/actions/leadCaptureMapping.js';
 import { advanceLeadCaptureRun, extractionJsonSchema, extractionPrompt } from '../src/actions/leadCapture.js';
+import { openInBrowserSentence, resolveShortLink, setShortLinkFetch } from '../src/actions/shortLink.js';
+import { packageRoot } from '../src/paths.js';
 import { normalizeName } from '../src/actions/apifyMapping.js';
 import { listRuns } from '../src/queries/runs.js';
 import { AppError } from '../src/errors.js';
@@ -2386,5 +2392,794 @@ describe('lead capture post actor setting', () => {
       restore();
       await putConnector({ leadCapture: { postActor: '' } });
     }
+  });
+});
+
+describe('lnkd.in short link shape', () => {
+  const accepted = [
+    'https://lnkd.in/aBc-12_3',
+    'http://lnkd.in/abc',
+    'https://www.lnkd.in/abc',
+    'https://LNKD.IN/abc',
+    'https://lnkd.in/abc/',
+    'https://lnkd.in/abc?trk=share#section',
+    `https://lnkd.in/${'a'.repeat(64)}`,
+    'https://lnkd.in/a',
+  ];
+  const rejected = [
+    '',
+    'lnkd.in/abc',
+    'https://lnkd.in',
+    'https://lnkd.in/',
+    'https://evil.example/abc',
+    'https://lnkd.in.evil.example/abc',
+    'https://sub.lnkd.in/abc',
+    'https://notlnkd.in/abc',
+    `https://lnkd.in/${'a'.repeat(65)}`,
+    'https://lnkd.in/ab$c',
+    'https://lnkd.in/a%20b',
+    'https://lnkd.in/ab/cd',
+    'https://user@lnkd.in/abc',
+    'https://user:pass@lnkd.in/abc',
+    'https://lnkd.in:8443/abc',
+    'ftp://lnkd.in/abc',
+    `https://lnkd.in/abc?${'a'.repeat(500)}`,
+  ];
+
+  it('accepts the documented short link shape', () => {
+    for (const url of accepted) expect(isLnkdInShortUrl(url), url).toBe(true);
+  });
+
+  it('rejects other hosts, long or odd slugs, userinfo, ports, and links over 500 characters', () => {
+    for (const url of rejected) expect(isLnkdInShortUrl(url), url).toBe(false);
+    expect(isLnkdInShortUrl(undefined)).toBe(false);
+    expect(isLnkdInShortUrl(42)).toBe(false);
+  });
+
+  it('keeps the post shape check as it was and does not take a short link for a post', () => {
+    expect(isLinkedinPostUrl('https://lnkd.in/abc')).toBe(false);
+  });
+
+  it('accepts a short link at start and names the short link shape in the message for anything else', () => {
+    const run = startRun(env.ctx, { kind: 'lead_capture', scope: { postUrl: 'https://lnkd.in/aBc-12_3', enrich: false } });
+    expect(run.scope.postUrl).toBe('https://lnkd.in/aBc-12_3');
+    expect(run.title).toBe('LinkedIn lead capture: lnkd.in/aBc-12_3');
+    controlRun(env.ctx, run.id, { action: 'cancel' });
+    const message = failure(() => startRun(env.ctx, { kind: 'lead_capture', scope: { postUrl: 'https://lnkd.in/ab/cd' } }));
+    expect(message).toMatch(/^validation: scope\.postUrl: /);
+    expect(message).toContain('lnkd.in');
+    expect(message).toContain('linkedin.com/posts');
+  });
+});
+
+describe('short link resolver', () => {
+  const sentence = 'Open the link in your browser and paste the full post link.';
+  const post = 'https://www.linkedin.com/posts/jane-doe_topic-activity-7100000000000000001-AbCd';
+
+  interface Route {
+    status: number;
+    location?: string;
+  }
+
+  // A fetch that never reaches the network. Unknown URLs fail like an unreachable host.
+  function fakeFetch(routes: Record<string, Route>) {
+    const calls: { url: string; init: RequestInit | undefined }[] = [];
+    const bodyReads: string[] = [];
+    const impl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input instanceof URL ? input.href : String(input);
+      calls.push({ url, init });
+      const route = routes[url];
+      if (!route) throw new TypeError('fetch failed');
+      const response = new Response(route.status === 200 ? '<html>interstitial</html>' : null, {
+        status: route.status,
+        headers: route.location ? { location: route.location } : {},
+      });
+      for (const method of ['text', 'json', 'arrayBuffer', 'blob', 'formData'] as const) {
+        (response as unknown as Record<string, () => never>)[method] = () => {
+          bodyReads.push(method);
+          throw new Error('The body must not be read.');
+        };
+      }
+      return response;
+    }) as typeof fetch;
+    return { impl, calls, bodyReads };
+  }
+
+  async function resolve(routes: Record<string, Route>, start = 'https://lnkd.in/abc') {
+    const fake = fakeFetch(routes);
+    return { result: await resolveShortLink(start, fake.impl), ...fake };
+  }
+
+  function expectFailure(result: Awaited<ReturnType<typeof resolveShortLink>>, text: string): void {
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.detail).toContain(text);
+    expect(result.detail.endsWith(sentence)).toBe(true);
+  }
+
+  it('follows one redirect to a post link and strips the query and fragment', async () => {
+    const { result, calls, bodyReads } = await resolve({ 'https://lnkd.in/abc': { status: 302, location: `${post}?utm_source=share&trk=x#top` } });
+    expect(result).toEqual({ ok: true, postUrl: post, hops: 1 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.init).toMatchObject({ method: 'GET', redirect: 'manual' });
+    expect(calls[0]!.init!.signal).toBeInstanceOf(AbortSignal);
+    expect(calls[0]!.init).not.toHaveProperty('credentials');
+    expect(calls[0]!.init).not.toHaveProperty('headers');
+    expect(bodyReads).toEqual([]);
+  });
+
+  it('follows every redirect status the contract names', async () => {
+    for (const status of [301, 302, 303, 307, 308]) {
+      const { result } = await resolve({ 'https://lnkd.in/abc': { status, location: post } });
+      expect(result, String(status)).toEqual({ ok: true, postUrl: post, hops: 1 });
+    }
+    const other = await resolve({ 'https://lnkd.in/abc': { status: 300, location: post } });
+    expectFailure(other.result, 'HTTP 300');
+  });
+
+  it('follows lnkd.in to lnkd.in to a linkedin.com post link', async () => {
+    const { result, calls } = await resolve({
+      'https://lnkd.in/abc': { status: 301, location: 'https://www.lnkd.in/second' },
+      'https://www.lnkd.in/second': { status: 302, location: `${post}?trk=1` },
+    });
+    expect(result).toEqual({ ok: true, postUrl: post, hops: 2 });
+    expect(calls.map((call) => call.url)).toEqual(['https://lnkd.in/abc', 'https://www.lnkd.in/second']);
+  });
+
+  it('resolves a relative Location against the current URL', async () => {
+    const { result, calls } = await resolve({
+      'https://lnkd.in/abc': { status: 302, location: '/next' },
+      'https://lnkd.in/next': { status: 302, location: post },
+    });
+    expect(result).toEqual({ ok: true, postUrl: post, hops: 2 });
+    expect(calls.map((call) => call.url)).toEqual(['https://lnkd.in/abc', 'https://lnkd.in/next']);
+  });
+
+  it('allows five hops and stops at the sixth without fetching it', async () => {
+    const slugs = ['a', 'b', 'c', 'd', 'e', 'f'];
+    const chain = (length: number): Record<string, Route> => {
+      const routes: Record<string, Route> = {};
+      for (let index = 0; index < length; index += 1) {
+        const last = index === length - 1;
+        routes[`https://lnkd.in/${slugs[index]}`] = { status: 302, location: last ? post : `https://lnkd.in/${slugs[index + 1]}` };
+      }
+      return routes;
+    };
+    const five = await resolve(chain(5), 'https://lnkd.in/a');
+    expect(five.result).toEqual({ ok: true, postUrl: post, hops: 5 });
+    const six = await resolve(chain(6), 'https://lnkd.in/a');
+    expectFailure(six.result, 'within 5 redirects');
+    expect(six.calls).toHaveLength(5);
+  });
+
+  it('fails when a redirect leaves LinkedIn and never requests the other host', async () => {
+    const away = await resolve({ 'https://lnkd.in/abc': { status: 302, location: 'https://evil.example.com/landing' } });
+    expectFailure(away.result, 'redirected away from LinkedIn');
+    expect(away.calls).toHaveLength(1);
+    const lookalike = await resolve({ 'https://lnkd.in/abc': { status: 302, location: 'https://linkedin.com.evil.example/posts/x-activity-7100000000000000001' } });
+    expectFailure(lookalike.result, 'redirected away from LinkedIn');
+    for (const location of [
+      'https://user:pass@www.linkedin.com/posts/x-activity-7100000000000000001',
+      'https://www.linkedin.com:8443/posts/x-activity-7100000000000000001',
+      'ftp://www.linkedin.com/posts/x-activity-7100000000000000001',
+      'javascript:alert(1)',
+    ]) {
+      const refused = await resolve({ 'https://lnkd.in/abc': { status: 302, location } });
+      expectFailure(refused.result, 'redirected away from LinkedIn');
+      expect(refused.calls, location).toHaveLength(1);
+    }
+    const start = await resolve({}, 'https://evil.example/abc');
+    expectFailure(start.result, 'redirected away from LinkedIn');
+    expect(start.calls).toHaveLength(0);
+  });
+
+  it('fails on an answer that is not a redirect, without reading the body', async () => {
+    const { result, bodyReads } = await resolve({ 'https://lnkd.in/abc': { status: 200 } });
+    expectFailure(result, 'answered with HTTP 200 instead of a redirect');
+    expect(bodyReads).toEqual([]);
+    const missing = await resolve({ 'https://lnkd.in/abc': { status: 302 } });
+    expectFailure(missing.result, 'without a destination');
+  });
+
+  it('fails on an oversized Location header', async () => {
+    const { result } = await resolve({ 'https://lnkd.in/abc': { status: 302, location: `https://www.linkedin.com/posts/${'a'.repeat(2000)}` } });
+    expectFailure(result, 'longer than 2000 characters');
+  });
+
+  it('fails when the resolved link is over 500 characters', async () => {
+    const long = `https://www.linkedin.com/posts/name-activity-7100000000000000001-${'a'.repeat(500)}`;
+    const { result } = await resolve({ 'https://lnkd.in/abc': { status: 302, location: long } });
+    expectFailure(result, 'longer than 500 characters');
+  });
+
+  it('fails on a timeout or a network error and does not retry', async () => {
+    for (const name of ['TimeoutError', 'AbortError']) {
+      const calls: string[] = [];
+      const timedOut = (async (input: RequestInfo | URL) => {
+        calls.push(String(input));
+        throw Object.assign(new Error('The operation timed out.'), { name });
+      }) as typeof fetch;
+      const result = await resolveShortLink('https://lnkd.in/abc', timedOut);
+      expectFailure(result, 'did not answer in time');
+      expect(calls).toHaveLength(1);
+    }
+    const down = await resolve({});
+    expectFailure(down.result, 'Could not reach lnkd.in');
+    expect(down.calls).toHaveLength(1);
+  });
+
+  it('ends every failure with the same sentence the contract words', () => {
+    expect(openInBrowserSentence).toBe(sentence);
+  });
+});
+
+describe('lead capture with a lnkd.in short link', () => {
+  const short = 'https://lnkd.in/aBc-12_3';
+  const stripped = postUrl.split('?')[0]!;
+  let fetched: string[];
+
+  function useShortLinks(routes: Record<string, { status: number; location?: string }>) {
+    fetched = [];
+    setShortLinkFetch((async (input: RequestInfo | URL) => {
+      const url = input instanceof URL ? input.href : String(input);
+      fetched.push(url);
+      const route = routes[url];
+      if (!route) throw new TypeError('fetch failed');
+      return new Response(null, { status: route.status, headers: route.location ? { location: route.location } : {} });
+    }) as typeof fetch);
+  }
+
+  afterEach(() => {
+    setShortLinkFetch(null);
+  });
+
+  it('resolves the link in the validate step, then uses the resolved link everywhere', async () => {
+    useShortLinks({ [short]: { status: 302, location: postUrl } });
+    const { run, status, detail } = await capture({ postUrl: short, enrich: false });
+    expect(status).toBe('waiting_approval');
+    expect(run.title).toBe('LinkedIn lead capture: lnkd.in/aBc-12_3');
+    expect(detail.title).toBe('LinkedIn lead capture: lnkd.in/aBc-12_3');
+    expect(fetched).toEqual([short]);
+    expect(detail.scope).toMatchObject({ postUrl: stripped, originalUrl: short });
+    expect(detail.steps[0]!.detail).toContain(`Resolved ${short} to ${stripped}.`);
+    // Both engagement actors got the resolved link, never the short one.
+    expect(stub.state.startBodies).toEqual([
+      { posts: [stripped], maxItems: 50 },
+      { posts: [stripped], maxItems: 50 },
+    ]);
+    const batch = env.db.prepare('SELECT source_ref FROM import_batch WHERE run_id = ?').get(run.id) as { source_ref: string };
+    expect(JSON.parse(batch.source_ref)).toEqual({
+      postUrl: stripped,
+      originalUrl: short,
+      actors: { reactions: 'harvestapi/linkedin-post-reactions', comments: 'harvestapi/linkedin-post-comments' },
+      apifyRunIds: { reactions: 'run_1', comments: 'run_2' },
+    });
+    expect(detail.approvals[0]!.payload).toMatchObject({ postUrl: stripped, originalUrl: short });
+    decideApproval(env.ctx, detail.approvals[0]!.id, { decision: 'approve' });
+    const urls = env.db.prepare('SELECT DISTINCT source_url FROM field_claim').all();
+    expect(urls).toEqual([{ source_url: stripped }]);
+  });
+
+  it('follows two lnkd.in hops and hands the resolved link to the actors', async () => {
+    useShortLinks({ [short]: { status: 301, location: 'https://www.lnkd.in/hop2' }, 'https://www.lnkd.in/hop2': { status: 302, location: postUrl } });
+    const run = startRun(env.ctx, { kind: 'lead_capture', scope: { postUrl: short, sources: ['reactions'] } });
+    expect(await driveRunAsync(env, run.id, ['waiting_approval'])).toBe('waiting_approval');
+    expect(fetched).toEqual([short, 'https://www.lnkd.in/hop2']);
+    expect(stub.state.startBodies[0]).toEqual({ posts: [stripped], maxItems: 50 });
+    expect(detailOf(run.id).steps[0]!.detail).toContain(`Resolved ${short} to ${stripped}.`);
+    controlRun(env.ctx, run.id, { action: 'cancel' });
+  });
+
+  it('fails the run at the validate step with the resolver detail, before any actor call', async () => {
+    useShortLinks({ [short]: { status: 200 } });
+    const { status, detail } = await capture({ postUrl: short });
+    expect(status).toBe('failed');
+    expect(detail.steps[0]!.status).toBe('failed');
+    expect(detail.steps[0]!.detail).toContain('instead of a redirect');
+    expect(detail.steps[0]!.detail!.endsWith('Open the link in your browser and paste the full post link.')).toBe(true);
+    expect(detail.steps.slice(1).every((step) => step.status === 'skipped')).toBe(true);
+    expect(detail.scope).not.toHaveProperty('originalUrl');
+    expect(stub.state.startCalls).toBe(0);
+  });
+
+  it('fails the run when the short link leaves LinkedIn', async () => {
+    useShortLinks({ [short]: { status: 302, location: 'https://evil.example.com/x' } });
+    const { status, detail } = await capture({ postUrl: short });
+    expect(status).toBe('failed');
+    expect(detail.steps[0]!.detail).toContain('redirected away from LinkedIn');
+    expect(fetched).toEqual([short]);
+    expect(stub.state.startCalls).toBe(0);
+  });
+
+  it('does not touch a full post link', async () => {
+    useShortLinks({});
+    const { status, detail } = await capture({ enrich: false });
+    expect(status).toBe('waiting_approval');
+    expect(fetched).toEqual([]);
+    expect(detail.scope).not.toHaveProperty('originalUrl');
+    expect(detail.steps[0]!.detail).not.toContain('Resolved');
+    controlRun(env.ctx, detail.id, { action: 'cancel' });
+  });
+});
+
+const pastedSentence = 'A pasted capture reads only the pasted text. Reactions and comments need a post link.';
+
+async function pastedCapture(scope: Record<string, unknown>, until = ['waiting_approval', 'partial', 'failed']) {
+  const run = startRun(env.ctx, { kind: 'lead_capture', scope: { postText, enrich: false, ...scope } });
+  const status = await driveRunAsync(env, run.id, until);
+  return { run, status, detail: detailOf(run.id) };
+}
+
+describe('pasted capture rules that need no model provider', () => {
+  const bad = (scope: Record<string, unknown>) => failure(() => startRun(env.ctx, { kind: 'lead_capture', scope }));
+
+  it('needs exactly one of postUrl and postText', () => {
+    expect(bad({})).toBe('validation: scope.postUrl: Give a LinkedIn post link, or paste the post text with postText.');
+    expect(bad({ sources: ['reactions'] })).toMatch(/^validation: scope\.postUrl: /);
+  });
+
+  it('refuses reactions and comments with a pasted capture, with the exact sentence', () => {
+    for (const sources of [['reactions'], ['comments'], ['post', 'reactions'], ['post', 'reactions', 'comments']]) {
+      expect(bad({ postText, sources }), sources.join()).toBe(`validation: scope.sources: ${pastedSentence}`);
+    }
+  });
+
+  it('checks the pasted text and the provenance link', () => {
+    expect(bad({ postText: '   ' })).toMatch(/^validation: scope\.postText: Paste the post text/);
+    expect(bad({ postText: 'x'.repeat(15001) })).toMatch(/^validation: scope\.postText: Use pasted text of at most 15,000 characters/);
+    expect(bad({ postText, postUrl: 'https://example.com/post/1' })).toMatch(/^validation: scope\.postUrl: /);
+  });
+
+  it('needs a ready model provider, with a sentence that names the fix', () => {
+    const message = bad({ postText });
+    expect(message).toMatch(/^validation: scope\.postText: /);
+    expect(message).toContain('Connect a provider in Settings, Model providers');
+    expect(message).not.toContain('reactions and comments only');
+  });
+
+  it('is refused over HTTP as a 400 with the same sentence', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/runs',
+      headers: { host: '127.0.0.1:4720' },
+      payload: { kind: 'lead_capture', scope: { postText, sources: ['comments'] } },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.message).toContain(pastedSentence);
+  });
+});
+
+describe('pasted capture', () => {
+  let anthropic: AnthropicStub;
+  let restoreAnthropic: () => void;
+
+  beforeAll(async () => {
+    anthropic = await startAnthropicStub();
+    restoreAnthropic = useAnthropicStub(anthropic);
+    await configureAnthropicConnector(env.ctx, { token: stubApiKey });
+  });
+
+  afterAll(async () => {
+    disconnectAnthropicConnector(env.ctx);
+    await anthropic.close();
+    restoreAnthropic();
+  });
+
+  beforeEach(() => {
+    env.db.prepare('DELETE FROM model_call').run();
+    anthropic.reset();
+    anthropic.state.fallback = () => jsonReply(extractionAnswer);
+  });
+
+  describe('start', () => {
+    it('defaults enrich to false for a pasted capture and true for a link run, and sources to post only', async () => {
+      const pasted = startRun(env.ctx, { kind: 'lead_capture', scope: { postText } });
+      expect(pasted.scope).toMatchObject({ postText, sources: ['post'], enrich: false, maxPeople: 50, provider: 'anthropic', model: 'claude-opus-5-5', actors: {} });
+      expect(pasted.counts).toMatchObject({ requested: 50 });
+      expect(pasted.title).toBe('LinkedIn lead capture: pasted text');
+      const explicit = startRun(env.ctx, { kind: 'lead_capture', scope: { postText, sources: ['post'], enrich: true } });
+      expect(explicit.scope).toMatchObject({ enrich: true, sources: ['post'] });
+      expect(explicit.scope.actors).toMatchObject({ profile: 'harvestapi/linkedin-profile-scraper' });
+      const link = startRun(env.ctx, { kind: 'lead_capture', scope: { postUrl, sources: ['reactions'] } });
+      expect(link.scope.enrich).toBe(true);
+      // A link run that sets enrich false keeps it.
+      expect(startRun(env.ctx, { kind: 'lead_capture', scope: { postUrl, sources: ['reactions'], enrich: false } }).scope.enrich).toBe(false);
+    });
+
+    it('allows the link as provenance, keeps it as given, and titles the run from it', () => {
+      const withLink = startRun(env.ctx, { kind: 'lead_capture', scope: { postText, postUrl } });
+      expect(withLink.scope.postUrl).toBe(postUrl);
+      expect(withLink.title).toContain('linkedin.com/posts/example-person_topic-activity-7100000000000000001');
+      const short = startRun(env.ctx, { kind: 'lead_capture', scope: { postText, postUrl: 'https://lnkd.in/abc' } });
+      expect(short.scope.postUrl).toBe('https://lnkd.in/abc');
+    });
+
+    it('never records the pasted text in the audit trail', () => {
+      const run = startRun(env.ctx, { kind: 'lead_capture', scope: { postText } });
+      const audit = env.db.prepare("SELECT * FROM audit_event WHERE entity_id = ? AND action = 'run.create'").get(run.id) as Record<string, unknown>;
+      const detail = JSON.parse(audit.detail as string) as Record<string, unknown>;
+      expect(JSON.stringify(audit)).not.toContain('Seed season');
+      expect(detail).toMatchObject({ pasted: true, postTextCharacters: postText.length });
+      expect(detail).not.toHaveProperty('postText');
+    });
+
+    it('starts with enrich off when no Apify connector exists at all', async () => {
+      await app.inject({ method: 'DELETE', url: '/api/connectors/apify', headers: { host: '127.0.0.1:4720' } });
+      try {
+        const run = startRun(env.ctx, { kind: 'lead_capture', scope: { postText } });
+        expect(run.scope.actors).toEqual({});
+        // The agent path needs no allowlist either, because no actor runs.
+        controlRun(env.ctx, run.id, { action: 'cancel' });
+        const agent = startRun(env.ctx, { kind: 'lead_capture', scope: { postText } }, { origin: 'agent' });
+        expect(agent.status).toBe('queued');
+        controlRun(env.ctx, agent.id, { action: 'cancel' });
+        // Enrichment needs the connector, and the sentence names Settings.
+        expect(failure(() => startRun(env.ctx, { kind: 'lead_capture', scope: { postText, enrich: true } }))).toBe('conflict: Apify is not connected. Connect Apify in Settings first.');
+      } finally {
+        await configureApifyConnector(env.ctx, { token: stubToken, allowlist: fullAllowlist });
+      }
+    });
+
+    it('allowlists only the profile actor for an agent started pasted capture with enrichment on', async () => {
+      await configureApifyConnector(env.ctx, { allowlist: ['harvestapi/linkedin-post-reactions'] });
+      try {
+        const refused = failure(() => startRun(env.ctx, { kind: 'lead_capture', scope: { postText, enrich: true } }, { origin: 'agent' }));
+        expect(refused).toMatch(/^conflict: /);
+        expect(refused).toContain('harvestapi/linkedin-profile-scraper');
+        expect(refused).not.toContain('linkedin-post-detail');
+        expect(refused).not.toContain('linkedin-post-comments');
+        // Enrichment off needs no actor, so the same allowlist is enough.
+        const ok = startRun(env.ctx, { kind: 'lead_capture', scope: { postText } }, { origin: 'agent' });
+        expect(ok.scope.origin).toBe('agent');
+        controlRun(env.ctx, ok.id, { action: 'cancel' });
+        await configureApifyConnector(env.ctx, { allowlist: ['harvestapi/linkedin-profile-scraper'] });
+        const enriched = startRun(env.ctx, { kind: 'lead_capture', scope: { postText, enrich: true } }, { origin: 'agent' });
+        expect(enriched.status).toBe('queued');
+        controlRun(env.ctx, enriched.id, { action: 'cancel' });
+      } finally {
+        await configureApifyConnector(env.ctx, { allowlist: fullAllowlist });
+      }
+    });
+
+    it('keeps the pasted text out of run list reads and agent reads from the start', () => {
+      const run = startRun(env.ctx, { kind: 'lead_capture', scope: { postText } });
+      expect(env.db.prepare('SELECT scope FROM run WHERE id = ?').get(run.id)).toMatchObject({ scope: expect.stringContaining('Seed season') });
+      const listed = listRuns(env.db, env.workspaceId).items.find((item) => item.id === run.id)!;
+      expect(listed.scope).not.toHaveProperty('postText');
+      expect(JSON.stringify(listed)).not.toContain('Seed season');
+      const agentRead = getRunDetail(env.db, env.workspaceId, run.id, { forAgent: true });
+      expect(agentRead.scope).not.toHaveProperty('postText');
+      expect(JSON.stringify(agentRead)).not.toContain('Seed season');
+      controlRun(env.ctx, run.id, { action: 'cancel' });
+    });
+  });
+
+  describe('run', () => {
+    it('reads the pasted text through the model, stages the named people, and calls no actor', async () => {
+      const { run, status, detail } = await pastedCapture({});
+      expect(status).toBe('waiting_approval');
+      expect(detail.steps.map((step) => [step.title, step.status])).toEqual([
+        ['Validate connector, post URL, and limits', 'done'],
+        ['Read the post through Apify', 'done'],
+        ['Scrape reactions through Apify', 'done'],
+        ['Scrape comments through Apify', 'done'],
+        ['Extract people named in the post', 'done'],
+        ['Stage people from the post', 'done'],
+        ['Check for duplicates', 'done'],
+        ['Enrich new profiles through Apify', 'done'],
+        ['Merge enriched details', 'done'],
+        ['Request import review', 'done'],
+      ]);
+      for (const step of detail.steps) expect(step.detail, step.title).toBeTruthy();
+      expect(detail.steps[0]!.detail).toContain('Checked the pasted text, the model provider, and the limits.');
+      expect(detail.steps[1]!.detail).toContain('pasted text is used instead of an actor');
+      expect(detail.steps[2]!.detail).toBe('Skipped. Reactions need a post link, and a pasted capture reads only the pasted text.');
+      expect(detail.steps[3]!.detail).toBe('Skipped. Comments need a post link, and a pasted capture reads only the pasted text.');
+      expect(detail.steps[4]!.detail).toContain('The model found 2 people and 1 organization named in the pasted text.');
+      expect(detail.steps[5]!.detail).toContain('Fetched 3 entries named in the pasted text.');
+      expect(detail.steps[7]!.detail).toBe('Skipped. Enrichment is off for this run.');
+      // Nothing touched Apify, and no call state exists for the skipped steps.
+      expect(stub.state.startCalls).toBe(0);
+      expect(stub.state.datasetCalls).toBe(0);
+      expect(stub.state.paths.filter((entry) => !entry.startsWith('GET /v2/users/me'))).toEqual([]);
+      expect(detail.scope.calls).toEqual({});
+
+      // The model got the pasted text, fenced.
+      expect(anthropic.state.messageCalls).toBe(1);
+      const sentToModel = JSON.stringify(anthropic.state.messageBodies[0]);
+      expect(sentToModel).toContain('Imogen Pryce at Tamsin Lane Ventures backs founders');
+      expect(sentToModel).toContain('<linkedin_post>');
+
+      const rows = stagedRows(detail.scope.batchId);
+      expect(rows.map((row) => row.mapped.name ?? row.mapped.company)).toEqual(['Ben Marsh', 'Imogen Pryce', 'Alderwick Family Office']);
+      expect(rows.every((row) => row.status === 'staged')).toBe(true);
+      // No author row, and nothing from the injection line.
+      expect(rows.some((row) => row.raw.sources.some((entry: Record<string, unknown>) => entry.kind === 'post_author'))).toBe(false);
+      expect(JSON.stringify(rows)).not.toContain('phish.example.com');
+      expect(rows[0]!.raw.fieldSources).toMatchObject({ name: 'post', company: 'post', title: 'post', linkedinUrl: 'post' });
+      expect(rows[0]!.raw.sources[0].quote).toContain('Ben Marsh (Principal at Harbor Row');
+
+      expect(detail.counts).toMatchObject({ requested: 50, fetched: 3, staged: 3 });
+      const batch = env.db.prepare('SELECT source_kind, source_ref FROM import_batch WHERE run_id = ?').get(run.id) as { source_kind: string; source_ref: string };
+      expect(batch.source_kind).toBe('lead_capture');
+      expect(JSON.parse(batch.source_ref)).toEqual({ pasted: true, actors: {}, apifyRunIds: {} });
+      const approval = detail.approvals[0]!;
+      expect(approval.payload).toMatchObject({ pasted: true, actors: {} });
+      expect(approval.payload).not.toHaveProperty('postUrl');
+      expect(approval.title).toBe('Review 2 people and 1 organization from pasted post text');
+      controlRun(env.ctx, run.id, { action: 'cancel' });
+    });
+
+    it('keeps the requested count at maxPeople through the dedupe and merge steps', async () => {
+      const { detail } = await pastedCapture({ maxPeople: 7 });
+      expect(detail.counts).toMatchObject({ requested: 7, fetched: 3 });
+      controlRun(env.ctx, detail.id, { action: 'cancel' });
+    });
+
+    it('drops entries the pasted text does not support and caps the rest at maxPeople', async () => {
+      anthropic.state.fallback = () =>
+        jsonReply({
+          entries: [
+            ...extractionAnswer.entries,
+            { kind: 'person', name: 'Zed Madeup', quote: 'Zed Madeup writes cheques too.' },
+            { kind: 'person', name: 'Ben Marsh', quote: 'A quote that is not in the text at all.' },
+          ],
+        });
+      const { detail } = await pastedCapture({ maxPeople: 2 });
+      expect(detail.steps[4]!.detail).toContain('2 entries did not match the pasted text and were dropped.');
+      expect(detail.steps[4]!.detail).toContain('1 more entry was left out because of the people limit of 2.');
+      expect(stagedRows(detail.scope.batchId).map((row) => row.mapped.name ?? row.mapped.company)).toEqual(['Ben Marsh', 'Imogen Pryce']);
+      controlRun(env.ctx, detail.id, { action: 'cancel' });
+    });
+
+    it('finishes as partial with nothing to review when the model finds nobody', async () => {
+      anthropic.state.fallback = () => jsonReply({ entries: [] });
+      const { status, detail } = await pastedCapture({});
+      expect(status).toBe('partial');
+      expect(detail.steps[4]!.detail).toContain('The model found nobody named in the pasted text.');
+      expect(detail.steps[9]!.detail).toContain('nothing to review');
+      expect(detail.scope).not.toHaveProperty('postText');
+    });
+
+    it('removes the pasted text from the scope once staging has consumed it, and from every read', async () => {
+      const run = startRun(env.ctx, { kind: 'lead_capture', scope: { postText } });
+      // The scope holds the text until staging.
+      for (let index = 0; index < 20; index += 1) {
+        env.advance(1000);
+        await processAllJobs(env.ctx);
+        const row = env.db.prepare('SELECT scope FROM run WHERE id = ?').get(run.id) as { scope: string };
+        const steps = detailOf(run.id).steps;
+        if (steps[5]!.status === 'done') {
+          expect(row.scope).not.toContain('Seed season');
+          expect(JSON.parse(row.scope)).not.toHaveProperty('postText');
+          break;
+        }
+        if (steps[4]!.status !== 'done') expect(JSON.parse(row.scope).postText).toBe(postText);
+      }
+      await driveRunAsync(env, run.id, ['waiting_approval']);
+      const detail = detailOf(run.id);
+      expect(detail.scope).not.toHaveProperty('postText');
+      expect(detail.scope).not.toHaveProperty('extraction');
+      const listed = listRuns(env.db, env.workspaceId).items.find((item) => item.id === run.id)!;
+      expect(JSON.stringify(listed.scope)).not.toContain('Seed season');
+      const agent = getRunDetail(env.db, env.workspaceId, run.id, { forAgent: true });
+      expect(JSON.stringify(agent)).not.toContain('Seed season');
+      expect(JSON.stringify(agent.scope)).not.toContain('Imogen Pryce');
+      controlRun(env.ctx, run.id, { action: 'cancel' });
+    });
+
+    it('removes the pasted text when the run is cancelled before staging', async () => {
+      const run = startRun(env.ctx, { kind: 'lead_capture', scope: { postText } });
+      controlRun(env.ctx, run.id, { action: 'cancel' });
+      expect(JSON.parse((env.db.prepare('SELECT scope FROM run WHERE id = ?').get(run.id) as { scope: string }).scope)).not.toHaveProperty('postText');
+    });
+
+    it('writes claims with source_type import for fields read from the text, and no URL without a link', async () => {
+      const { run, detail } = await pastedCapture({});
+      decideApproval(env.ctx, detail.approvals[0]!.id, { decision: 'approve' });
+      const claims = env.db.prepare('SELECT entity_type, field, source_type, source_url, extraction_method FROM field_claim').all() as Record<string, any>[];
+      expect(claims.length).toBeGreaterThan(5);
+      for (const claim of claims) {
+        expect(claim.source_type, `${claim.entity_type} ${claim.field}`).toBe('import');
+        expect(claim.source_url).toBeNull();
+        expect(claim.extraction_method).toBe(modelMethod);
+      }
+      expect(env.db.prepare("SELECT COUNT(*) AS n FROM person WHERE first_name IN ('Ben', 'Imogen')").get()).toEqual({ n: 2 });
+      expect(env.db.prepare("SELECT COUNT(*) AS n FROM organization WHERE name = 'Alderwick Family Office'").get()).toEqual({ n: 1 });
+      expect(detailOf(run.id).status).toBe('succeeded');
+    });
+
+    it('points claims at the provenance link without its query when one was given', async () => {
+      const { detail } = await pastedCapture({ postUrl });
+      expect(detail.scope.postUrl).toBe(postUrl);
+      const batch = env.db.prepare('SELECT source_ref FROM import_batch WHERE run_id = ?').get(detail.id) as { source_ref: string };
+      expect(JSON.parse(batch.source_ref)).toEqual({ postUrl, pasted: true, actors: {}, apifyRunIds: {} });
+      decideApproval(env.ctx, detail.approvals[0]!.id, { decision: 'approve' });
+      expect(env.db.prepare('SELECT DISTINCT source_url, source_type FROM field_claim').all()).toEqual([{ source_url: postUrl.split('?')[0], source_type: 'import' }]);
+    });
+
+    it('never fetches or resolves the provenance link, even a lnkd.in one', async () => {
+      const fetched: string[] = [];
+      setShortLinkFetch((async (input: RequestInfo | URL) => {
+        fetched.push(String(input));
+        throw new Error('The network must not be used.');
+      }) as typeof fetch);
+      try {
+        const { detail, status } = await pastedCapture({ postUrl: 'https://lnkd.in/aBc-12_3' });
+        expect(status).toBe('waiting_approval');
+        expect(fetched).toEqual([]);
+        expect(detail.scope).toMatchObject({ postUrl: 'https://lnkd.in/aBc-12_3' });
+        expect(detail.scope).not.toHaveProperty('originalUrl');
+        expect(detail.steps[0]!.detail).not.toContain('Resolved');
+        controlRun(env.ctx, detail.id, { action: 'cancel' });
+      } finally {
+        setShortLinkFetch(null);
+      }
+    });
+
+    it('enriches through the profile actor only, and enrichment fields keep source_type apify', async () => {
+      const { run, status, detail } = await pastedCapture({ enrich: true });
+      expect(status).toBe('waiting_approval');
+      expect(stub.state.startActors).toEqual([profileActorId]);
+      expect((stub.state.startBodies[0] as { queries: string[] }).queries).toEqual(['https://www.linkedin.com/in/ben-marsh']);
+      expect(detail.steps[7]!.detail).toContain('Apify run run_1 SUCCEEDED');
+      expect(detail.steps[8]!.detail).toContain('Matched 1 of');
+      const batch = env.db.prepare('SELECT source_ref FROM import_batch WHERE run_id = ?').get(run.id) as { source_ref: string };
+      expect(JSON.parse(batch.source_ref)).toEqual({
+        pasted: true,
+        actors: { profile: 'harvestapi/linkedin-profile-scraper' },
+        apifyRunIds: { enrich: 'run_1' },
+      });
+      decideApproval(env.ctx, detail.approvals[0]!.id, { decision: 'approve' });
+      const ben = env.db.prepare("SELECT id FROM person WHERE first_name = 'Ben'").get() as { id: string };
+      const claim = (field: string) =>
+        env.db.prepare("SELECT source_type, extraction_method FROM field_claim WHERE entity_id = ? AND field = ?").get(ben.id, field) as Record<string, string>;
+      expect(claim('name')).toEqual({ source_type: 'import', extraction_method: modelMethod });
+      expect(claim('title')).toEqual({ source_type: 'import', extraction_method: modelMethod });
+      // The profile scrape filled the location the text did not state.
+      expect(claim('location')).toEqual({ source_type: 'apify', extraction_method: 'lead_capture:harvestapi/linkedin-profile-scraper' });
+    });
+
+    it('spares pasted runs when Apify is disconnected, enrichment on or off', async () => {
+      const off = startRun(env.ctx, { kind: 'lead_capture', scope: { postText } });
+      const on = startRun(env.ctx, { kind: 'lead_capture', scope: { postText, enrich: true } });
+      await app.inject({ method: 'DELETE', url: '/api/connectors/apify', headers: { host: '127.0.0.1:4720' } });
+      try {
+        // Removing the connector fails no pasted run, whether or not it froze the profile actor.
+        expect(detailOf(on.id).status).toBe('queued');
+        expect(detailOf(off.id).status).toBe('queued');
+        expect(await driveRunAsync(env, off.id, ['waiting_approval', 'failed'])).toBe('waiting_approval');
+        expect(detailOf(off.id).steps[0]!.status).toBe('done');
+        expect(stub.state.startCalls).toBe(0);
+        // A run still queued when Apify went away has not spent anything yet, so its validation stops it with the reason.
+        expect(await driveRunAsync(env, on.id, ['waiting_approval', 'failed'])).toBe('failed');
+        expect(detailOf(on.id).steps[0]!.detail).toContain('Apify is not connected');
+      } finally {
+        await configureApifyConnector(env.ctx, { token: stubToken, allowlist: fullAllowlist });
+        controlRun(env.ctx, off.id, { action: 'cancel' });
+      }
+
+      // A run whose connector went missing without that fail step (a settings row removed directly) fails at validation.
+      const stale = startRun(env.ctx, { kind: 'lead_capture', scope: { postText, enrich: true } });
+      env.db.prepare("UPDATE connector SET status = 'error' WHERE kind = 'apify'").run();
+      try {
+        expect(await driveRunAsync(env, stale.id, ['waiting_approval', 'failed'])).toBe('failed');
+        expect(detailOf(stale.id).steps[0]!.detail).toContain('Apify rejected the saved API token');
+      } finally {
+        await configureApifyConnector(env.ctx, { token: stubToken, allowlist: fullAllowlist });
+      }
+    });
+  });
+
+  describe('failure', () => {
+    it('fails the run when the model refuses, keeps the model call on record, and scrubs the text', async () => {
+      anthropic.state.fallback = () => refusalReply('general_harms');
+      const { run, status, detail } = await pastedCapture({});
+      expect(status).toBe('failed');
+      expect(detail.steps[4]!.status).toBe('failed');
+      expect(detail.steps[4]!.detail).toContain('The model declined to read the pasted text (general harms).');
+      expect(detail.steps[4]!.detail).toContain('The run stopped because the pasted text was its only source.');
+      expect(detail.steps.slice(5).every((step) => step.status === 'skipped')).toBe(true);
+      expect(detail.scope).not.toHaveProperty('postText');
+      expect(env.db.prepare('SELECT pending, input_tokens FROM model_call WHERE run_id = ?').all(run.id)).toEqual([{ pending: 0, input_tokens: 1000 }]);
+      expect(detail.counts.estimatedUsd).toBeGreaterThan(0);
+      expect(env.db.prepare('SELECT COUNT(*) AS n FROM import_batch WHERE run_id = ?').get(run.id)).toEqual({ n: 0 });
+    });
+
+    it('fails the run on a provider error and removes the marker of a call that got no answer', async () => {
+      anthropic.state.fallback = () => errorReply(500);
+      const { run, status, detail } = await pastedCapture({});
+      expect(status).toBe('failed');
+      expect(detail.steps[4]!.status).toBe('failed');
+      expect(detail.steps[4]!.detail).toContain('No names were extracted from the text.');
+      expect(env.db.prepare('SELECT COUNT(*) AS n FROM model_call WHERE run_id = ?').get(run.id)).toEqual({ n: 0 });
+      expect(detail.scope).not.toHaveProperty('postText');
+    });
+
+    it('fails the run when the answer is not valid JSON', async () => {
+      anthropic.state.fallback = () => anthropicTextReply('Here are the names: Ben, Imogen.');
+      const { status, detail } = await pastedCapture({});
+      expect(status).toBe('failed');
+      expect(detail.steps[4]!.detail).toContain('No names were extracted from the text.');
+    });
+
+    it('never repeats a model call whose outcome is unknown, and fails the run', async () => {
+      const run = startRun(env.ctx, { kind: 'lead_capture', scope: { postText, enrich: false } });
+      env.db
+        .prepare("INSERT INTO model_call (id, created_at, workspace_id, run_id, purpose, provider, model, pending, subject_id) VALUES ('mcl_pastedcrash0', '2026-03-01T00:00:00.000Z', ?, ?, 'draft', 'anthropic', 'claude-opus-5-5', 1, ?)")
+        .run(env.workspaceId, run.id, run.id);
+      expect(await driveRunAsync(env, run.id, ['waiting_approval', 'partial', 'failed'])).toBe('failed');
+      expect(anthropic.state.messageCalls).toBe(0);
+      expect(detailOf(run.id).steps[4]!.detail).toContain('outcome is unknown');
+      expect(detailOf(run.id).steps[4]!.detail).toContain('may have been billed');
+      expect(detailOf(run.id).scope).not.toHaveProperty('postText');
+    });
+
+    it('fails at validation with the provider sentence when the provider stopped being ready', async () => {
+      const run = startRun(env.ctx, { kind: 'lead_capture', scope: { postText } });
+      disconnectAnthropicConnector(env.ctx);
+      try {
+        expect(await driveRunAsync(env, run.id, ['failed'])).toBe('failed');
+        const detail = detailOf(run.id);
+        expect(detail.steps[0]!.status).toBe('failed');
+        expect(detail.steps[0]!.detail).toContain('Connect a provider in Settings, Model providers');
+        expect(detail.steps[0]!.detail!.endsWith('The pasted text was the only source of this run.')).toBe(true);
+        expect(anthropic.state.messageCalls).toBe(0);
+        expect(detail.scope).not.toHaveProperty('postText');
+      } finally {
+        await configureAnthropicConnector(env.ctx, { token: stubApiKey });
+      }
+    });
+  });
+
+  describe('MCP', () => {
+    it('start_lead_capture takes postText, hides it from crm_get_run, and rejects a call with neither input', async () => {
+      const transport = new StdioClientTransport({
+        command: process.execPath,
+        args: ['--import', 'tsx', path.join(packageRoot, 'src', 'cli.ts'), 'mcp'],
+        cwd: packageRoot,
+        env: { ...(process.env as Record<string, string>), AGENTCRM_DB: env.databasePath },
+        stderr: 'ignore',
+      });
+      const client = new Client({ name: 'pasted-capture-test', version: '1.0.0' });
+      await client.connect(transport);
+      const textOf = (result: unknown): string => String((result as { content: { text: string }[] }).content[0]!.text);
+      try {
+        const { tools } = await client.listTools();
+        const tool = tools.find((candidate) => candidate.name === 'start_lead_capture')!;
+        const properties = (tool.inputSchema as { properties: Record<string, unknown>; required?: string[] }).properties;
+        expect(Object.keys(properties)).toContain('postText');
+        expect((tool.inputSchema as { required?: string[] }).required ?? []).not.toContain('postUrl');
+        expect(tool.description).toContain('postText');
+        expect(tool.description).toContain('pasted');
+
+        const neither = await client.callTool({ name: 'start_lead_capture', arguments: { maxPeople: 5 } });
+        expect(neither.isError).toBe(true);
+        expect(textOf(neither)).toContain('Give a LinkedIn post link, or paste the post text with postText');
+
+        const mixed = await client.callTool({ name: 'start_lead_capture', arguments: { postText, sources: ['reactions'] } });
+        expect(mixed.isError).toBe(true);
+        expect(textOf(mixed)).toContain(pastedSentence);
+
+        const started = await client.callTool({ name: 'start_lead_capture', arguments: { postText } });
+        expect(started.isError).not.toBe(true);
+        const { runId } = JSON.parse(textOf(started)) as { runId: string };
+        expect(detailOf(runId).scope).toMatchObject({ origin: 'agent', sources: ['post'], enrich: false });
+
+        let reads = '';
+        for (let wait = 0; wait < 100 && detailOf(runId).status !== 'waiting_approval'; wait += 1) {
+          reads += textOf(await client.callTool({ name: 'crm_get_run', arguments: { runId } }));
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        expect(detailOf(runId).status).toBe('waiting_approval');
+        reads += textOf(await client.callTool({ name: 'crm_get_run', arguments: { runId } }));
+        expect(reads).not.toContain('postText');
+        expect(reads).not.toContain('Seed season');
+        expect(anthropic.state.messageCalls).toBe(1);
+        controlRun(env.ctx, runId, { action: 'cancel' });
+      } finally {
+        await client.close();
+      }
+    }, 40_000);
   });
 });

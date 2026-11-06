@@ -400,7 +400,10 @@ export interface ApifyConnectorInput {
 export type LeadSource = 'post' | 'reactions' | 'comments';
 
 export interface LeadCaptureInput {
-  postUrl: string;
+  // A post link or a lnkd.in short link. Optional provenance when postText is set.
+  postUrl?: string;
+  // The pasted post text. Setting it makes the run a pasted capture that reads only this text.
+  postText?: string;
   sources?: LeadSource[];
   maxPeople?: number;
   enrich?: boolean;
@@ -475,8 +478,10 @@ export interface ImportBatch {
   runId: string | null;
   sourceKind: string;
   actorId: string | null;
-  // Lead capture batches only: the LinkedIn post the people came from.
+  // Lead capture batches only: the LinkedIn post the people came from. A short link shows as the resolved post link.
   postUrl: string | null;
+  // Lead capture batches only: true when the people were read out of pasted post text.
+  pasted: boolean;
   apifyRunId: string | null;
   datasetId: string | null;
   status: ImportBatchStatus;
@@ -515,8 +520,10 @@ export interface ImportSampleRow {
 export interface ImportReviewPayload {
   batchId: string | null;
   actorId: string | null;
-  // Lead capture reviews: the LinkedIn post the people came from.
+  // Lead capture reviews: the LinkedIn post the people came from. A short link shows as the resolved post link.
   postUrl: string | null;
+  // Lead capture reviews: true when the people were read out of pasted post text.
+  pasted: boolean;
   counts: ImportCounts;
   sample: ImportSampleRow[];
 }

@@ -54,12 +54,20 @@ export function getRunDetail(db: Db, workspaceId: string, id: string, options: {
     for (const key of hiddenForAgent) delete scope[key];
     run = { ...found, scope };
   }
+  if (options.forAgent && found.kind === 'lead_capture') {
+    const scope = { ...found.scope };
+    for (const key of postTextScopeKeys) delete scope[key];
+    run = { ...found, scope };
+  }
   // Agent reads of enrich runs also blank every step detail: a name mode detail names the scraped
-  // company, and scraped text reaches no agent surface before a human accepted it.
+  // company, and scraped text reaches no agent surface before a human accepted it. Lead capture runs do the same,
+  // because a step detail can quote post content (a provider error echoing the request, a refusal explanation), and
+  // their approval payload leaves out the sample rows, which are names and titles read out of the post.
+  const blankDetails = options.forAgent && (hiddenForAgent !== undefined || found.kind === 'lead_capture');
   const steps = listRunSteps(db, id);
   return {
     ...run,
-    steps: options.forAgent && hiddenForAgent ? steps.map((step) => ({ ...step, detail: null })) : steps,
+    steps: blankDetails ? steps.map((step) => ({ ...step, detail: null })) : steps,
     approvals: (
       db
         .prepare(
@@ -67,7 +75,9 @@ export function getRunDetail(db: Db, workspaceId: string, id: string, options: {
            WHERE a.workspace_id = ? AND a.run_id = ? ORDER BY a.created_at, a.id`,
         )
         .all(workspaceId, id) as Row[]
-    ).map(toApproval),
+    )
+      .map(toApproval)
+      .map((approval) => (options.forAgent && found.kind === 'lead_capture' ? withoutSampleRows(approval) : approval)),
   };
 }
 
@@ -89,10 +99,23 @@ function parseStatuses(value: string): RunStatus[] {
 
 // Large arrays kept in a run's scope. The list leaves them out so one long draft run does not bloat every poll.
 // GET /api/runs/:id and the approval payload keep them. The lead capture extraction holds names and quotes read out
-// of a post, so it stays out of the list too.
-const bulkyScopeKeys = ['drafts', 'failures', 'skipped', 'audienceIds', 'extraction', 'extractionResult'] as const;
+// of a post, and a pasted capture holds the pasted text itself, so those stay out of the list too.
+const bulkyScopeKeys = ['drafts', 'failures', 'skipped', 'audienceIds', 'extraction', 'extractionResult', 'postText'] as const;
 
-function trimScopeForList(run: ReturnType<typeof toRun>): ReturnType<typeof toRun> {
+// Scope keys of a lead capture run that hold post text. Agent facing reads leave them out, so post content reaches no
+// agent surface, not even while a pasted capture is waiting to be read.
+const postTextScopeKeys = ['postText', 'extraction', 'extractionResult'] as const;
+
+// An import review payload for a lead capture run without its sample rows (names, titles, and companies read out of
+// post text). Counts and the source stay.
+function withoutSampleRows<T extends { payload: unknown }>(approval: T): T {
+  const payload = approval.payload;
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload) || !('sample' in payload)) return approval;
+  const { sample: _sample, ...rest } = payload as Record<string, unknown>;
+  return { ...approval, payload: rest };
+}
+
+export function trimScopeForList(run: ReturnType<typeof toRun>): ReturnType<typeof toRun> {
   const hidden: readonly string[] = [...bulkyScopeKeys, ...(enrichAgentHiddenKeys.get(run.kind) ?? [])];
   if (!hidden.some((key) => key in run.scope)) return run;
   const scope = { ...run.scope };

@@ -25,9 +25,9 @@ export function writeBatchCounts(tx: Tx, batchId: string, counts: ImportCounts):
 
 // Called when a run ends without an approved import (cancel, reject, failure). Rows nobody accepted become rejected.
 export function closeImportBatchForRun(tx: Tx, runId: string, outcome: 'rejected' | 'failed', reason: string): void {
-  // A lead capture run that ends before staging used its extraction keeps no post names or quotes in its scope.
+  // A lead capture run that ends before staging used its extraction keeps no post names, quotes, or pasted text in its scope.
   tx.db
-    .prepare("UPDATE run SET scope = json_remove(scope, '$.extraction', '$.extractionResult') WHERE id = ? AND kind = 'lead_capture'")
+    .prepare("UPDATE run SET scope = json_remove(scope, '$.extraction', '$.extractionResult', '$.postText') WHERE id = ? AND kind = 'lead_capture'")
     .run(runId);
   const batch = getImportBatchForRun(tx.db, tx.workspaceId, runId);
   if (!batch || (batch.status !== 'staging' && batch.status !== 'awaiting_review')) return;
@@ -155,6 +155,11 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
           method: String(scope.actorId ?? 'unknown'),
           tag: 'apify',
         };
+  // A pasted capture read some fields out of text the user pasted, which is not Apify data, so those claims are an
+  // import. Fields an actor supplied (enrichment) keep the Apify source type.
+  const pastedCapture = leadCapture && batch.sourceRef.pasted === true;
+  const typeFor = (row: StagedRow, field: string): string =>
+    pastedCapture && row.fieldSources[field] === 'post' ? 'import' : source.type;
   const methodFor = (row: StagedRow, field: string): string => {
     if (!leadCapture) return source.method;
     if (row.fieldSources[field] === 'post') return modelMethod;
@@ -294,7 +299,7 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
                 field,
                 value: value.slice(0, longestClaim),
                 sourceUrl: source.url,
-                sourceType: source.type,
+                sourceType: typeFor(row, originField),
                 observedAt,
                 status: 'imported',
                 extractionMethod: methodFor(row, originField),
@@ -326,7 +331,7 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
               field: 'linkedinUrl',
               value: organizationLinkedin,
               sourceUrl: source.url,
-              sourceType: source.type,
+              sourceType: typeFor(row, 'company'),
               observedAt,
               status: 'imported',
               extractionMethod: methodFor(row, 'company'),
@@ -368,7 +373,7 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
           field,
           value: value.slice(0, longestClaim),
           sourceUrl: source.url,
-          sourceType: source.type,
+          sourceType: typeFor(row, field),
           observedAt,
           status: 'imported',
           extractionMethod: methodFor(row, field),

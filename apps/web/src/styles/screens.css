@@ -737,6 +737,9 @@
   font-size: 13px;
   font-weight: 600;
 }
+.lead-capture .segmented {
+  align-self: flex-start;
+}
 .lead-capture__group {
   display: flex;
   flex-wrap: wrap;

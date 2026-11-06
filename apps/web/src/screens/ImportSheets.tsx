@@ -414,9 +414,13 @@ export function ImportBatchSheet({ id, onClose }: { id: string; onClose: () => v
       title="Import batch"
       subtitle={
         batch?.sourceKind === 'lead_capture'
-          ? batch.postUrl
-            ? `From a LinkedIn post: ${batch.postUrl}`
-            : 'From a LinkedIn post'
+          ? batch.pasted
+            ? batch.postUrl
+              ? `From pasted post text. Link given: ${batch.postUrl}`
+              : 'From pasted post text'
+            : batch.postUrl
+              ? `From a LinkedIn post: ${batch.postUrl}`
+              : 'From a LinkedIn post'
           : batch?.actorId
             ? `Actor ${batch.actorId}`
             : batch?.sourceKind === 'csv'

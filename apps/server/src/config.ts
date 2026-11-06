@@ -39,6 +39,9 @@ export function apifyPollMilliseconds(): number {
 
 export const apifyRequestTimeoutMilliseconds = 10_000;
 
+// Every request while resolving a lnkd.in short link gives up after this long.
+export const shortLinkTimeoutMilliseconds = 10_000;
+
 export const defaultAnthropicBase = 'https://api.anthropic.com';
 
 export function anthropicBaseUrl(): string {

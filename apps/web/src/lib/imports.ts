@@ -101,6 +101,7 @@ export function parseImportReviewPayload(payload: unknown): ImportReviewPayload 
     batchId: text(record.batchId) ?? text(record.batch_id),
     actorId: text(record.actorId) ?? text(record.actor_id),
     postUrl: text(record.postUrl) ?? text(asRecord(record.source).postUrl),
+    pasted: record.pasted === true,
     counts: normalizeCounts(record.counts),
     sample,
   };

@@ -60,7 +60,17 @@ export function ImportReviewBody({ approval, review }: { approval: Approval; rev
   return (
     <div className="import-review">
       <ImportCountsRow counts={counts} />
-      {review.postUrl ? (
+      {review.pasted ? (
+        <p className="muted import-review__source">
+          From pasted post text
+          {review.postUrl ? (
+            <>
+              {' '}
+              <span className="import-review__actor">{review.postUrl}</span>
+            </>
+          ) : null}
+        </p>
+      ) : review.postUrl ? (
         <p className="muted import-review__source">
           From a LinkedIn post <span className="import-review__actor">{review.postUrl}</span>
         </p>

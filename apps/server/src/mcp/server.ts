@@ -247,23 +247,25 @@ export async function startMcpServer(): Promise<void> {
     {
       title: 'Start a LinkedIn lead capture',
       description:
-        'Starts a run that reads a LinkedIn post through the Apify actors configured in Settings (who reacted, who commented, and the post text itself, where a model provider reads the people and organizations it names), stages those people and organizations, and optionally enriches the new ones with profile details. Arguments: postUrl (a linkedin.com/posts/ link ending in activity-<digits> or ugcPost-<digits>, or a linkedin.com/feed/update/urn:li:activity:<digits> link), sources (any of post, reactions, comments; default reactions and comments; post is opt-in because it needs a ready model provider and spends model credit, so ask for it by name), maxPeople per source (default 50, max 500), enrich (default true), enrichLimit (default 25, max 200). It spends the user\'s Apify credit, every involved actor id must be on the Apify allowlist, and one agent started run may be open at a time. Only a person can approve the import in the app. Read progress with crm_get_run.',
+        'Starts a run that captures leads from a LinkedIn post, from a post link or from pasted post text. Give exactly one of postUrl and postText; a pasted capture may also give postUrl as provenance. With postUrl, the run reads the post through the Apify actors configured in Settings (who reacted, who commented, and the post text itself, where a model provider reads the people and organizations it names), stages those people and organizations, and optionally enriches the new ones with profile details. postUrl is a linkedin.com/posts/ link ending in activity-<digits> or ugcPost-<digits>, a linkedin.com/feed/update/urn:li:activity:<digits> link, or a lnkd.in short link that the run resolves to the full post link first. With postText (1 to 15000 characters), a model provider reads the people and organizations named in the pasted text and nothing else: sources must be left out or be post only, reactions and comments need a post link, enrichment is off unless you set enrich true, and Apify is touched only for enrichment. Passing postText spends model credit by design and needs a ready model provider. Other arguments: sources (any of post, reactions, comments; default reactions and comments; post is opt-in because it needs a ready model provider and spends model credit, so ask for it by name), maxPeople per source (default 50, max 500), enrich (default true for a link, false for pasted text), enrichLimit (default 25, max 200). A link capture spends the user\'s Apify credit, every involved actor id must be on the Apify allowlist (for a pasted capture only the profile actor, and only with enrich true), and one agent started run may be open at a time. Only a person can approve the import in the app. Read progress with crm_get_run.',
       inputSchema: {
-        postUrl: z.string().min(1).max(500),
+        postUrl: z.string().trim().min(1).max(500).optional(),
+        postText: z.string().trim().min(1).max(15000).optional(),
         sources: z.array(z.enum(['post', 'reactions', 'comments'])).min(1).optional(),
         maxPeople: z.number().int().min(1).max(500).optional(),
         enrich: z.boolean().optional(),
         enrichLimit: z.number().int().min(1).max(200).optional(),
       },
     },
-    async ({ postUrl, sources, maxPeople, enrich, enrichLimit }) =>
+    async ({ postUrl, postText, sources, maxPeople, enrich, enrichLimit }) =>
       guarded(() => {
         const run = startRun(
           ctx,
           {
             kind: 'lead_capture',
             scope: {
-              postUrl,
+              ...(postUrl !== undefined ? { postUrl } : {}),
+              ...(postText !== undefined ? { postText } : {}),
               ...(sources ? { sources } : {}),
               ...(maxPeople !== undefined ? { maxPeople } : {}),
               ...(enrich !== undefined ? { enrich } : {}),
@@ -276,7 +278,10 @@ export async function startMcpServer(): Promise<void> {
           runId: run.id,
           status: run.status,
           simulated: false,
-          note: 'A worker in this process or in the API server advances this run and calls Apify, which can cost the user money. Read progress with crm_get_run. Only a person can approve the import.',
+          note:
+            postText !== undefined
+              ? 'A worker in this process or in the API server advances this run and calls the active model provider, which can cost the user money, and calls Apify only when enrichment is on. Read progress with crm_get_run. Only a person can approve the import.'
+              : 'A worker in this process or in the API server advances this run and calls Apify, which can cost the user money. Read progress with crm_get_run. Only a person can approve the import.',
         };
       }),
   );

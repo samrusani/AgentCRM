@@ -4,7 +4,7 @@
 
 **The CRM that people and AI agents operate together.**
 
-<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-2046-15685b?style=flat" alt="2046 tests">
+<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-2188-15685b?style=flat" alt="2188 tests">
 
 [Quick start](#quick-start) · [What works](#what-works-today) · [Architecture docs](docs/architecture.md)
 
@@ -89,7 +89,7 @@ Run it from the repository root, or make the `--prefix` path absolute. Keep `--s
 
 ## What works today
 
-Every row below is backed by tests: 2,046 across the server (1,390), the web app (374), and the browser extension (282). "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
+Every row below is backed by tests: 2,188 across the server (1,493), the web app (413), and the browser extension (282). "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
 
 ### Core CRM
 
@@ -123,7 +123,7 @@ Every row below is backed by tests: 2,046 across the server (1,390), the web app
 | Apify imports: run any store Actor, staged rows, dedupe, review before anything is saved | Working, verified against a stubbed Apify API; bring your own Apify account |
 | CSV import: column mapping, staged rows, same dedupe and review as Apify | Working, UI and CLI |
 | Auto accept imports: an off by default setting saves staged rows from your own imports without review, with the decision still recorded; runs started by the agent always wait | Working |
-| LinkedIn lead capture: paste a post URL, read the people and organizations named in the post text, scrape reactions and comments, enrich new people, one review | Working, verified against stubbed Apify and model APIs; runs on your own Apify account and model key |
+| LinkedIn lead capture: paste a post URL or a lnkd.in short link (resolved before anything is fetched), read the people and organizations named in the post text, scrape reactions and comments, enrich new people, one review; or paste the post text itself and capture with no Apify account at all | Working, verified against stubbed Apify and model APIs; runs on your own Apify account and model key, and a pasted capture needs only the model |
 | Browser extension: one click capture of the LinkedIn or X profile you are viewing, with the button sitting next to the profile name and showing In CRM when the person is already saved; token guarded, nothing leaves your machine | Working; load unpacked from apps/extension, generate the token in Settings |
 
 ### Email and follow-ups

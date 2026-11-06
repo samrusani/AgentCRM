@@ -31,10 +31,12 @@ import {
   writeBatchCounts,
 } from './importReview.js';
 import { hasPendingModelCall, markModelCallPending, settleModelCallReportsIn } from './modelCalls.js';
+import { resolveShortLinkForRun } from './shortLink.js';
 import {
   type ExtractedEntry,
   fillEmptyFields,
   isLinkedinPostUrl,
+  isLnkdInShortUrl,
   mapEngagementItem,
   mapExtractedEntry,
   mapProfileItem,
@@ -114,12 +116,18 @@ export interface LeadCaptureActors {
 }
 
 interface LeadScope {
-  postUrl: string;
+  // Absent in a pasted capture that gave no link. A lnkd.in short link is replaced by the resolved post link in step 1.
+  postUrl?: string;
+  // The short link as supplied, written when step 1 resolved one.
+  originalUrl?: string;
+  // The pasted post text. Present only in a pasted capture, and removed once staging has consumed the extraction.
+  postText?: string;
   sources: SourceName[];
   maxPeople: number;
   enrich: boolean;
   enrichLimit: number;
-  actors: LeadCaptureActors;
+  // Empty in a pasted capture with enrichment off, which freezes no actors.
+  actors: Partial<LeadCaptureActors>;
   calls: Partial<Record<CallKey, CallState>>;
   // The model provider and model that read the post text. Set when post is a source.
   provider?: ModelConnectorKind;
@@ -149,6 +157,8 @@ interface SavedExtraction {
   detail: string;
   extraction: Extraction | null;
   itemCount?: number;
+  // Set when the extraction failed a pasted capture. The pasted text was the only source, so the run fails with the detail.
+  fatal?: boolean;
 }
 
 function readScope(scope: Record<string, unknown>): LeadScope {
@@ -157,7 +167,9 @@ function readScope(scope: Record<string, unknown>): LeadScope {
 }
 
 // The most rows the selected sources can return: maxPeople per source, plus the post author when the post is read.
-export function requestedPeople(scope: { maxPeople: number; sources: readonly string[] }): number {
+// A pasted capture has no author row, so it returns maxPeople. `pasted` defaults to whether the scope holds the text.
+export function requestedPeople(scope: { maxPeople: number; sources: readonly string[]; postText?: string | undefined; pasted?: boolean }): number {
+  if (scope.pasted ?? scope.postText !== undefined) return scope.maxPeople;
   return scope.maxPeople * scope.sources.length + (scope.sources.includes('post') ? 1 : 0);
 }
 
@@ -215,13 +227,22 @@ export function startOutcomeUnknownMessage(actorId: string, label: string): stri
   return `The start request for "${actorId}" (${label}) got no usable answer from Apify, so this app cannot tell whether a run was created. It did not retry, to avoid a second charge. Check your Apify console for the actor's recent runs before starting again.`;
 }
 
-// Fails every lead capture run that is still being processed. Returns their ids so the caller can stop the remote runs.
+// Fails every lead capture run that is still being processed and needs engagement actors. Returns their ids so the
+// caller can stop the remote runs. A pasted capture is spared whether or not enrichment is on: it reads no Apify
+// dataset except its own enrichment, and that call ends softly when the connector is gone, so the staged rows still
+// reach review. The scope holds the pasted text until staging consumes it; after that the batch's source ref says so.
 export function failActiveLeadCaptureRuns(tx: Tx, detail: string): string[] {
   const ids = (
     tx.db
-      .prepare("SELECT id FROM run WHERE workspace_id = ? AND kind = ? AND status IN ('queued', 'running', 'paused')")
-      .all(tx.workspaceId, leadCaptureKind) as { id: string }[]
-  ).map((row) => row.id);
+      .prepare("SELECT id, scope FROM run WHERE workspace_id = ? AND kind = ? AND status IN ('queued', 'running', 'paused')")
+      .all(tx.workspaceId, leadCaptureKind) as { id: string; scope: string }[]
+  )
+    .filter((row) => {
+      const scope = JSON.parse(row.scope) as Record<string, unknown>;
+      if (scope.postText !== undefined) return false;
+      return getImportBatchForRun(tx.db, tx.workspaceId, row.id)?.sourceRef.pasted !== true;
+    })
+    .map((row) => row.id);
   for (const id of ids) failImportRunIn(withTxActor(tx, leadCaptureActor), id, detail);
   return ids;
 }
@@ -430,7 +451,25 @@ function listOf(words: string[]): string {
 export const postNeedsProviderMessage =
   'Reading the post text needs a ready model provider. Connect a provider in Settings, Model providers, or start the capture with reactions and comments only.';
 
-function validateStep(ctx: ActionContext, runId: string, scope: LeadScope, soon: string): AdvanceResult {
+// A pasted capture has no reactions and comments to fall back on, so the fix is the provider alone.
+export const pastedNeedsProviderMessage = 'Reading the pasted text needs a ready model provider. Connect a provider in Settings, Model providers.';
+
+async function validateStep(ctx: ActionContext, runId: string, scope: LeadScope, soon: string): Promise<AdvanceResult> {
+  const pasted = scope.postText !== undefined;
+
+  // A lnkd.in short link is resolved first, before anything is fetched or charged. It is free and repeatable, so a
+  // crash in this step simply resolves it again. A pasted capture keeps its link as given and never fetches it.
+  let postUrl = scope.postUrl;
+  let originalUrl: string | undefined;
+  if (!pasted && typeof postUrl === 'string' && isLnkdInShortUrl(postUrl) && !isLinkedinPostUrl(postUrl)) {
+    const resolved = await resolveShortLinkForRun(postUrl);
+    if (!resolved.ok) return failNow(ctx, runId, resolved.detail);
+    originalUrl = postUrl;
+    postUrl = resolved.postUrl;
+  }
+
+  // A pasted capture with enrichment off froze no actors, so it needs no Apify connector.
+  const needsApify = !pasted || scope.enrich === true;
   const connector = ctx.db
     .prepare("SELECT status FROM connector WHERE workspace_id = ? AND kind = 'apify'")
     .get(ctx.workspaceId) as { status: string } | undefined;
@@ -439,30 +478,36 @@ function validateStep(ctx: ActionContext, runId: string, scope: LeadScope, soon:
     scope.sources.length > 0 &&
     scope.sources.every((source) => (sourceNames as readonly string[]).includes(source));
   const actorIds = (scope.actors ?? {}) as unknown as Record<string, unknown>;
-  const actorsOk =
-    sourcesOk &&
-    [...scope.sources, 'profile'].every((role) => typeof actorIds[role] === 'string' && String(actorIds[role]).trim() !== '');
-  const problem = !connector
-    ? notConnectedMessage
-    : connector.status !== 'connected'
-      ? tokenRejectedMessage
-      : !isLinkedinPostUrl(scope.postUrl)
-        ? postUrlShapesMessage
-        : !sourcesOk
-          ? 'Choose at least one source: post text, reactions, or comments.'
-          : !Number.isInteger(scope.maxPeople) || scope.maxPeople < 1 || scope.maxPeople > hardMaxPeople
-            ? `The people limit must be between 1 and ${hardMaxPeople}.`
-            : typeof scope.enrich !== 'boolean'
-              ? 'The enrich setting must be true or false.'
-              : !Number.isInteger(scope.enrichLimit) || scope.enrichLimit < 1 || scope.enrichLimit > hardEnrichLimit
-                ? `The enrichment limit must be between 1 and ${hardEnrichLimit}.`
-                : !actorsOk
-                  ? 'The run has no actor ids.'
-                  : null;
+  const actorRoles = pasted ? ['profile'] : [...scope.sources, 'profile'];
+  const actorsOk = sourcesOk && actorRoles.every((role) => typeof actorIds[role] === 'string' && String(actorIds[role]).trim() !== '');
+  const linkOk = isLinkedinPostUrl(postUrl);
+  const pastedLinkOk = postUrl === undefined || linkOk || isLnkdInShortUrl(postUrl);
+  const textOk = typeof scope.postText === 'string' && scope.postText.trim() !== '' && scope.postText.length <= maxPostTextCharacters;
+  const problem =
+    needsApify && !connector
+      ? notConnectedMessage
+      : needsApify && connector && connector.status !== 'connected'
+        ? tokenRejectedMessage
+        : pasted && !textOk
+          ? `The pasted text must be between 1 and ${maxPostTextCharacters.toLocaleString('en-US')} characters.`
+          : (pasted ? !pastedLinkOk : !linkOk)
+            ? postUrlShapesMessage
+            : !sourcesOk
+              ? 'Choose at least one source: post text, reactions, or comments.'
+              : !Number.isInteger(scope.maxPeople) || scope.maxPeople < 1 || scope.maxPeople > hardMaxPeople
+                ? `The people limit must be between 1 and ${hardMaxPeople}.`
+                : typeof scope.enrich !== 'boolean'
+                  ? 'The enrich setting must be true or false.'
+                  : !Number.isInteger(scope.enrichLimit) || scope.enrichLimit < 1 || scope.enrichLimit > hardEnrichLimit
+                    ? `The enrichment limit must be between 1 and ${hardEnrichLimit}.`
+                    : needsApify && !actorsOk
+                      ? 'The run has no actor ids.'
+                      : null;
   if (problem) return failNow(ctx, runId, problem);
 
   // The provider may have been removed or may have rejected its key since the run started. Then the post source is
   // dropped with an honest sentence and the other sources go on. The run pins the provider and model it will use.
+  // A pasted capture has no other source, so it fails instead.
   let sources = scope.sources;
   let sourceNote = '';
   let pinned: { provider: ModelConnectorKind; model: string } | null = null;
@@ -473,9 +518,10 @@ function validateStep(ctx: ActionContext, runId: string, scope: LeadScope, soon:
       pinned = { provider: active.kind, model: active.model };
       // The run pinned a provider and model when it started. Say so when the active one is different now.
       if (scope.provider && scope.model && (scope.provider !== pinned.provider || scope.model !== pinned.model)) {
-        sourceNote = ` The active model changed since the run started, so the post text is read with ${providerLabels[pinned.provider]} ${pinned.model} instead of ${providerLabels[scope.provider]} ${scope.model}.`;
+        sourceNote = ` The active model changed since the run started, so the ${pasted ? 'pasted' : 'post'} text is read with ${providerLabels[pinned.provider]} ${pinned.model} instead of ${providerLabels[scope.provider]} ${scope.model}.`;
       }
     } catch {
+      if (pasted) return failNow(ctx, runId, `${pastedNeedsProviderMessage} The pasted text was the only source of this run.`);
       sources = sources.filter((source) => source !== 'post');
       sourceNote = ' The model provider is not ready anymore, so the post text source was dropped and the other sources go on.';
     }
@@ -487,22 +533,26 @@ function validateStep(ctx: ActionContext, runId: string, scope: LeadScope, soon:
     const tx = withTxActor(rawTx, leadCaptureActor);
     const live = liveStep(tx, runId, 1);
     if (!live) return { nextRunAt: null };
-    if (pinned || sources.length !== scope.sources.length) {
-      patchScope(tx, runId, { sources, ...(pinned ?? {}) });
+    if (pinned || originalUrl !== undefined || sources.length !== scope.sources.length) {
+      // The supplied short link is kept as originalUrl and the resolved link replaces it, so everything after this
+      // step (actor inputs, claims, source_ref) uses the full post link.
+      patchScope(tx, runId, {
+        sources,
+        ...(pinned ?? {}),
+        ...(originalUrl !== undefined && postUrl !== undefined ? { originalUrl, postUrl } : {}),
+      });
       if (sources.length !== scope.sources.length) {
         // Fewer sources, so fewer people can be requested.
         const row = getRun(tx.db, tx.workspaceId, runId);
         if (row) setCounts(tx, runId, { ...row.counts, requested: requestedPeople({ maxPeople: scope.maxPeople, sources }) });
       }
     }
-    completeStep(
-      tx,
-      runId,
-      live.step,
-      `Checked the Apify connection, the post URL, and the limits. Sources: ${listOf(sources.map((source) => (source === 'post' ? 'post text' : source)))}, up to ${scope.maxPeople} people each. ${
-        scope.enrich ? `Enrichment is on for up to ${scope.enrichLimit} new people.` : 'Enrichment is off.'
-      }${sourceNote}`,
-    );
+    const resolvedNote = originalUrl !== undefined && postUrl !== undefined ? `Resolved ${originalUrl} to ${postUrl}. ` : '';
+    const enrichText = scope.enrich ? `Enrichment is on for up to ${scope.enrichLimit} new people.` : 'Enrichment is off.';
+    const checked = pasted
+      ? `Checked the pasted text, the model provider, ${scope.enrich ? 'the Apify connection, ' : ''}and the limits. Source: the pasted text, up to ${scope.maxPeople} people.`
+      : `Checked the Apify connection, the post URL, and the limits. Sources: ${listOf(sources.map((source) => (source === 'post' ? 'post text' : source)))}, up to ${scope.maxPeople} people each.`;
+    completeStep(tx, runId, live.step, `${resolvedNote}${checked} ${enrichText}${sourceNote}`);
     return { nextRunAt: soon };
   });
 }
@@ -531,6 +581,12 @@ function enrichmentTargets(tx: { db: Tx['db'] }, batchId: string, limit: number)
 
 // Why a call is not needed, or null when it should run.
 function skipReason(ctx: ActionContext, runId: string, scope: LeadScope, key: CallKey): string | null {
+  // A pasted capture calls no actor for the post, reactions, or comments. Only enrichment can use Apify.
+  if (scope.postText !== undefined && key !== 'enrich') {
+    return key === 'post'
+      ? 'The pasted text is used instead of an actor, so the post was not read from Apify.'
+      : `Skipped. ${key === 'reactions' ? 'Reactions need' : 'Comments need'} a post link, and a pasted capture reads only the pasted text.`;
+  }
   if (key === 'post') {
     return scope.sources.includes('post') ? null : 'Skipped. Post text was not selected as a source, so the post was not read and no people are extracted from its text.';
   }
@@ -548,8 +604,10 @@ function skipReason(ctx: ActionContext, runId: string, scope: LeadScope, key: Ca
 }
 
 function requestFor(ctx: ActionContext, runId: string, scope: LeadScope, key: CallKey): { input: Record<string, unknown>; maxItems: number; note: string } | null {
+  // The post, reactions, and comments calls need the post link. A pasted capture never reaches them.
+  if (key !== 'enrich' && !scope.postUrl) return null;
   if (key === 'post') {
-    return { input: { post_urls: [postActorTarget(scope.postUrl)] }, maxItems: 1, note: '' };
+    return { input: { post_urls: [postActorTarget(scope.postUrl!)] }, maxItems: 1, note: '' };
   }
   if (key !== 'enrich') {
     return { input: { posts: [scope.postUrl], maxItems: scope.maxPeople }, maxItems: scope.maxPeople, note: '' };
@@ -603,6 +661,7 @@ async function callStep(ctx: ActionContext, runId: string, scope: LeadScope, key
 async function startCall(ctx: ActionContext, runId: string, scope: LeadScope, key: CallKey, soon: string): Promise<AdvanceResult> {
   const spec = callSpecs[key];
   const actorId = scope.actors[spec.role];
+  if (!actorId) return failCall(ctx, runId, key, `The run has no actor id for ${spec.label}.`, true);
   const token = getConnectorSecret(ctx.db, ctx.workspaceId, 'apify');
   if (!token) return failCall(ctx, runId, key, notConnectedMessage);
   const request = requestFor(ctx, runId, scope, key);
@@ -775,10 +834,10 @@ async function fetchCallItems(
 
 function usedActors(scope: LeadScope): Partial<LeadCaptureActors> {
   const used: Partial<LeadCaptureActors> = {};
-  if (scope.calls.post?.apifyRunId) used.post = scope.actors.post;
-  if (scope.calls.reactions?.apifyRunId) used.reactions = scope.actors.reactions;
-  if (scope.calls.comments?.apifyRunId) used.comments = scope.actors.comments;
-  if (scope.calls.enrich?.apifyRunId) used.profile = scope.actors.profile;
+  if (scope.calls.post?.apifyRunId && scope.actors.post) used.post = scope.actors.post;
+  if (scope.calls.reactions?.apifyRunId && scope.actors.reactions) used.reactions = scope.actors.reactions;
+  if (scope.calls.comments?.apifyRunId && scope.actors.comments) used.comments = scope.actors.comments;
+  if (scope.calls.enrich?.apifyRunId && scope.actors.profile) used.profile = scope.actors.profile;
   return used;
 }
 
@@ -791,8 +850,15 @@ function apifyRunIdsOf(scope: LeadScope): Record<string, string> {
   return ids;
 }
 
-function writeSourceRef(tx: Tx, batchId: string, scope: LeadScope): void {
-  const sourceRef = { postUrl: scope.postUrl, actors: usedActors(scope), apifyRunIds: apifyRunIdsOf(scope) };
+// `pasted` is passed in because the pasted text is gone from the scope once staging has consumed it.
+function writeSourceRef(tx: Tx, batchId: string, scope: LeadScope, pasted: boolean): void {
+  const sourceRef = {
+    ...(scope.postUrl !== undefined ? { postUrl: scope.postUrl } : {}),
+    ...(scope.originalUrl !== undefined ? { originalUrl: scope.originalUrl } : {}),
+    ...(pasted ? { pasted: true } : {}),
+    actors: usedActors(scope),
+    apifyRunIds: apifyRunIdsOf(scope),
+  };
   tx.db.prepare('UPDATE import_batch SET source_ref = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(sourceRef), tx.now(), batchId);
 }
 
@@ -877,6 +943,12 @@ export function sanitizePostText(postText: string): string {
     .replace(zeroWidthCharacters, '')
     .normalize('NFKC')
     .replace(/<\s*\/?\s*linkedin_post/gi, '[tag removed]');
+}
+
+// The largest index at or below `limit` that does not fall between the halves of a surrogate pair.
+function cutPoint(value: string, limit: number): number {
+  const before = value.charCodeAt(limit - 1);
+  return before >= 0xd800 && before <= 0xdbff ? limit - 1 : limit;
 }
 
 export function extractionPrompt(postText: string): string {
@@ -973,6 +1045,7 @@ interface ExtractionResult {
   pendingId: string | null;
   reports: ModelCallReport[];
   itemCount?: number;
+  fatal?: boolean;
 }
 
 // Keeps counts.estimatedUsd equal to the model_call sum, like a draft run does, on every path.
@@ -985,6 +1058,11 @@ function syncModelCost(tx: Tx, runId: string): number {
 
 // Stores the outcome of step 5 in the run scope and completes the step.
 function applyExtraction(tx: Tx, runId: string, step: { id: string; seq: number }, saved: SavedExtraction, soon: string): AdvanceResult {
+  if (saved.fatal) {
+    // The run fails with the detail on step 5. The scrub in the failure path removes the pasted text.
+    failImportRunIn(tx, runId, saved.detail);
+    return { nextRunAt: null };
+  }
   updateScope(tx, runId, (stored) => {
     if (saved.extraction) stored.extraction = saved.extraction;
     delete stored.extractionResult;
@@ -1012,7 +1090,12 @@ function finishExtraction(ctx: ActionContext, runId: string, soon: string, resul
       const estimatedUsd = syncModelCost(tx, runId);
       detail += ` ${costText(readScope(run.scope).provider ?? 'unknown', estimatedUsd)}`;
     }
-    const saved: SavedExtraction = { detail, extraction: result.extraction, ...(result.itemCount !== undefined ? { itemCount: result.itemCount } : {}) };
+    const saved: SavedExtraction = {
+      detail,
+      extraction: result.extraction,
+      ...(result.itemCount !== undefined ? { itemCount: result.itemCount } : {}),
+      ...(result.fatal ? { fatal: true } : {}),
+    };
     const live = liveStep(tx, runId, 5);
     if (live) return applyExtraction(tx, runId, live.step, saved, soon);
     const stepFive = listRunSteps(tx.db, runId).find((candidate) => candidate.seq === 5);
@@ -1036,66 +1119,93 @@ function resumeExtraction(ctx: ActionContext, runId: string, saved: SavedExtract
 }
 
 // Step 5. Reads the post item from the dataset, then asks the active model provider for the people and
-// organizations the text names. Any failure here is soft: the engagement people still go to review.
+// organizations the text names. Any failure here is soft: the engagement people still go to review. A pasted
+// capture takes the text from the scope instead of a dataset, and any failure fails the run, because the pasted text
+// is its only source.
 async function extractStep(ctx: ActionContext, runId: string, scope: LeadScope, soon: string): Promise<AdvanceResult> {
+  const pasted = scope.postText !== undefined;
   const skip = (detail: string, extraction: Extraction | null = null, itemCount?: number): AdvanceResult =>
     finishExtraction(ctx, runId, soon, { detail, extraction, pendingId: null, reports: [], ...(itemCount !== undefined ? { itemCount } : {}) });
+  // A pasted capture cannot go on without the text, so what a link run skips fails it. Model calls already made are
+  // settled first, so what was paid for is on record.
+  const pastedStop = ' The run stopped because the pasted text was its only source.';
+  const stopPasted = (detail: string, pendingId: string | null = null, reports: ModelCallReport[] = []): AdvanceResult =>
+    finishExtraction(ctx, runId, soon, { detail: `${detail}${pastedStop}`, extraction: null, pendingId, reports, fatal: true });
   // A pause came during the model call and its outcome was saved. Use it. The call is never made twice.
   if (scope.extractionResult) return resumeExtraction(ctx, runId, scope.extractionResult, soon);
-  if (!scope.sources.includes('post')) return skip('Skipped. Post text was not selected as a source.');
-  const call = scope.calls.post;
-  if (!call || call.failed || !call.datasetId) return skip('Skipped. The post text was not read, so there is nothing to extract.');
-  const token = getConnectorSecret(ctx.db, ctx.workspaceId, 'apify');
-  if (!token) return failNow(ctx, runId, notConnectedMessage);
 
-  const fetched = await fetchCallItems(ctx, runId, token, call, 1, 'post', true);
-  if (!fetched.ok) return fetched.result;
-  if (fetched.failure) {
-    // The run needs at least one source that worked. With none left, a post it cannot read fails the run.
-    const otherSource = scope.sources.some((source) => source !== 'post' && !scope.calls[source]?.failed);
-    if (!otherSource) {
-      return failNow(
-        ctx,
-        runId,
-        `The post text could not be read from Apify: ${fetched.failure}${scope.sources.length > 1 ? ' Every selected source failed.' : ''}`,
-      );
+  let text: string;
+  let author: PostAuthor | null = null;
+  let itemCount: number | undefined;
+  if (pasted) {
+    text = scope.postText!;
+  } else {
+    if (!scope.sources.includes('post')) return skip('Skipped. Post text was not selected as a source.');
+    const call = scope.calls.post;
+    if (!call || call.failed || !call.datasetId) return skip('Skipped. The post text was not read, so there is nothing to extract.');
+    const token = getConnectorSecret(ctx.db, ctx.workspaceId, 'apify');
+    if (!token) return failNow(ctx, runId, notConnectedMessage);
+
+    const fetched = await fetchCallItems(ctx, runId, token, call, 1, 'post', true);
+    if (!fetched.ok) return fetched.result;
+    if (fetched.failure) {
+      // The run needs at least one source that worked. With none left, a post it cannot read fails the run.
+      const otherSource = scope.sources.some((source) => source !== 'post' && !scope.calls[source]?.failed);
+      if (!otherSource) {
+        return failNow(
+          ctx,
+          runId,
+          `The post text could not be read from Apify: ${fetched.failure}${scope.sources.length > 1 ? ' Every selected source failed.' : ''}`,
+        );
+      }
+      return skip(`Skipped. The post could not be read from Apify: ${fetched.failure}`);
     }
-    return skip(`Skipped. The post could not be read from Apify: ${fetched.failure}`);
+    const item = fetched.items.find(isObject);
+    if (!item) return skip('Skipped. The post actor returned no item, so there is no post text to read.', { author: null, entries: [] }, fetched.items.length);
+    const read = readPostItem(item);
+    author = read.author;
+    itemCount = fetched.items.length;
+    if (!read.text) {
+      return skip('Skipped. The post item has no text, so there is nothing to extract. The post author is still staged.', { author, entries: [] }, itemCount);
+    }
+    text = read.text;
   }
-  const item = fetched.items.find(isObject);
-  if (!item) return skip('Skipped. The post actor returned no item, so there is no post text to read.', { author: null, entries: [] }, fetched.items.length);
-  const { text, author } = readPostItem(item);
   const base: Extraction = { author, entries: [] };
-  if (!text) {
-    return skip('Skipped. The post item has no text, so there is nothing to extract. The post author is still staged.', base, fetched.items.length);
-  }
+  // What a step that cannot read the text does: a link run skips and goes on with its other sources, a pasted capture fails.
+  const unread = (detail: string): AdvanceResult => (pasted ? stopPasted(detail) : skip(detail, base, itemCount));
 
   // A start marker with no result means an earlier process died during the call. It may have been billed, so it is not repeated.
   if (hasPendingModelCall({ db: ctx.db, workspaceId: ctx.workspaceId }, runId, runId)) {
-    return skip('The model call for this post was started earlier and its outcome is unknown, so it may have been billed. It was not repeated, and no people were read from the text.', base, fetched.items.length);
+    return unread(
+      `The model call for this ${pasted ? 'pasted text' : 'post'} was started earlier and its outcome is unknown, so it may have been billed. It was not repeated, and no people were read from the text.`,
+    );
   }
   const kind = scope.provider;
   const model = scope.model;
-  if (!kind || !model) return skip('Skipped. No model provider was pinned for this run, so the post text was not read.', base, fetched.items.length);
+  if (!kind || !model) return unread(`${pasted ? 'No model provider was pinned for this run, so the pasted text was not read.' : 'Skipped. No model provider was pinned for this run, so the post text was not read.'}`);
   const label = providerLabels[kind];
   const connector = getConnector(ctx.db, ctx.workspaceId, kind);
   const apiKey = getConnectorSecret(ctx.db, ctx.workspaceId, kind);
   if (!connector || apiKey === null || (kind !== 'ollama' && apiKey === '')) {
-    return skip(`${label} was disconnected, so the post text was not read. Connect it in Settings and capture again to read names from the text.`, base, fetched.items.length);
+    return unread(`${label} was disconnected, so the ${pasted ? 'pasted' : 'post'} text was not read. Connect it in Settings and capture again to read names from the text.`);
   }
   if (connector.status !== 'connected') {
-    return skip(`${label} rejected the saved API key, so the post text was not read. Update it in Settings and capture again to read names from the text.`, base, fetched.items.length);
+    return unread(`${label} rejected the saved API key, so the ${pasted ? 'pasted' : 'post'} text was not read. Update it in Settings and capture again to read names from the text.`);
   }
   const baseUrl = connector.kind === 'ollama' ? connector.settings.baseUrl : null;
 
-  const cut = text.length > maxPostTextCharacters;
-  // What the model gets, and what its answer is checked against.
-  const sent = sanitizePostText(cut ? text.slice(0, maxPostTextCharacters) : text);
+  // Sanitizing first, then cutting: NFKC can lengthen text, so the bound is measured on what is actually sent.
+  const sanitized = sanitizePostText(text);
+  const cut = sanitized.length > maxPostTextCharacters;
+  // What the model gets, and what its answer is checked against. A cut never splits a surrogate pair.
+  const sent = cut ? sanitized.slice(0, cutPoint(sanitized, maxPostTextCharacters)) : sanitized;
   const prompt = extractionPrompt(sent);
   const reports: ModelCallReport[] = [];
   const pendingId = markModelCallPending(ctx, { purpose: 'draft', runId, provider: kind, model, subjectId: runId });
   const settle = (detail: string, extraction: Extraction | null): AdvanceResult =>
-    finishExtraction(ctx, runId, soon, { detail, extraction, pendingId, reports, itemCount: fetched.items.length });
+    finishExtraction(ctx, runId, soon, { detail, extraction, pendingId, reports, ...(itemCount !== undefined ? { itemCount } : {}) });
+  // The model was called, so the outcome is settled with its cost. A pasted capture fails with the detail.
+  const settleUnread = (detail: string): AdvanceResult => (pasted ? stopPasted(detail, pendingId, reports) : settle(detail, base));
   const cutNote = cut ? ` The post text was cut at ${maxPostTextCharacters} characters before it was sent to the model.` : '';
 
   try {
@@ -1118,10 +1228,10 @@ async function extractStep(ctx: ActionContext, runId: string, scope: LeadScope, 
     if (result.status === 'refused') {
       const category = result.refusal.category ? ` (${result.refusal.category.replaceAll('_', ' ')})` : '';
       const explanation = result.refusal.explanation ? ` ${result.refusal.explanation.trim().slice(0, 200)}` : '';
-      return settle(`The model declined to read the post text${category}.${explanation}${cutNote} No names were extracted from the text.`.replace('..', '.'), base);
+      return settleUnread(`The model declined to read the ${pasted ? 'pasted' : 'post'} text${category}.${explanation}${cutNote} No names were extracted from the text.`.replace('..', '.'));
     }
     if (!parsed || !parsed.ok) {
-      return settle(`The model's answer did not match the required format, so no names were extracted from the text.${cutNote}`, base);
+      return settleUnread(`The model's answer did not match the required format, so no names were extracted from the text.${cutNote}`);
     }
     const verified = verifyEntries(parsed.entries, sent);
     const capped = verified.kept.slice(0, scope.maxPeople);
@@ -1130,13 +1240,13 @@ async function extractStep(ctx: ActionContext, runId: string, scope: LeadScope, 
     const organizations = capped.length - people;
     let detail =
       capped.length === 0
-        ? 'The model found nobody named in the post text.'
-        : `The model found ${plural(people, 'person', 'people')} and ${plural(organizations, 'organization', 'organizations')} named in the post text.`;
+        ? `The model found nobody named in the ${pasted ? 'pasted' : 'post'} text.`
+        : `The model found ${plural(people, 'person', 'people')} and ${plural(organizations, 'organization', 'organizations')} named in the ${pasted ? 'pasted' : 'post'} text.`;
     if (parsed.dropped > 0) {
       detail += ` ${plural(parsed.dropped, 'entry was', 'entries were')} dropped because ${parsed.dropped === 1 ? 'it' : 'they'} did not match the required format.`;
     }
     if (verified.dropped > 0) {
-      detail += ` ${plural(verified.dropped, 'entry did', 'entries did')} not match the post text and ${verified.dropped === 1 ? 'was' : 'were'} dropped.`;
+      detail += ` ${plural(verified.dropped, 'entry did', 'entries did')} not match the ${pasted ? 'pasted' : 'post'} text and ${verified.dropped === 1 ? 'was' : 'were'} dropped.`;
     }
     if (left > 0) detail += ` ${plural(left, 'more entry was', 'more entries were')} left out because of the people limit of ${scope.maxPeople}.`;
     return settle(`${detail}${cutNote}`, { author, entries: capped });
@@ -1144,9 +1254,9 @@ async function extractStep(ctx: ActionContext, runId: string, scope: LeadScope, 
     if (!(error instanceof ModelProviderError)) throw error;
     if (error.kind === 'unauthorized') {
       markConnectorError(ctx, apiKey, kind);
-      return settle(`${label} rejected the saved API key, so no names were extracted from the text. Update it in Settings and capture again.${cutNote}`, base);
+      return settleUnread(`${label} rejected the saved API key, so no names were extracted from the text. Update it in Settings and capture again.${cutNote}`);
     }
-    return settle(`${sentence(error.message)} No names were extracted from the text.${cutNote}`, base);
+    return settleUnread(`${sentence(error.message)} No names were extracted from the text.${cutNote}`);
   }
 }
 
@@ -1262,11 +1372,12 @@ function buildPeople(input: StageInput): { people: Person[]; ignored: number } {
   return { people: ordered.map((entry) => entry.person), ignored };
 }
 
-// The extracted names and quotes are post text. Once staging has used them they live on in the import rows only,
-// so run reads (the run list, crm_get_run, the agent) never carry them.
+// The extracted names and quotes are post text, and a pasted capture also holds the pasted text itself. Once staging
+// has used them they live on in the import rows only, so run reads (the run list, crm_get_run, the agent) never carry them.
 function dropExtraction(tx: Tx, runId: string): void {
   updateScope(tx, runId, (stored) => {
     delete stored.extraction;
+    delete stored.postText;
   });
 }
 
@@ -1282,8 +1393,10 @@ async function stageStep(ctx: ActionContext, runId: string, scope: LeadScope, so
       return { nextRunAt: soon };
     });
   }
+  const pasted = scope.postText !== undefined;
+  // A pasted capture reads no dataset, so it needs no token. Engagement datasets are read only when a source asked for them.
   const token = getConnectorSecret(ctx.db, ctx.workspaceId, 'apify');
-  if (!token) return failNow(ctx, runId, notConnectedMessage);
+  if (!token && !pasted) return failNow(ctx, runId, notConnectedMessage);
 
   const results: { source: EngagementSource; items: unknown[] }[] = [];
   const stopped: string[] = [];
@@ -1298,7 +1411,7 @@ async function stageStep(ctx: ActionContext, runId: string, scope: LeadScope, so
       continue;
     }
     if (!call) return failNow(ctx, runId, `The ${source} run was not saved, so its results cannot be read.`);
-    const fetched = await fetchCallItems(ctx, runId, token, call, scope.maxPeople, source, true);
+    const fetched = await fetchCallItems(ctx, runId, token ?? '', call, scope.maxPeople, source, true);
     if (!fetched.ok) return fetched.result;
     if (fetched.failure) {
       unreadable.push({ source, failure: fetched.failure });
@@ -1357,6 +1470,7 @@ async function stageStep(ctx: ActionContext, runId: string, scope: LeadScope, so
     });
     updateScope(tx, runId, (stored) => {
       delete stored.extraction;
+      delete stored.postText;
       stored.batchId = batchId;
       if (stopped.length > 0) stored.fetchStoppedEarly = stopped.join(' ');
       const calls = (stored.calls ?? {}) as Record<string, Record<string, unknown>>;
@@ -1364,13 +1478,14 @@ async function stageStep(ctx: ActionContext, runId: string, scope: LeadScope, so
       stored.calls = calls;
     });
     const fresh = readScope(JSON.parse((tx.db.prepare('SELECT scope FROM run WHERE id = ?').get(runId) as { scope: string }).scope));
-    writeSourceRef(tx, batchId, fresh);
+    writeSourceRef(tx, batchId, fresh, pasted);
     setImportCounts(tx, runId, counts, requestedPeople(scope));
     tx.audit('import.create', 'import_batch', batchId, { runId, fetched: counts.fetched });
     const totals = results.map(({ source, items }) => plural(items.length, source === 'reactions' ? 'reaction' : 'comment', source));
     if (extraction) {
       if (extraction.author) totals.push('the post author');
-      totals.push(plural(extraction.entries.length, 'entry named in the post text', 'entries named in the post text'));
+      const where = pasted ? 'the pasted text' : 'the post text';
+      totals.push(plural(extraction.entries.length, `entry named in ${where}`, `entries named in ${where}`));
     }
     const fetchedText = totals.length > 0 ? `Fetched ${listOf(totals)}.` : 'Nothing was fetched.';
     const stagedPeople = counts.staged - organizations;
@@ -1411,12 +1526,13 @@ function dedupeStep(ctx: ActionContext, runId: string, soon: string): AdvanceRes
     const counts: ImportCounts = { ...batch.counts, duplicates, staged: batch.counts.fetched - batch.counts.invalid - duplicates };
     writeBatchCounts(tx, batch.id, counts);
     const scope = readScope(live.run.scope);
-    setImportCounts(tx, runId, counts, requestedPeople(scope));
+    // The pasted text is gone by now, so the batch says whether this was a pasted capture.
+    setImportCounts(tx, runId, counts, requestedPeople({ ...scope, pasted: batch.sourceRef.pasted === true }));
     completeStep(
       tx,
       runId,
       live.step,
-      `Found ${plural(duplicates, 'person who is', 'people who are')} already known. ${plural(counts.staged, 'new person is', 'new people are')} left, so known people are not enriched.`,
+      `Found ${plural(duplicates, 'person who is', 'people who are')} already known. ${plural(counts.staged, 'new person is', 'new people are')} left, so known people are not enriched. A person without a profile URL or email cannot be matched to anyone already known, so a repeated capture stages such people again.`,
     );
     return { nextRunAt: soon };
   });
@@ -1454,11 +1570,12 @@ async function mergeStep(ctx: ActionContext, runId: string, scope: LeadScope, so
       failImportRunIn(tx, runId, 'The import batch is missing.');
       return { nextRunAt: null };
     }
-    const requested = requestedPeople(scope);
+    const pasted = batch.sourceRef.pasted === true;
+    const requested = requestedPeople({ ...scope, pasted });
     const finish = (counts: ImportCounts, detail: string): AdvanceResult => {
       writeBatchCounts(tx, batch.id, counts);
       setImportCounts(tx, runId, counts, requested);
-      writeSourceRef(tx, batch.id, readScope(JSON.parse((tx.db.prepare('SELECT scope FROM run WHERE id = ?').get(runId) as { scope: string }).scope)));
+      writeSourceRef(tx, batch.id, readScope(JSON.parse((tx.db.prepare('SELECT scope FROM run WHERE id = ?').get(runId) as { scope: string }).scope)), pasted);
       completeStep(tx, runId, live.step, detail);
       return { nextRunAt: soon };
     };
@@ -1591,11 +1708,18 @@ function reviewStep(ctx: ActionContext, runId: string, scope: LeadScope): Advanc
           counts.fetched === 0
             ? 'The post has no reactions, comments, or named people from the selected sources, so there is nothing to review.'
             : `All ${plural(counts.fetched, 'person was', 'people were')} already known or could not be used, so there is nothing to review.`,
-        title: (staged) =>
-          stagedOrganizations > 0
-            ? `Review ${plural(staged - stagedOrganizations, 'person', 'people')} and ${plural(stagedOrganizations, 'organization', 'organizations')} from a LinkedIn post`
-            : `Review ${plural(staged, 'person', 'people')} from a LinkedIn post`,
-        payloadSource: { postUrl: fresh.postUrl, actors: usedActors(fresh) },
+        title: (staged) => {
+          const from = batch?.sourceRef.pasted === true ? 'pasted post text' : 'a LinkedIn post';
+          return stagedOrganizations > 0
+            ? `Review ${plural(staged - stagedOrganizations, 'person', 'people')} and ${plural(stagedOrganizations, 'organization', 'organizations')} from ${from}`
+            : `Review ${plural(staged, 'person', 'people')} from ${from}`;
+        },
+        payloadSource: {
+          postUrl: fresh.postUrl,
+          ...(fresh.originalUrl !== undefined ? { originalUrl: fresh.originalUrl } : {}),
+          ...(batch?.sourceRef.pasted === true ? { pasted: true } : {}),
+          actors: usedActors(fresh),
+        },
       },
       (detail) => failImportRunIn(tx, runId, detail),
     );
