@@ -13,6 +13,7 @@ import {
   POST_TEXT_COUNT_WINDOW,
   isPostLink,
   parseLimit,
+  tidyLink,
   withHttps,
 } from '../lib/leads';
 
@@ -56,11 +57,11 @@ export function LeadCaptureCard({ onStarted }: { onStarted: (run: Run) => void }
   const [enrichLimit, setEnrichLimit] = useState(String(DEFAULT_ENRICH_LIMIT));
 
   const typed = url.trim() !== '';
-  const fullUrl = withHttps(url);
+  const fullUrl = withHttps(tidyLink(url));
   const urlOk = isPostLink(fullUrl);
   const hasText = text.trim() !== '';
   const provenanceTyped = provenance.trim() !== '';
-  const fullProvenance = withHttps(provenance);
+  const fullProvenance = withHttps(tidyLink(provenance));
   const provenanceOk = !provenanceTyped || isPostLink(fullProvenance);
   const people = parseLimit(maxPeople, MAX_PEOPLE);
   const cap = parseLimit(enrichLimit, MAX_ENRICH_LIMIT);

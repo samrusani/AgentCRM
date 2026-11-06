@@ -4,6 +4,7 @@ import {
   isLnkdInShortUrl,
   isPostLink,
   parseLimit,
+  tidyLink,
   withHttps,
 } from '../../src/lib/leads';
 
@@ -49,6 +50,48 @@ describe('isLnkdInShortUrl', () => {
     expect(isPostLink('https://lnkd.in/abc')).toBe(true);
     expect(isPostLink('https://www.linkedin.com/feed/update/urn:li:activity:7100000000000000001')).toBe(true);
     expect(isPostLink('https://example.com/abc')).toBe(false);
+  });
+});
+
+describe('tidyLink', () => {
+  it('removes invisible formatting characters anywhere in the link', () => {
+    expect(tidyLink('https://lnkd.in/gvRk3_u9​')).toBe('https://lnkd.in/gvRk3_u9');
+    expect(tidyLink('﻿https://lnkd.in/gvRk3_u9')).toBe('https://lnkd.in/gvRk3_u9');
+    expect(tidyLink('https://lnkd.in/gv‍Rk3_u9')).toBe('https://lnkd.in/gvRk3_u9');
+    expect(tidyLink('‪https://lnkd.in/abc‬')).toBe('https://lnkd.in/abc');
+  });
+
+  it('strips wrapping quotes and brackets and trailing punctuation', () => {
+    expect(tidyLink('https://lnkd.in/gvRk3_u9.')).toBe('https://lnkd.in/gvRk3_u9');
+    expect(tidyLink('https://lnkd.in/gvRk3_u9,')).toBe('https://lnkd.in/gvRk3_u9');
+    expect(tidyLink('https://lnkd.in/gvRk3_u9…')).toBe('https://lnkd.in/gvRk3_u9');
+    expect(tidyLink('(https://lnkd.in/gvRk3_u9)')).toBe('https://lnkd.in/gvRk3_u9');
+    expect(tidyLink('"https://lnkd.in/gvRk3_u9"')).toBe('https://lnkd.in/gvRk3_u9');
+    expect(tidyLink('“https://lnkd.in/gvRk3_u9”')).toBe('https://lnkd.in/gvRk3_u9');
+    expect(tidyLink('<https://lnkd.in/gvRk3_u9>!?')).toBe('https://lnkd.in/gvRk3_u9');
+    expect(tidyLink(' lnkd.in/gvRk3_u9. ')).toBe('lnkd.in/gvRk3_u9');
+  });
+
+  it('keeps slug hyphens and underscores, queries, and clean links as they are', () => {
+    expect(tidyLink('https://lnkd.in/aBc-12_3')).toBe('https://lnkd.in/aBc-12_3');
+    expect(tidyLink('https://lnkd.in/abc?trk=share')).toBe('https://lnkd.in/abc?trk=share');
+    expect(tidyLink('https://www.linkedin.com/posts/name-activity-7100000000000000001-AbCd?utm_source=share.')).toBe(
+      'https://www.linkedin.com/posts/name-activity-7100000000000000001-AbCd?utm_source=share',
+    );
+    expect(tidyLink('')).toBe('');
+    expect(tidyLink('"…')).toBe('');
+  });
+
+  it('makes a junk wrapped paste pass the shape check after withHttps', () => {
+    for (const raw of [
+      'https://lnkd.in/gvRk3_u9.',
+      '(https://lnkd.in/gvRk3_u9)',
+      'https://lnkd.in/gvRk3_u9…',
+      'lnkd.in/gvRk3_u9,',
+      'https://lnkd.in/gvRk3_u9​',
+    ]) {
+      expect(isPostLink(withHttps(tidyLink(raw))), JSON.stringify(raw)).toBe(true);
+    }
   });
 });
 

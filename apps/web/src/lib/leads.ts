@@ -36,6 +36,15 @@ function safeDecode(value: string): string {
   }
 }
 
+// A pasted link is rarely the bare link. A copy out of post text or a message brings invisible formatting characters,
+// wrapping quotes or brackets, and trailing punctuation along, and none of those can appear where they sit in an
+// accepted post link. They are removed before the shape check, and the tidied link is what the run receives.
+// The server still validates whatever it is sent.
+export function tidyLink(url: string): string {
+  const visible = url.replace(/[­​-‏‪-‮⁠-⁯﻿]/g, '').trim();
+  return visible.replace(/^[('"‘“‹«[{<]+/, '').replace(/[.,;:!?'"…’”›»)\]}>]+$/, '');
+}
+
 // A bare linkedin.com or lnkd.in link gets https:// in front, so a paste without the scheme works. Anything else stays as typed.
 export function withHttps(url: string): string {
   const value = url.trim();

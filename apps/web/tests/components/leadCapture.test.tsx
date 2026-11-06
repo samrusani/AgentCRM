@@ -323,6 +323,21 @@ describe('link mode', () => {
     expect(submitButton()).toBeEnabled();
   });
 
+  it('tidies a link copied out of post text and sends the tidied link', async () => {
+    const { user } = await openLink();
+    const box = screen.getByPlaceholderText('Paste a LinkedIn post URL');
+    await user.type(box, '(https://lnkd.in/gvRk3_u9).');
+    expect(submitButton()).toBeEnabled();
+    expect(box).not.toHaveAttribute('aria-invalid', 'true');
+    await user.click(submitButton());
+    await waitFor(() => expect(runCalls()).toHaveLength(1));
+    expect(runCalls()[0]!.body!.scope.postUrl).toBe('https://lnkd.in/gvRk3_u9');
+
+    await user.clear(box);
+    await user.type(box, 'https://lnkd.in/gvRk3_u9​…');
+    expect(submitButton()).toBeEnabled();
+  });
+
   it('still accepts a full post link and prepends https to a schemeless linkedin.com paste', async () => {
     const { user } = await openLink();
     await user.type(screen.getByPlaceholderText('Paste a LinkedIn post URL'), 'www.linkedin.com/feed/update/urn:li:activity:7100000000000000001');
