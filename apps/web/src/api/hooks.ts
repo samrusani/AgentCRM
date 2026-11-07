@@ -129,11 +129,11 @@ export function useToday() {
 
 export type PeopleSort = 'default' | 'fit';
 
-export function usePeople(q: string, sort: PeopleSort = 'default', lifecycle?: Lifecycle) {
+export function usePeople(q: string, sort: PeopleSort = 'default', lifecycle?: Lifecycle, list?: string) {
   return useInfiniteQuery({
-    queryKey: ['people', q, sort, lifecycle ?? 'all'],
+    queryKey: ['people', q, sort, lifecycle ?? 'all', list ?? 'all'],
     queryFn: ({ pageParam }) =>
-      api.people.list({ q, sort: sort === 'fit' ? 'fit' : undefined, lifecycle, cursor: pageParam, limit: PAGE_SIZE }),
+      api.people.list({ q, sort: sort === 'fit' ? 'fit' : undefined, lifecycle, list, cursor: pageParam, limit: PAGE_SIZE }),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
     placeholderData: keepPreviousData,
@@ -282,6 +282,70 @@ export function useOrganization(id: string | null) {
 
 export function usePipelines() {
   return useQuery({ queryKey: ['pipelines'], queryFn: api.pipelines });
+}
+
+export function useLists() {
+  return useQuery({ queryKey: ['lists'], queryFn: api.lists.list });
+}
+
+// Membership and list changes show in the list select (counts), the people tables, and open person sheets.
+const LIST_KEYS = ['lists', 'people', 'person'];
+
+export function useCreateList() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => api.lists.create(name),
+    // Waiting for the reload lets the caller pick the new list once it is in the cache.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['lists'] }),
+  });
+}
+
+export function useRenameList() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string; expectedVersion: number; name: string }) =>
+      api.lists.rename(input.id, input.expectedVersion, input.name),
+    onSuccess: () => invalidateKeys(queryClient, LIST_KEYS),
+    onError: (error) => {
+      if (error instanceof ApiError && error.code === 'version_conflict') invalidateKeys(queryClient, ['lists']);
+    },
+  });
+}
+
+export function useDeleteList() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.lists.remove(id),
+    onSuccess: () => invalidateKeys(queryClient, LIST_KEYS),
+    onError: () => invalidateKeys(queryClient, ['lists']),
+  });
+}
+
+export function useAddListMembers() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { listId: string; personIds: string[] }) => api.lists.addMembers(input.listId, input.personIds),
+    onSuccess: () => invalidateKeys(queryClient, LIST_KEYS),
+    // A refused add usually means a person or the list is gone, so the lists reload.
+    onError: () => invalidateKeys(queryClient, ['lists']),
+  });
+}
+
+export function useRemoveListMember() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { listId: string; personId: string }) => api.lists.removeMember(input.listId, input.personId),
+    onSuccess: () => invalidateKeys(queryClient, LIST_KEYS),
+    onError: () => invalidateKeys(queryClient, ['lists']),
+  });
+}
+
+export function useRemoveListMembers() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { listId: string; personIds: string[] }) => api.lists.removeMembers(input.listId, input.personIds),
+    onSettled: () => invalidateKeys(queryClient, LIST_KEYS),
+  });
 }
 
 export function useOpportunities(params: { pipelineId?: string; status?: string }) {

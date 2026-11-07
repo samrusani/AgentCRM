@@ -53,6 +53,8 @@ import type {
   Page,
   Person,
   PersonDetail,
+  PersonList,
+  AddMembersResult,
   Pipeline,
   ImportSettings,
   QualificationConfig,
@@ -71,6 +73,21 @@ import type {
   Workspace,
   WorkspaceTemplate,
 } from './types';
+
+// A chunked add that failed after earlier chunks went in: the original message, plus how many were added and already there so far.
+export class AddMembersError extends Error {
+  added: number;
+  already: number;
+  cause: unknown;
+
+  constructor(cause: Error, added: number, already: number) {
+    super(cause.message);
+    this.name = 'AddMembersError';
+    this.cause = cause;
+    this.added = added;
+    this.already = already;
+  }
+}
 
 export class ApiError extends Error {
   status: number;
@@ -259,6 +276,7 @@ function normalizePersonDetail(data: unknown): PersonDetail {
     activities: toArray<Activity>(flat.activities),
     tasks: toArray<Task>(flat.tasks),
     opportunities: toArray<Opportunity>(flat.opportunities),
+    lists: toArray<{ id: string; name: string }>(flat.lists),
   };
 }
 
@@ -810,6 +828,8 @@ export interface ListParams {
   q?: string;
   sort?: string;
   lifecycle?: Lifecycle;
+  // A list id: members only.
+  list?: string;
   cursor?: string | null;
   limit?: number;
 }
@@ -891,6 +911,50 @@ export const api = {
       await request<Pipeline>('PATCH', `/pipelines/${encodeURIComponent(id)}`, { body: { expectedVersion, fields: { name } } }),
     ),
   deletePipeline: (id: string) => request<unknown>('DELETE', `/pipelines/${encodeURIComponent(id)}`),
+
+  lists: {
+    list: async () => asPage<PersonList>(await request<unknown>('GET', '/lists')).items,
+    create: (name: string) => request<PersonList>('POST', '/lists', { body: { name } }),
+    rename: (id: string, expectedVersion: number, name: string) =>
+      request<PersonList>('PATCH', `/lists/${encodeURIComponent(id)}`, { body: { expectedVersion, fields: { name } } }),
+    remove: (id: string) => request<unknown>('DELETE', `/lists/${encodeURIComponent(id)}`),
+    // The server takes 500 people per call, so a longer selection goes in sequential calls and the counts add up.
+    // When a later call fails, the error carries the running totals so far (AddMembersError), so the caller can say how many went in.
+    addMembers: async (id: string, personIds: string[]): Promise<AddMembersResult> => {
+      const total: AddMembersResult = { added: 0, already: 0 };
+      for (let start = 0; start < personIds.length; start += 500) {
+        let result: AddMembersResult;
+        try {
+          result = await request<AddMembersResult>('POST', `/lists/${encodeURIComponent(id)}/members`, {
+            body: { personIds: personIds.slice(start, start + 500) },
+          });
+        } catch (error) {
+          if (start > 0 && error instanceof Error) throw new AddMembersError(error, total.added, total.already);
+          throw error;
+        }
+        total.added += result.added;
+        total.already += result.already;
+      }
+      return total;
+    },
+    removeMember: (id: string, personId: string) =>
+      request<unknown>('DELETE', `/lists/${encodeURIComponent(id)}/members/${encodeURIComponent(personId)}`),
+    // One call per person, a few at a time. A failure for one person never stops the rest; the caller sees both lists.
+    removeMembers: async (id: string, personIds: string[]): Promise<{ removed: string[]; failed: string[] }> => {
+      const removed: string[] = [];
+      const failed: string[] = [];
+      for (let start = 0; start < personIds.length; start += 6) {
+        const batch = personIds.slice(start, start + 6);
+        const results = await Promise.allSettled(
+          batch.map((personId) =>
+            request<unknown>('DELETE', `/lists/${encodeURIComponent(id)}/members/${encodeURIComponent(personId)}`),
+          ),
+        );
+        results.forEach((result, index) => (result.status === 'fulfilled' ? removed : failed).push(batch[index]!));
+      }
+      return { removed, failed };
+    },
+  },
 
   opportunities: {
     list: async (params: { pipelineId?: string; stageId?: string; status?: string }) =>

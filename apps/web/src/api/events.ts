@@ -39,6 +39,8 @@ const KEYS_BY_EVENT: Record<ServerEventName, string[]> = {
     'organization',
     'opportunities',
     'pipelines',
+    // List and membership changes emit record_updated for the list; the tables and person sheets show them.
+    'lists',
     // The Delete action on the Pipeline page reads deal counts per pipeline.
     'stage-counts',
     'tasks',

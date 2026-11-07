@@ -144,6 +144,21 @@ export interface Pipeline {
   stages: Stage[];
 }
 
+// A named, hand curated set of people. Lists hold people only.
+export interface PersonList {
+  id: string;
+  name: string;
+  version: number;
+  memberCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AddMembersResult {
+  added: number;
+  already: number;
+}
+
 export type OpportunityStatus = 'open' | 'passed' | 'lost' | 'nurture';
 
 export interface Opportunity {
@@ -175,6 +190,8 @@ export interface PersonDetail extends Omit<Person, 'qualification'> {
   activities: Activity[];
   tasks: Task[];
   opportunities: Opportunity[];
+  // The lists this person is on, newest membership first.
+  lists: Array<{ id: string; name: string }>;
 }
 
 export interface OrganizationDetail extends Organization {

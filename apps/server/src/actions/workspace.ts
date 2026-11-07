@@ -73,6 +73,8 @@ const recordTables = [
   'activity',
   'stage_event',
   'opportunity',
+  'list_member',
+  'list',
   'person',
   'organization',
 ];

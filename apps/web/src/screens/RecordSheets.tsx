@@ -22,6 +22,7 @@ import { Chip } from '../components/common';
 import { EnrichControl, EnrichmentSuggestions, OrganizationEnrichControl, OrganizationEnrichmentSuggestions } from '../components/enrichment';
 import { PersonFollowupLine } from '../components/followups';
 import { Icon } from '../components/Icons';
+import { PersonLists } from '../components/lists';
 import { QualificationSection } from '../components/qualification';
 import { RecordPicker, type PickedRecord } from '../components/RecordPicker';
 import { NewOpportunitySheet } from './NewOpportunitySheet';
@@ -451,6 +452,9 @@ export function PersonSheet({
                 ) : (
                   <span className="muted">None</span>
                 )}
+              </FieldRow>
+              <FieldRow label="Lists" openClaim={openClaim} onToggleClaim={toggleClaim}>
+                <PersonLists personId={id} lists={person.lists} />
               </FieldRow>
             </dl>
             {typeof person.affiliationsSummary === 'string' && person.affiliationsSummary ? (

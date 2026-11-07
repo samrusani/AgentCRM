@@ -328,6 +328,31 @@ textarea.input {
 .menu__item:disabled {
   color: var(--ink-muted);
 }
+/* The add to list menu is wider than an action menu, scrolls past about nine lists, and holds an inline name field. */
+.menu--lists {
+  width: 240px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+.menu__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.menu__sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--line);
+}
+.menu__form {
+  display: flex;
+  gap: 6px;
+  padding: 2px;
+}
+.menu__problem {
+  padding: 4px 8px 6px;
+}
 .menu__check {
   display: inline-grid;
   place-items: center;
@@ -2346,4 +2371,26 @@ fieldset.connector__form > legend {
 }
 .amount-row .input--select {
   flex: 0 0 auto;
+}
+
+/* People selection: the row and header checkboxes, and the count that replaces the table actions. */
+.select-box {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+.selection-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+}
+.person-lists {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.person-lists .inline-error {
+  flex-basis: 100%;
 }

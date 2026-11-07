@@ -9,7 +9,8 @@ export interface Column<T> {
   // Replaces the plain header text, for example with a sort control.
   headerContent?: ReactNode;
   ariaSort?: 'ascending' | 'descending' | 'none';
-  render: (row: T) => ReactNode;
+  // `active` is true for the row that holds the grid's one tab stop.
+  render: (row: T, state: { active: boolean }) => ReactNode;
 }
 
 const ROW_HEIGHT = 36;
@@ -154,7 +155,7 @@ export function VirtualTable<T>({
                     role="gridcell"
                     className={`vtable__cell${column.numeric ? ' is-numeric' : ''}`}
                   >
-                    {column.render(row)}
+                    {column.render(row, { active: item.index === activeIndex })}
                   </div>
                 ))}
               </div>

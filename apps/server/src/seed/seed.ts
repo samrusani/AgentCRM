@@ -64,7 +64,9 @@ function mulberry32(seed: number): () => number {
 export function seedDatabase(db: Db, options: SeedOptions = {}) {
   const before = ensureWorkspace(db);
   const populated = getCounts(db, before.id);
-  if (!options.reset && populated.people + populated.organizations + populated.opportunities + populated.tasksOpen + populated.runs > 0) {
+  // Lists count as records too, so a database holding only hand curated lists is never silently cleared.
+  const lists = Number((db.prepare('SELECT COUNT(*) AS n FROM list WHERE workspace_id = ?').get(before.id) as { n: number }).n);
+  if (!options.reset && populated.people + populated.organizations + populated.opportunities + populated.tasksOpen + populated.runs + lists > 0) {
     throw new AppError('conflict', 'The database already has records. Run "crm seed --reset" to replace them.');
   }
   // Records only: the workspace row with its settings (capture token included), the pipeline and

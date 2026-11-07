@@ -4,6 +4,7 @@ import { type Row, toOpportunity, toOrganization, toPerson, toTask } from '../re
 import { containsPattern, paginate, type Page } from './pagination.js';
 import { listActivities, modelHiddenActivityKinds } from './activities.js';
 import { listClaims } from './claims.js';
+import { listsForPerson } from './lists.js';
 import { opportunitySelect } from './opportunities.js';
 import { taskSelect } from './tasks.js';
 import { getQualificationPayload, qualificationColumns, qualificationJoin, toQualificationSummary } from './qualification.js';
@@ -32,6 +33,8 @@ export interface ListPeopleInput {
   sort?: 'name' | 'fit' | undefined;
   // Absent means all people.
   lifecycle?: 'lead' | 'relationship' | undefined;
+  // A list id: members only. An unknown id matches nobody, so the page is empty.
+  list?: string | undefined;
 }
 
 const listSelect = `SELECT p.*, o.name AS organization_name, ${qualificationColumns} FROM person p LEFT JOIN organization o ON o.id = p.organization_id ${qualificationJoin}`;
@@ -69,6 +72,10 @@ export function listPeople(
   if (input.lifecycle) {
     where.push('p.lifecycle = ?');
     params.push(input.lifecycle);
+  }
+  if (input.list) {
+    where.push('EXISTS (SELECT 1 FROM list_member lm JOIN list l ON l.id = lm.list_id WHERE lm.person_id = p.id AND lm.list_id = ? AND l.workspace_id = ?)');
+    params.push(input.list, workspaceId);
   }
   return paginate({
     db,
@@ -138,6 +145,8 @@ export function getPersonDetail(db: Db, workspaceId: string, id: string, options
     tasks,
     opportunities,
     qualification: getQualificationPayload(db, workspaceId, id),
+    // Lists are a human surface: agent reads (forModel) never include membership.
+    ...(options.forModel ? {} : { lists: listsForPerson(db, workspaceId, id) }),
   };
 }
 

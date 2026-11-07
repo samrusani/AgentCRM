@@ -45,6 +45,7 @@ export {
 export * from './runs.js';
 export { listTemplates, switchTemplate } from './templates.js';
 export { createPipeline, deletePipeline, updatePipeline } from './pipelines.js';
+export { addListMembers, createList, deleteList, removeListMember, updateList } from './lists.js';
 export * from './workspace.js';
 export * from './workerLease.js';
 export { syncMail, syncMailIfDue } from './mailSync.js';

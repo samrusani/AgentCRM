@@ -34,6 +34,8 @@ IDs are prefixed strings, for example `per_a1b2c3`, generated from random bytes.
 | stage_event | opportunity_id, from_stage_id, to_stage_id, at, actor |
 | activity | workspace_id, entity_type, entity_id, kind (note, email_draft, email_out, email_in, stage_change, agent), body, actor |
 | task | workspace_id, version, title, entity_type, entity_id, due_at, status (open, done), updated_at |
+| list | workspace_id, version, name, updated_at |
+| list_member | list_id, person_id, created_at, primary key (list_id, person_id) |
 | field_claim | workspace_id, entity_type, entity_id, field, value, source_url, source_type, observed_at, extraction_method (for apify claims, the actor id), status (imported, extracted, corroborated, human_confirmed) |
 | run | workspace_id, kind, title, status, scope (JSON), counts (JSON), started_at, finished_at |
 | run_step | run_id, seq, title, status (pending, running, done, skipped, failed), detail, started_at, finished_at |
@@ -383,7 +385,13 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 | GET `/api/templates` | The template registry `{ items: [{ id, name, description, pipelineName, stageNames }] }` |
 | POST `/api/workspace/template` | Switch one pipeline's template (see Pipelines and templates); returns the updated pipeline |
 | GET `/api/today` | `{ tasksDue, approvalsPending, runsActive, counts, dayStart, dayEnd }` for the Today screen |
-| GET `/api/people?q=&cursor=&limit=` | Search by name, email, organization name |
+| GET `/api/people?q=&cursor=&limit=` | Search by name, email, organization name; `lifecycle=` and `list=` filter |
+| GET `/api/lists` | Every list with its member count, newest first |
+| POST `/api/lists` | `{ name }`, create a list |
+| PATCH `/api/lists/:id` | `{ expectedVersion, fields: { name } }`, rename only |
+| DELETE `/api/lists/:id` | Deletes the list and its memberships |
+| POST `/api/lists/:id/members` | `{ personIds }`, adds the missing members, answers `{ added, already }` |
+| DELETE `/api/lists/:id/members/:personId` | Removes one membership |
 | GET `/api/people/:id` | Person plus `organization`, `affiliationsSummary`, `claims`, `activities`, `tasks`, `opportunities` |
 | POST `/api/people` | Create person; `lifecycle` optional, defaulting to `lead` |
 | PATCH `/api/people/:id` | `{ expectedVersion, fields }`, partial update; `linkedinUrl` and `xUrl` are editable and canonicalized, an unparseable profile URL is a validation error |
@@ -459,6 +467,22 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 - `crm_get_run`: run status, steps, counts
 
 MCP tools call the same actions as the HTTP routes. No tool can decide an approval.
+
+## People lists
+
+A list is a named, hand curated set of people ("UK Angels", "Energy investors"), for an overview the big tables cannot give. Migration 023 creates `list` (id prefix `lst`, workspace scoped, versioned, named like other records: trimmed, 1 to 200 characters) and `list_member` (one row per list and person, primary key on the pair, foreign keys to both, an index on `person_id`). Lists hold people only in this version; organizations are a documented gap. Membership is curation, not a fact about the person: adding or removing a member never bumps the person's version, writes no claim, and emits `record_updated` for the list, not the person. Deleting a person cascades their memberships. Tags are untouched; qualification, drafts, and capture keep scoping by tag, and lists feed no automation in this version (documented limit).
+
+- `GET /api/lists` answers every list with its member count, newest first.
+- `POST /api/lists` takes `{ name }`, audit `list.create`.
+- `PATCH /api/lists/:id` takes `{ expectedVersion, fields: { name } }`, rename only, the usual 409.
+- `DELETE /api/lists/:id` deletes the list and its memberships, always allowed (membership is cheap curation), audit `list.delete` with the member count.
+- `POST /api/lists/:id/members` takes `{ personIds }` (1 to 500 raw entries, de-duplicated before counting), adds the missing ones and ignores the rest, verifies every person exists first (one unknown id refuses the whole call as validation, nothing written), answers `{ added, already }`, one audit `list.member_add` with counts only, never person ids, bumps the list version once; when every person was already a member it writes nothing at all and answers `{ added: 0, already: n }`.
+- `DELETE /api/lists/:id/members/:personId` removes one membership and answers `{ removed }` (1, or 0 for an absent member with nothing written), audit `list.member_remove` with counts only, never person ids, bumps the list version.
+- `GET /api/people` takes `list=<id>` and filters to members, combinable with the `lifecycle` filter; an unknown list id answers an empty page, not an error.
+- `GET /api/people/:id` gains `lists: [{ id, name }]`, newest membership first (left out of model facing reads).
+- `crm seed` counts lists among the records that make `--reset` required, so a database holding only lists is never silently cleared.
+
+Lists are a human surface in this version: no MCP tool reads or writes them, the agent proposal path has no list entity, and agent run reads do not include membership. The web may create a list and add members in one flow, but the server keeps the two operations separate.
 
 ## Pipelines and templates
 

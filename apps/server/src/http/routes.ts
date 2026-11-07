@@ -49,6 +49,11 @@ import {
   listTemplates,
   createPipeline,
   deletePipeline,
+  addListMembers,
+  createList,
+  deleteList,
+  removeListMember,
+  updateList,
   updatePipeline,
   listAgentmailInboxes,
   listOllamaModels,
@@ -87,6 +92,7 @@ import { getImportDetail } from '../queries/imports.js';
 import { getOpportunityDetail, listOpportunities } from '../queries/opportunities.js';
 import { getOrganizationDetail, listOrganizations } from '../queries/organizations.js';
 import { getPersonDetail, listPeople } from '../queries/people.js';
+import { listLists } from '../queries/lists.js';
 import { listPipelines } from '../queries/pipelines.js';
 import { readQualificationConfig } from '../qualification/config.js';
 import { getRunDetail, listApprovals, listRuns, requireApproval } from '../queries/runs.js';
@@ -110,6 +116,7 @@ const peopleQuery = z.object({
   organizationId: z.string().optional(),
   sort: z.enum(['name', 'fit']).optional(),
   lifecycle: z.enum(['lead', 'relationship']).optional(),
+  list: z.string().optional(),
   ...pagingQuery,
 });
 const organizationsQuery = z.object({
@@ -263,6 +270,22 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   app.delete('/api/pipelines/:id', async (request, reply) => {
     deletePipeline(context(), idParam(request.params));
     return reply.status(204).send();
+  });
+
+  app.get('/api/lists', async () => ({ items: listLists(db, workspaceId()), nextCursor: null }));
+  app.post('/api/lists', async (request, reply) => {
+    reply.status(201);
+    return createList(context(), request.body);
+  });
+  app.patch('/api/lists/:id', async (request) => updateList(context(), idParam(request.params), request.body));
+  app.delete('/api/lists/:id', async (request, reply) => {
+    deleteList(context(), idParam(request.params));
+    return reply.status(204).send();
+  });
+  app.post('/api/lists/:id/members', async (request) => addListMembers(context(), idParam(request.params), request.body));
+  app.delete('/api/lists/:id/members/:personId', async (request) => {
+    const { id, personId } = parseInput(z.object({ id: z.string().min(1), personId: z.string().min(1) }), request.params);
+    return removeListMember(context(), id, personId);
   });
 
   app.get('/api/opportunities', async (request) =>
