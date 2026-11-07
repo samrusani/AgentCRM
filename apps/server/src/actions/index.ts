@@ -27,6 +27,7 @@ export * from './connectors.js';
 export * from './context.js';
 export * from './crud.js';
 export { advanceDraftRun, draftJobKind, draftKind } from './draftOutreach.js';
+export { advanceMailboxCaptureRun, mailboxCaptureJobKind, mailboxCaptureKind, startMailboxCapture } from './mailboxCapture.js';
 export { advanceCsvImportRun, csvImportJobKind, csvImportKind, previewCsvFile, stageCsvImport } from './csvImport.js';
 export { advanceDemoRun, demoActor, demoCandidateEmails } from './demoResearch.js';
 export { stopFollowupRule, tickFollowupRules, tickFollowupRulesIfDue } from './followupRules.js';

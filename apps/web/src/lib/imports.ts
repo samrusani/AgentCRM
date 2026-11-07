@@ -95,6 +95,9 @@ export function parseImportReviewPayload(payload: unknown): ImportReviewPayload 
       title: mappedTitle(row),
       linkedinUrl: mappedProfile(row),
       kind: mappedKind(row),
+      inbound: optionalCount(row.inbound),
+      outbound: optionalCount(row.outbound),
+      lastSeenAt: text(row.lastSeenAt),
     };
   });
   return {
@@ -102,6 +105,8 @@ export function parseImportReviewPayload(payload: unknown): ImportReviewPayload 
     actorId: text(record.actorId) ?? text(record.actor_id),
     postUrl: text(record.postUrl) ?? text(asRecord(record.source).postUrl),
     pasted: record.pasted === true,
+    // Only a mailbox capture review carries the window it scanned, even when that is all mail (null).
+    mailbox: 'sinceDays' in record,
     counts: normalizeCounts(record.counts),
     sample,
   };

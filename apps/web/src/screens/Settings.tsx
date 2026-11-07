@@ -92,7 +92,7 @@ function ImportsSection() {
           </label>
           <p className="muted" id="settings-imports-note">
             Staged rows from Apify imports, CSV files, and lead capture are saved without review. Duplicates and invalid
-            rows are still skipped. Runs started by the agent always wait for your review.
+            rows are still skipped. Runs started by the agent, and mailbox scans, always wait for your review.
           </p>
           {save.isError ? (
             <p className="inline-error" role="alert">

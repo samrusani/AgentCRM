@@ -408,6 +408,8 @@ export function ImportBatchSheet({ id, onClose }: { id: string; onClose: () => v
   const refreshing = query.isPlaceholderData;
   // Lead capture rows carry a title and a profile worth showing. Other imports keep their columns.
   const showPeople = batch?.sourceKind === 'lead_capture';
+  // Mailbox rows show how much mail there is with each address in place of a company.
+  const showMailbox = batch?.sourceKind === 'mailbox';
 
   return (
     <Sheet
@@ -425,7 +427,9 @@ export function ImportBatchSheet({ id, onClose }: { id: string; onClose: () => v
             ? `Actor ${batch.actorId}`
             : batch?.sourceKind === 'csv'
               ? 'CSV import'
-              : undefined
+              : showMailbox
+                ? 'From mail already synced to this computer'
+                : undefined
       }
       onClose={onClose}
       wide
@@ -499,7 +503,9 @@ export function ImportBatchSheet({ id, onClose }: { id: string; onClose: () => v
                       ? 'This batch has no rows. The file had no usable rows.'
                       : batch.sourceKind === 'lead_capture'
                         ? 'This batch has no rows. The post had no usable people.'
-                        : 'This batch has no rows. The Apify run returned no usable items.'}
+                        : showMailbox
+                          ? 'This batch has no rows. The stored mail had no new correspondents.'
+                          : 'This batch has no rows. The Apify run returned no usable items.'}
               </p>
             ) : (
               <div className="data-table__wrap" aria-busy={refreshing}>
@@ -512,7 +518,19 @@ export function ImportBatchSheet({ id, onClose }: { id: string; onClose: () => v
                       </th>
                       <th scope="col">Name</th>
                       <th scope="col">Email</th>
-                      <th scope="col">Company</th>
+                      {showMailbox ? (
+                        <>
+                          <th scope="col" className="is-numeric">
+                            In
+                          </th>
+                          <th scope="col" className="is-numeric">
+                            Out
+                          </th>
+                          <th scope="col">Last seen</th>
+                        </>
+                      ) : (
+                        <th scope="col">Company</th>
+                      )}
                       {showPeople ? <th scope="col">Title</th> : null}
                       {showPeople ? <th scope="col">Profile</th> : null}
                       <th scope="col">Status</th>
@@ -533,7 +551,17 @@ export function ImportBatchSheet({ id, onClose }: { id: string; onClose: () => v
                           <td className="is-numeric muted">{row.seq}</td>
                           <RowNameCell kind={kind} name={name} company={company} />
                           <td className={email ? undefined : 'muted'}>{email ?? 'No email'}</td>
-                          <td className={company ? undefined : 'muted'}>{company ?? 'No company'}</td>
+                          {showMailbox ? (
+                            <>
+                              <td className="is-numeric num">{formatCount(row.mailbox?.inbound ?? 0)}</td>
+                              <td className="is-numeric num">{formatCount(row.mailbox?.outbound ?? 0)}</td>
+                              <td className={row.mailbox?.lastSeenAt ? undefined : 'muted'}>
+                                {row.mailbox?.lastSeenAt ? formatAgo(row.mailbox.lastSeenAt) : 'Unknown'}
+                              </td>
+                            </>
+                          ) : (
+                            <td className={company ? undefined : 'muted'}>{company ?? 'No company'}</td>
+                          )}
                           {showPeople ? <td className={title ? undefined : 'muted'}>{title ?? 'No title'}</td> : null}
                           {showPeople ? (
                             <td className={profile ? undefined : 'muted'} title={profile ?? undefined}>

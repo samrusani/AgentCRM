@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { Approval, ImportCounts, ImportReviewPayload } from '../api/types';
+import { formatAgo } from '../lib/format';
 import { formatCount, profileLabel } from '../lib/imports';
 
 export function ImportCountsRow({ counts, accepted }: { counts: ImportCounts; accepted?: boolean }) {
@@ -80,7 +81,40 @@ export function ImportReviewBody({ approval, review }: { approval: Approval; rev
           Actor <span className="import-review__actor">{review.actorId}</span>
         </p>
       ) : null}
-      {sample.length > 0 ? (
+      {review.mailbox ? (
+        <p className="muted import-review__source">From mail already synced to this computer</p>
+      ) : null}
+      {sample.length > 0 && review.mailbox ? (
+        <div className="mini-table__wrap">
+          <table className="mini-table">
+            <caption className="sr-only">Sample of staged correspondents</caption>
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Email</th>
+                <th scope="col" className="is-numeric">
+                  In
+                </th>
+                <th scope="col" className="is-numeric">
+                  Out
+                </th>
+                <th scope="col">Last seen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sample.map((row, index) => (
+                <tr key={index}>
+                  <td className={row.name ? 'cell-name' : 'muted'}>{row.name ?? 'No name'}</td>
+                  <td className={row.email ? '' : 'muted'}>{row.email ?? 'No email'}</td>
+                  <td className="is-numeric num">{formatCount(row.inbound ?? 0)}</td>
+                  <td className="is-numeric num">{formatCount(row.outbound ?? 0)}</td>
+                  <td className={row.lastSeenAt ? '' : 'muted'}>{row.lastSeenAt ? formatAgo(row.lastSeenAt) : 'Unknown'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : sample.length > 0 ? (
         <div className="mini-table__wrap">
           <table className="mini-table">
             <caption className="sr-only">Sample of staged rows</caption>

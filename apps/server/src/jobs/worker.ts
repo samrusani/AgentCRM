@@ -8,6 +8,7 @@ import {
   advanceEnrichOrganizationRun,
   advanceEnrichPersonRun,
   advanceLeadCaptureRun,
+  advanceMailboxCaptureRun,
   advanceQualifyRun,
   apifyJobKind,
   claimDueJobs,
@@ -20,6 +21,7 @@ import {
   failRun,
   type JobRecord,
   leadCaptureJobKind,
+  mailboxCaptureJobKind,
   mailReconcileJobKind,
   maxJobAttempts,
   newWorkerLeaseIdentity,
@@ -49,9 +51,11 @@ function runJob(ctx: ActionContext, job: JobRecord): void {
       ? advanceDemoRun
       : job.kind === csvImportJobKind
         ? advanceCsvImportRun
-        : job.kind === qualifyJobKind
-          ? advanceQualifyRun
-          : null;
+        : job.kind === mailboxCaptureJobKind
+          ? advanceMailboxCaptureRun
+          : job.kind === qualifyJobKind
+            ? advanceQualifyRun
+            : null;
   if (!advance) {
     failJob(ctx, job.id);
     return;

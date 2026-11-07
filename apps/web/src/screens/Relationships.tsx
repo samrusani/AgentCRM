@@ -5,6 +5,7 @@ import {
   useCreateList,
   useDeleteList,
   useLists,
+  useMailProvider,
   useOrganizations,
   usePeople,
   useRemoveListMembers,
@@ -20,6 +21,7 @@ import { describeDue, humanize, personName } from '../lib/format';
 import { addedBeforeFailure, addedMessage, removedMessage, withNextStep } from '../lib/lists';
 import { useUI } from '../lib/ui';
 import { CsvImportSheet } from './CsvImportSheet';
+import { MailboxCaptureSheet } from './MailboxCaptureSheet';
 import { RenameListSheet } from './ListSheets';
 import { NewPersonSheet } from './NewPersonSheet';
 import { OrganizationSheet, PersonSheet } from './RecordSheets';
@@ -58,6 +60,8 @@ const LEADS_FRAMING: Framing = {
   inviteImport: true,
 };
 
+const MAILBOX_DISABLED_REASON = 'Connect a mail provider in Settings first.';
+
 const RELATIONSHIPS_FRAMING: Framing = {
   title: 'Relationships',
   description: 'People you have a real interaction with: they replied, or a deal is moving.',
@@ -85,6 +89,10 @@ function LifecycleScreen({ framing }: { framing: Framing }) {
 
   const sort: PeopleSort = params.get('sort') === 'fit' ? 'fit' : 'default';
   const csvOpen = tab === 'people' && params.get('import') === 'csv';
+  const mailboxOpen = tab === 'people' && params.get('import') === 'mailbox';
+  // Scanning needs a mail provider that is ready; it reads only the mail already stored.
+  const mailProvider = useMailProvider();
+  const mailConnected = Boolean(mailProvider.data?.ready);
   const navigate = useNavigate();
   const { pushToast } = useUI();
 
@@ -224,6 +232,15 @@ function LifecycleScreen({ framing }: { framing: Framing }) {
     const copy = new URLSearchParams(params);
     copy.set('tab', 'people');
     copy.set('import', 'csv');
+    copy.delete('person');
+    copy.delete('org');
+    setParams(copy);
+  };
+
+  const openMailboxCapture = () => {
+    const copy = new URLSearchParams(params);
+    copy.set('tab', 'people');
+    copy.set('import', 'mailbox');
     copy.delete('person');
     copy.delete('org');
     setParams(copy);
@@ -392,6 +409,22 @@ function LifecycleScreen({ framing }: { framing: Framing }) {
             <button type="button" className="btn" onClick={openCsvImport} aria-haspopup="dialog">
               Import CSV
             </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={openMailboxCapture}
+              aria-haspopup="dialog"
+              disabled={!mailConnected}
+              aria-describedby={mailConnected || mailProvider.isPending ? undefined : 'scan-mailbox-reason'}
+              title={mailConnected || mailProvider.isPending ? undefined : MAILBOX_DISABLED_REASON}
+            >
+              Scan mailbox
+            </button>
+            {mailConnected || mailProvider.isPending ? null : (
+              <span className="sr-only" id="scan-mailbox-reason">
+                {MAILBOX_DISABLED_REASON}
+              </span>
+            )}
             <button type="button" className="btn" onClick={() => setNewPersonOpen(true)} aria-haspopup="dialog">
               New person
             </button>
@@ -449,7 +482,7 @@ function LifecycleScreen({ framing }: { framing: Framing }) {
         {renamingList && activeList ? (
           <RenameListSheet list={activeList} onClose={() => setRenamingList(false)} onRenamed={() => setRenamingList(false)} />
         ) : null}
-        {newPersonOpen && !csvOpen ? (
+        {newPersonOpen && !csvOpen && !mailboxOpen ? (
           <NewPersonSheet
             onClose={() => setNewPersonOpen(false)}
             onCreated={(id) => {
@@ -458,16 +491,22 @@ function LifecycleScreen({ framing }: { framing: Framing }) {
             }}
           />
         ) : null}
+        {mailboxOpen ? (
+          <MailboxCaptureSheet
+            onClose={closeCsvImport}
+            onStaged={(run) => navigate(`/research?run=${encodeURIComponent(run.id)}`)}
+          />
+        ) : null}
         {csvOpen ? (
           <CsvImportSheet
             onClose={closeCsvImport}
             onStaged={(run) => navigate(`/research?run=${encodeURIComponent(run.id)}`)}
           />
         ) : null}
-        {!csvOpen && !newPersonOpen && !renamingList && sheetOpen && tab === 'people' && personId ? (
+        {!csvOpen && !mailboxOpen && !newPersonOpen && !renamingList && sheetOpen && tab === 'people' && personId ? (
           <PersonSheet id={personId} onClose={closeSheet} onOpenOrganization={openOrganization} />
         ) : null}
-        {!csvOpen && !newPersonOpen && !renamingList && sheetOpen && tab === 'organizations' && orgId ? (
+        {!csvOpen && !mailboxOpen && !newPersonOpen && !renamingList && sheetOpen && tab === 'organizations' && orgId ? (
           <OrganizationSheet id={orgId} onClose={closeSheet} onOpenPerson={openPerson} />
         ) : null}
       </div>

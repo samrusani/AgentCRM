@@ -13,6 +13,7 @@ import {
   versionConflict,
 } from './context.js';
 import { promoteForStageIn } from './lifecycle.js';
+import { linkStoredMessagesToPerson } from './mailLinks.js';
 import {
   canonicalCompanyLinkedinUrl,
   canonicalPersonLinkedinUrl,
@@ -27,7 +28,7 @@ import { entityTypeSchema, expectedVersionSchema, idSchema, isoTimestamp, option
 export type UpdatableType = 'person' | 'organization' | 'opportunity' | 'task';
 export const updatableTypes = ['person', 'organization', 'opportunity', 'task'] as const;
 
-const emailSchema = z.string().trim().toLowerCase().email().max(200);
+export const emailSchema = z.string().trim().toLowerCase().email().max(200);
 
 // A profile URL field: null or an empty string clears it, any other value must canonicalize or the edit is refused.
 const profileUrlField = (canonical: (value: string) => string | null, message: string) =>
@@ -274,6 +275,8 @@ export function updateEntityIn(tx: Tx, type: UpdatableType, id: string, parsed: 
   });
   emitRecord(tx, type, id);
   const updated = spec.load(tx.db, tx.workspaceId, id)!;
+  // A new email address picks up mail already stored for it. Linking never promotes.
+  if (type === 'person' && typeof patch.email === 'string') linkStoredMessagesToPerson(tx, id, patch.email);
   // Re-pointing an opportunity at a person while it sits past the first stage is a relationship signal for that person.
   if (type === 'opportunity' && 'personId' in patch) {
     const row = updated as unknown as { personId: string | null; stageId: string };

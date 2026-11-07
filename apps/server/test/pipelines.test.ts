@@ -75,7 +75,7 @@ describe('migration 022', () => {
       db.prepare('INSERT INTO workspace (id, created_at, name, template) VALUES (?, ?, ?, ?)').run('wsp_1', '2026-01-01', 'One', 'fund-lp');
       db.prepare('INSERT INTO pipeline (id, created_at, workspace_id, name) VALUES (?, ?, ?, ?)').run('pip_1', '2026-01-01', 'wsp_1', 'LP fundraising');
 
-      expect(applyMigrations(db)).toEqual(['022_pipelines.sql', '023_lists.sql']);
+      expect(applyMigrations(db)).toEqual(['022_pipelines.sql', '023_lists.sql', '024_mailbox.sql']);
       expect(db.prepare('SELECT version, template FROM pipeline').get()).toEqual({ version: 1, template: 'fund-lp' });
       // The workspace column stays as it was.
       expect(db.prepare('SELECT template FROM workspace').get()).toEqual({ template: 'fund-lp' });

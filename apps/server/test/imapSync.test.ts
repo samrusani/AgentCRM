@@ -76,6 +76,7 @@ describe('imap inbound sync', () => {
       direction: 'in',
       person_id: person.id,
       from_email: 'ada@lanternrow.invalid',
+      from_name: 'Ada Testwell',
       subject: 'Re: Café',
       body_text: 'Happy to talk next week.\n'.replace(/\n$/, '\r\n'),
       provider_timestamp: '2026-03-01T10:00:00.000Z',

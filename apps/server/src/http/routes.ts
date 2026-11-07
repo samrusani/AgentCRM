@@ -71,6 +71,7 @@ import {
   startGmailOAuth,
   startMicrosoftOAuth,
   stageCsvImport,
+  startMailboxCapture,
   startRun,
   switchTemplate,
   updateOpportunity,
@@ -531,6 +532,12 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   app.post('/api/imports/csv/preview', { bodyLimit: csvBodyLimit }, async (request) => previewCsvFile(request.body));
   app.post('/api/imports/csv', { bodyLimit: csvBodyLimit }, async (request, reply) => {
     const run = stageCsvImport(context(), request.body, { origin: 'user' });
+    reply.status(201);
+    return run;
+  });
+
+  app.post('/api/imports/mailbox', async (request, reply) => {
+    const run = startMailboxCapture(context(), request.body, { origin: 'user' });
     reply.status(201);
     return run;
   });

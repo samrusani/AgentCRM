@@ -192,6 +192,15 @@ export interface PersonDetail extends Omit<Person, 'qualification'> {
   opportunities: Opportunity[];
   // The lists this person is on, newest membership first.
   lists: Array<{ id: string; name: string }>;
+  // Stored mail linked to this person, or null when none is linked.
+  interaction: PersonInteraction | null;
+}
+
+export interface PersonInteraction {
+  lastInboundAt: string | null;
+  lastOutboundAt: string | null;
+  inbound: number;
+  outbound: number;
 }
 
 export interface OrganizationDetail extends Organization {
@@ -518,6 +527,14 @@ export interface ImportRow {
   matchEntityId: string | null;
   // Lead capture rows named in a post text: the snippet of the post that names the row, as evidence.
   postQuote: string | null;
+  // Mailbox rows: how much stored mail there is with this address, from the counts the row keeps.
+  mailbox: MailboxCounts | null;
+}
+
+export interface MailboxCounts {
+  inbound: number;
+  outbound: number;
+  lastSeenAt: string | null;
 }
 
 export interface ImportBatchPage {
@@ -535,6 +552,10 @@ export interface ImportSampleRow {
   linkedinUrl: string | null;
   // Lead capture reviews can stage organizations named in a post. Other imports are always people.
   kind: 'person' | 'organization';
+  // Mailbox capture reviews show how much mail there is with each address. Other imports leave these null.
+  inbound: number | null;
+  outbound: number | null;
+  lastSeenAt: string | null;
 }
 
 export interface ImportReviewPayload {
@@ -544,8 +565,15 @@ export interface ImportReviewPayload {
   postUrl: string | null;
   // Lead capture reviews: true when the people were read out of pasted post text.
   pasted: boolean;
+  // True for a mailbox capture: the people come from mail already synced to this computer.
+  mailbox: boolean;
   counts: ImportCounts;
   sample: ImportSampleRow[];
+}
+
+export interface MailboxCaptureInput {
+  // Omitted means all synced mail.
+  sinceDays?: number;
 }
 
 export interface ApifyRunInput {

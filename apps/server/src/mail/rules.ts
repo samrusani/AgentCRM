@@ -12,10 +12,41 @@ export function isValidEmail(email: string): boolean {
 }
 
 // Reads "Name <addr@host>" or a bare address. Returns the normalized address, or null when there is none.
+// The addr-spec is the LAST angle pair outside any quoted text, so a display name that contains an address never
+// decides the sender. Garbage stays unparseable.
 export function parseAddress(raw: string): string | null {
-  const angle = /<([^<>]+)>/.exec(raw);
-  const candidate = normalizeEmail(angle ? angle[1]! : raw);
+  const unquoted = raw.replace(/"(?:\\.|[^"\\])*"/g, ' ');
+  const pairs = [...unquoted.matchAll(/<([^<>]*)>/g)];
+  const candidate = normalizeEmail(pairs.length > 0 ? pairs[pairs.length - 1]![1]! : raw);
   return isValidEmail(candidate) ? candidate : null;
+}
+
+// Index of the last "<" that is not inside a quoted string, or -1.
+function lastOpenAngleOutsideQuotes(raw: string): number {
+  let quoted = false;
+  let found = -1;
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i]!;
+    if (quoted && ch === '\\') i += 1;
+    else if (ch === '"') quoted = !quoted;
+    else if (!quoted && ch === '<') found = i;
+  }
+  return found;
+}
+
+const invisibleCharacters = /[\u0000-\u001F\u007F-\u009F\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\u00AD\u034F\u115F\u1160\u180B-\u180E\u3164\uFE00-\uFE0F\uFFA0\u{E0000}-\u{E007F}]/gu;
+const longestDisplayName = 200;
+
+// The display name of a "Name <addr@host>" header, or null when the header has none. Third party text: invisible and
+// control characters are stripped, whitespace is flattened, and the length is bounded. A name that is only the address
+// (or contains one) says nothing about the person, so it is dropped.
+export function parseDisplayName(raw: string): string | null {
+  const angle = lastOpenAngleOutsideQuotes(raw);
+  if (angle <= 0) return null;
+  let name = raw.slice(0, angle).replace(/[\r\n\t]+/g, ' ').replace(invisibleCharacters, '').trim();
+  if (name.startsWith('"') && name.endsWith('"') && name.length >= 2) name = name.slice(1, -1).replace(/\\(.)/g, '$1');
+  name = name.replace(/\s+/g, ' ').trim().slice(0, longestDisplayName).trim();
+  return name === '' || name.includes('@') ? null : name;
 }
 
 export const demoDomains = ['example.com', 'example.org', 'example.net'] as const;

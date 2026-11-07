@@ -96,6 +96,31 @@ export function listPeople(
   });
 }
 
+export interface PersonInteraction {
+  lastInboundAt: string | null;
+  lastOutboundAt: string | null;
+  inbound: number;
+  outbound: number;
+}
+
+// When the person last wrote and was last written to, from stored mail linked to them. Null when no message is
+// linked. Computed live through the person index; derived presentation, not a claim.
+export function getPersonInteraction(db: Db, workspaceId: string, personId: string): PersonInteraction | null {
+  const row = db
+    .prepare(
+      `SELECT MAX(CASE WHEN direction = 'in' THEN provider_timestamp END) AS lastInboundAt,
+              MAX(CASE WHEN direction = 'out' THEN provider_timestamp END) AS lastOutboundAt,
+              COALESCE(SUM(direction = 'in'), 0) AS inbound,
+              COALESCE(SUM(direction = 'out'), 0) AS outbound
+       FROM email_message WHERE workspace_id = ? AND person_id = ?`,
+    )
+    .get(workspaceId, personId) as { lastInboundAt: string | null; lastOutboundAt: string | null; inbound: number; outbound: number };
+  const inbound = Number(row.inbound);
+  const outbound = Number(row.outbound);
+  if (inbound + outbound === 0) return null;
+  return { lastInboundAt: row.lastInboundAt, lastOutboundAt: row.lastOutboundAt, inbound, outbound };
+}
+
 export interface DetailOptions {
   // True when a model will read the result: inbound email text is left out of the activity list.
   forModel?: boolean;
@@ -145,8 +170,8 @@ export function getPersonDetail(db: Db, workspaceId: string, id: string, options
     tasks,
     opportunities,
     qualification: getQualificationPayload(db, workspaceId, id),
-    // Lists are a human surface: agent reads (forModel) never include membership.
-    ...(options.forModel ? {} : { lists: listsForPerson(db, workspaceId, id) }),
+    // Lists and interaction history are human surfaces: agent reads (forModel) never include them.
+    ...(options.forModel ? {} : { lists: listsForPerson(db, workspaceId, id), interaction: getPersonInteraction(db, workspaceId, id) }),
   };
 }
 

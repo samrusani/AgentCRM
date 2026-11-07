@@ -2,20 +2,11 @@ import { z } from 'zod';
 import { csvFields, mapCsvRow, previewCsv, validateMapping, type CsvPreview } from '../csv/mapping.js';
 import { assertUtf8Text, parseCsv } from '../csv/parse.js';
 import { validationError } from '../errors.js';
-import { type ImportCounts, emptyImportCounts, getImportBatchForRun } from '../queries/imports.js';
-import { getRun, getRunDetail, listRunSteps } from '../queries/runs.js';
+import { type ImportCounts, emptyImportCounts } from '../queries/imports.js';
+import { getRunDetail } from '../queries/runs.js';
 import { type ActionContext, mutate, parseInput, type Tx, withTxActor } from './context.js';
-import { type AdvanceResult, setCounts, startStep } from './demoResearch.js';
-import {
-  completeStep,
-  dedupeImportBatch,
-  failImportRunIn,
-  importCountsOf,
-  liveStep,
-  markInvalidRows,
-  requestImportReview,
-  writeBatchCounts,
-} from './importReview.js';
+import { type AdvanceResult } from './demoResearch.js';
+import { advanceStagedImportRun, importCountsOf } from './importReview.js';
 import { enqueueJobIn } from './jobs.js';
 
 export const csvImportKind = 'csv_import';
@@ -141,81 +132,21 @@ export function stageCsvImport(ctx: ActionContext, input: unknown, options: { or
 
 export { csvFields };
 
-function failNow(tx: Tx, runId: string, detail: string): AdvanceResult {
-  failImportRunIn(tx, runId, detail);
-  return { nextRunAt: null };
-}
-
 // Moves one step forward in a single transaction. The steps hold no network calls, so a crash leaves the run consistent.
 export function advanceCsvImportRun(ctx: ActionContext, runId: string): AdvanceResult {
-  return mutate(ctx, (rawTx) => {
-    const tx = withTxActor(rawTx, csvImportActor);
-    const run = getRun(tx.db, tx.workspaceId, runId);
-    if (!run || run.kind !== csvImportKind) return { nextRunAt: null };
-    const soon = tx.now();
-
-    if (run.status === 'queued') {
-      tx.db.prepare("UPDATE run SET status = 'running', started_at = ? WHERE id = ?").run(tx.now(), runId);
-      const first = listRunSteps(tx.db, runId).find((step) => step.status === 'pending');
-      if (first) startStep(tx, runId, first);
-      tx.audit('run.start', 'run', runId, { kind: run.kind });
-      tx.emit({ type: 'run_updated', runId });
-      return { nextRunAt: soon };
-    }
-    if (run.status !== 'running') return { nextRunAt: null };
-
-    const steps = listRunSteps(tx.db, runId);
-    const active = steps.find((step) => step.status === 'running');
-    if (!active) {
-      const pending = steps.find((step) => step.status === 'pending');
-      if (!pending) return { nextRunAt: null };
-      startStep(tx, runId, pending);
-      tx.emit({ type: 'run_updated', runId });
-      return { nextRunAt: soon };
-    }
-
-    const batch = getImportBatchForRun(tx.db, tx.workspaceId, runId);
-    if (!batch) return failNow(tx, runId, 'The import batch is missing.');
-    const requested = run.counts.requested ?? batch.counts.fetched;
-
-    if (active.seq === 2) {
-      const live = liveStep(tx, runId, 2);
-      if (!live) return { nextRunAt: null };
-      const { total, invalid } = markInvalidRows(tx, batch.id, 'No name or email found in this row.');
-      const counts: ImportCounts = { ...batch.counts, invalid, staged: total - invalid };
-      writeBatchCounts(tx, batch.id, counts);
-      setCounts(tx, runId, importCountsOf(counts, requested));
-      completeStep(tx, runId, live.step, `Checked ${total} rows. ${invalid} had no name or email and were marked invalid.`);
-      return { nextRunAt: soon };
-    }
-    if (active.seq === 3) {
-      const live = liveStep(tx, runId, 3);
-      if (!live) return { nextRunAt: null };
-      const duplicates = dedupeImportBatch(tx, batch.id);
-      const counts: ImportCounts = { ...batch.counts, duplicates, staged: batch.counts.fetched - batch.counts.invalid - duplicates };
-      writeBatchCounts(tx, batch.id, counts);
-      setCounts(tx, runId, importCountsOf(counts, requested));
-      completeStep(
-        tx,
-        runId,
-        live.step,
-        `Found ${duplicates} duplicates of existing records or earlier rows. ${counts.staged} rows are ready for review.`,
-      );
-      return { nextRunAt: soon };
-    }
-
-    const fileName = String(run.scope.fileName ?? batch.sourceRef.fileName ?? 'the file');
-    requestImportReview(
-      tx,
-      runId,
-      active.seq,
-      {
+  return advanceStagedImportRun(ctx, runId, {
+    kind: csvImportKind,
+    actor: csvImportActor,
+    invalidReason: 'No name or email found in this row.',
+    validatedDetail: (total, invalid) => `Checked ${total} rows. ${invalid} had no name or email and were marked invalid.`,
+    dedupe: {},
+    review: (run, batch) => {
+      const fileName = String(run.scope.fileName ?? batch.sourceRef.fileName ?? 'the file');
+      return {
         emptyDetail: (counts) => `All ${counts.fetched} rows were duplicates or invalid, so there is nothing to review.`,
         title: (staged) => `Review ${staged} imported ${staged === 1 ? 'row' : 'rows'} from ${fileName}`,
         payloadSource: { fileName },
-      },
-      (detail) => failImportRunIn(tx, runId, detail),
-    );
-    return { nextRunAt: null };
+      };
+    },
   });
 }

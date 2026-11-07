@@ -6,6 +6,7 @@ import {
   optOutSource,
   optOutTaskTitle,
   parseAddress,
+  parseDisplayName,
   reasonCodes,
   replyTaskTitle,
   unreadMessageTaskTitle,
@@ -323,8 +324,8 @@ function storeMessages(
       const person = bounced ? null : link ? link.person : (recipients.map((address) => personByEmail(tx, address)).find(Boolean) ?? null);
       const result = tx.db
         .prepare(
-          `INSERT INTO email_message (id, created_at, workspace_id, provider_message_id, provider_thread_id, direction, person_id, from_email, "to", subject, preview, body_text, labels, provider_timestamp)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (workspace_id, provider_message_id) DO NOTHING`,
+          `INSERT INTO email_message (id, created_at, workspace_id, provider_message_id, provider_thread_id, direction, person_id, from_email, from_name, "to", subject, preview, body_text, labels, provider_timestamp)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (workspace_id, provider_message_id) DO NOTHING`,
         )
         .run(
           tx.newId('msg'),
@@ -335,6 +336,7 @@ function storeMessages(
           direction,
           person?.id ?? null,
           fromEmail,
+          parseDisplayName(message.from),
           JSON.stringify(recipients),
           message.subject,
           message.preview,

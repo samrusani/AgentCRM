@@ -4,13 +4,14 @@ import { AppError } from '../errors.js';
 import { type Row, type RunCounts } from '../records.js';
 import { normalizeName, splitName, type MappedRow } from './apifyMapping.js';
 import { normalizeProfileUrl } from './leadCaptureMapping.js';
-import { type Tx, emitRecord, withAuditActor } from './context.js';
+import { type ActionContext, type Tx, emitRecord, mutate, withAuditActor, withTxActor } from './context.js';
 import { readImportSettings } from './importSettings.js';
 import { createFieldClaimIn, createOrganizationIn, createPersonIn } from './crud.js';
+import { promotePersonIn } from './lifecycle.js';
 import { updateEntityIn } from './entities.js';
 import { requireOrganization } from '../queries/organizations.js';
 import { canonicalCompanyLinkedinUrl, canonicalPersonLinkedinUrl } from './profileUrls.js';
-import { finishStep, hashPayload, startStep } from './demoResearch.js';
+import { type AdvanceResult, finishStep, hashPayload, setCounts, startStep } from './demoResearch.js';
 
 export const apifyConsoleRunUrl = (apifyRunId: string): string =>
   `https://console.apify.com/actors/runs/${encodeURIComponent(apifyRunId)}`;
@@ -110,6 +111,12 @@ function stripUrlQuery(value: string): string {
   return value.split('#')[0]!.split('?')[0]!;
 }
 
+function hasLinkedInbound(tx: Tx, personId: string): boolean {
+  return Boolean(
+    tx.db.prepare("SELECT 1 FROM email_message WHERE workspace_id = ? AND person_id = ? AND direction = 'in' LIMIT 1").get(tx.workspaceId, personId),
+  );
+}
+
 export interface ImportOutcome {
   accepted: number;
   skipped: number;
@@ -149,12 +156,14 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
           method: `csv:${String(scope.fileName ?? batch.sourceRef.fileName ?? 'unknown')}`.slice(0, 200),
           tag: 'csv-import',
         }
-      : {
-          type: 'apify',
-          url: apifyConsoleRunUrl(String(scope.apifyRunId ?? '')) as string | null,
-          method: String(scope.actorId ?? 'unknown'),
-          tag: 'apify',
-        };
+      : batch.sourceKind === 'mailbox'
+        ? { type: 'import', url: null as string | null, method: 'mailbox:scan', tag: 'mailbox-import' }
+        : {
+            type: 'apify',
+            url: apifyConsoleRunUrl(String(scope.apifyRunId ?? '')) as string | null,
+            method: String(scope.actorId ?? 'unknown'),
+            tag: 'apify',
+          };
   // A pasted capture read some fields out of text the user pasted, which is not Apify data, so those claims are an
   // import. Fields an actor supplied (enrichment) keep the Apify source type.
   const pastedCapture = leadCapture && batch.sourceRef.pasted === true;
@@ -379,6 +388,9 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
           extractionMethod: methodFor(row, field),
         });
       }
+      // The person was created with this address, so createPersonIn already filed the address's stored messages under
+      // them. Someone who has written to the user is a relationship; this is the only promotion stored mail causes.
+      if (batch.sourceKind === 'mailbox' && hasLinkedInbound(tx, person.id)) promotePersonIn(tx, person.id, 'replied');
       tx.db.exec('RELEASE import_row');
       markRow(row.id, 'accepted', null, 'person', person.id);
       accepted += 1;
@@ -710,10 +722,15 @@ export function requestImportReview(tx: Tx, runId: string, seq: number, request:
 
   const sample = (
     tx.db
-      .prepare("SELECT mapped FROM import_row WHERE batch_id = ? AND status = 'staged' ORDER BY seq LIMIT ?")
-      .all(batch.id, reviewSampleSize) as { mapped: string }[]
+      .prepare("SELECT mapped, raw FROM import_row WHERE batch_id = ? AND status = 'staged' ORDER BY seq LIMIT ?")
+      .all(batch.id, reviewSampleSize) as { mapped: string; raw: string }[]
   ).map((row) => {
     const mapped = parseMapped(row.mapped);
+    // A mailbox row shows who the person is and how much mail there is, from the counts its raw column keeps.
+    if (batch.sourceKind === 'mailbox') {
+      const counts = JSON.parse(row.raw) as { inbound?: number; outbound?: number; lastSeenAt?: string };
+      return { email: mapped.email, name: mapped.name, inbound: counts.inbound ?? 0, outbound: counts.outbound ?? 0, lastSeenAt: counts.lastSeenAt ?? null };
+    }
     const base = { name: mapped.name, email: mapped.email, company: mapped.company };
     // Lead capture rows also show the title and the profile, which are what the reviewer approves.
     return batch.sourceKind === 'lead_capture'
@@ -745,8 +762,8 @@ export function requestImportReview(tx: Tx, runId: string, seq: number, request:
   const summary = `${counts.staged} to import, ${counts.duplicates} duplicates, ${counts.invalid} invalid.`;
 
   // The only place an approval is ever decided without a person, and only for import_review: this one,
-  // just created. The setting is read inside this transaction, so a toggle is seen or not as a whole.
-  if (readImportSettings(tx.db, tx.workspaceId).autoAccept && startedByUser(live.run.scope)) {
+  // just created. Mailbox batches never auto accept: a scan of stored mail always waits for a person. The setting is read inside this transaction, so a toggle is seen or not as a whole.
+  if (readImportSettings(tx.db, tx.workspaceId).autoAccept && startedByUser(live.run.scope) && batch.sourceKind !== 'mailbox') {
     finishStep(tx, runId, live.step, `Auto accepted by the imports setting: ${summary}`);
     const decider = withAuditActor(tx, autoAcceptActor);
     const now = tx.now();
@@ -764,4 +781,83 @@ export function requestImportReview(tx: Tx, runId: string, seq: number, request:
   tx.db.prepare("UPDATE run SET status = 'waiting_approval' WHERE id = ?").run(runId);
   tx.audit('run.waiting_approval', 'run', runId);
   tx.emit({ type: 'run_updated', runId });
+}
+
+// What differs between the staged imports that stage everything at creation (CSV and mailbox capture).
+export interface StagedImportSpec {
+  kind: string;
+  actor: string;
+  // The reason on a row with neither a name nor an email, and the step detail that reports the check.
+  invalidReason: string;
+  validatedDetail: (total: number, invalid: number) => string;
+  dedupe: { pendingBatches?: boolean };
+  // The review request of the last step, built from the run and its batch.
+  review: (run: { scope: Record<string, unknown> }, batch: { sourceRef: Record<string, unknown> }) => ReviewRequest;
+}
+
+// Moves one step forward in a single transaction. The steps hold no network calls, so a crash leaves the run consistent.
+export function advanceStagedImportRun(ctx: ActionContext, runId: string, spec: StagedImportSpec): AdvanceResult {
+  const failNow = (tx: Tx, detail: string): AdvanceResult => {
+    failImportRunIn(tx, runId, detail);
+    return { nextRunAt: null };
+  };
+  return mutate(ctx, (rawTx) => {
+    const tx = withTxActor(rawTx, spec.actor);
+    const run = getRun(tx.db, tx.workspaceId, runId);
+    if (!run || run.kind !== spec.kind) return { nextRunAt: null };
+    const soon = tx.now();
+
+    if (run.status === 'queued') {
+      tx.db.prepare("UPDATE run SET status = 'running', started_at = ? WHERE id = ?").run(tx.now(), runId);
+      const first = listRunSteps(tx.db, runId).find((step) => step.status === 'pending');
+      if (first) startStep(tx, runId, first);
+      tx.audit('run.start', 'run', runId, { kind: run.kind });
+      tx.emit({ type: 'run_updated', runId });
+      return { nextRunAt: soon };
+    }
+    if (run.status !== 'running') return { nextRunAt: null };
+
+    const steps = listRunSteps(tx.db, runId);
+    const active = steps.find((step) => step.status === 'running');
+    if (!active) {
+      const pending = steps.find((step) => step.status === 'pending');
+      if (!pending) return { nextRunAt: null };
+      startStep(tx, runId, pending);
+      tx.emit({ type: 'run_updated', runId });
+      return { nextRunAt: soon };
+    }
+
+    const batch = getImportBatchForRun(tx.db, tx.workspaceId, runId);
+    if (!batch) return failNow(tx, 'The import batch is missing.');
+    const requested = run.counts.requested ?? batch.counts.fetched;
+
+    if (active.seq === 2) {
+      const live = liveStep(tx, runId, 2);
+      if (!live) return { nextRunAt: null };
+      const { total, invalid } = markInvalidRows(tx, batch.id, spec.invalidReason);
+      const counts: ImportCounts = { ...batch.counts, invalid, staged: total - invalid };
+      writeBatchCounts(tx, batch.id, counts);
+      setCounts(tx, runId, importCountsOf(counts, requested));
+      completeStep(tx, runId, live.step, spec.validatedDetail(total, invalid));
+      return { nextRunAt: soon };
+    }
+    if (active.seq === 3) {
+      const live = liveStep(tx, runId, 3);
+      if (!live) return { nextRunAt: null };
+      const duplicates = dedupeImportBatch(tx, batch.id, spec.dedupe);
+      const counts: ImportCounts = { ...batch.counts, duplicates, staged: batch.counts.fetched - batch.counts.invalid - duplicates };
+      writeBatchCounts(tx, batch.id, counts);
+      setCounts(tx, runId, importCountsOf(counts, requested));
+      completeStep(
+        tx,
+        runId,
+        live.step,
+        `Found ${duplicates} duplicates of existing records or earlier rows. ${counts.staged} rows are ready for review.`,
+      );
+      return { nextRunAt: soon };
+    }
+
+    requestImportReview(tx, runId, active.seq, spec.review(run, batch), (detail) => failImportRunIn(tx, runId, detail));
+    return { nextRunAt: null };
+  });
 }

@@ -70,6 +70,7 @@ describe('gmail inbound sync', () => {
       direction: 'in',
       person_id: person.id,
       from_email: 'ada@lanternrow.invalid',
+      from_name: 'Ada Testwell',
       subject: 'Re: Café',
       body_text: 'Happy to talk next week.',
     });

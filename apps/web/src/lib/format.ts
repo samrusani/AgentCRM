@@ -180,3 +180,19 @@ export function summarizePayload(payload: unknown): string[] {
   }
   return lines;
 }
+
+// Calendar day distance for sentences like "They last wrote 3 days ago": today, yesterday, then days, months, years.
+export function formatDaysAgo(iso: string | null | undefined, now = Date.now()): string {
+  const time = iso ? Date.parse(iso) : NaN;
+  if (Number.isNaN(time)) return 'at an unknown time';
+  const days = Math.max(0, Math.round((startOfDay(now) - startOfDay(time)) / DAY));
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days} days ago`;
+  if (days < 365) {
+    const months = Math.floor(days / 30);
+    return months === 1 ? '1 month ago' : `${months} months ago`;
+  }
+  const years = Math.floor(days / 365);
+  return years === 1 ? '1 year ago' : `${years} years ago`;
+}

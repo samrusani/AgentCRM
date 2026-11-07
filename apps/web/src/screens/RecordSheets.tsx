@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { isVersionConflict } from '../api/client';
-import type { Claim, Lifecycle } from '../api/types';
+import type { Claim, Lifecycle, PersonInteraction } from '../api/types';
 import { useCreateOrganization, useOrganization, usePatchOrganization, usePatchPerson, usePerson } from '../api/hooks';
 import { ErrorState, Loading, Sheet, errorMessage } from '../components/common';
 import { TaskRow } from '../components/TaskRow';
@@ -26,7 +26,7 @@ import { PersonLists } from '../components/lists';
 import { QualificationSection } from '../components/qualification';
 import { RecordPicker, type PickedRecord } from '../components/RecordPicker';
 import { NewOpportunitySheet } from './NewOpportunitySheet';
-import { describeDue, formatAgo, humanize, personName } from '../lib/format';
+import { describeDue, formatAgo, formatDaysAgo, humanize, personName } from '../lib/format';
 import { useUI, type SelectedRecord } from '../lib/ui';
 
 function useSelectedRecord(record: SelectedRecord | null) {
@@ -80,6 +80,20 @@ function OtherEvidence({
 
 function claimField(field: string): string {
   return field.replace(/_([a-z0-9])/g, (_match, char: string) => char.toUpperCase());
+}
+
+// Two short sentences and the message counts in muted text. Shown only for a person with linked mail.
+function InteractionLine({ interaction }: { interaction: PersonInteraction }) {
+  const wrote = interaction.lastInboundAt ? `They last wrote ${formatDaysAgo(interaction.lastInboundAt)}.` : 'They have not written.';
+  const youWrote = interaction.lastOutboundAt ? `You last wrote ${formatDaysAgo(interaction.lastOutboundAt)}.` : 'You have not written.';
+  return (
+    <span>
+      {wrote} {youWrote}{' '}
+      <span className="muted num">
+        {interaction.inbound} in, {interaction.outbound} out.
+      </span>
+    </span>
+  );
 }
 
 function LifecycleValue({
@@ -439,6 +453,11 @@ export function PersonSheet({
                   onChange={changeLifecycle}
                 />
               </FieldRow>
+              {person.interaction ? (
+                <FieldRow label="Interaction" openClaim={openClaim} onToggleClaim={toggleClaim}>
+                  <InteractionLine interaction={person.interaction} />
+                </FieldRow>
+              ) : null}
               <FieldRow label="Next action" openClaim={openClaim} onToggleClaim={toggleClaim}>
                 <span className={due?.overdue ? 'is-overdue' : due ? '' : 'muted'}>{due ? due.text : 'Not set'}</span>
               </FieldRow>

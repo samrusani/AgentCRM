@@ -23,6 +23,9 @@ import type {
   CriterionTarget,
   CriterionField,
   CsvImportInput,
+  MailboxCaptureInput,
+  MailboxCounts,
+  PersonInteraction,
   CsvPreview,
   EnrichmentState,
   DraftOutreachInput,
@@ -277,7 +280,17 @@ function normalizePersonDetail(data: unknown): PersonDetail {
     tasks: toArray<Task>(flat.tasks),
     opportunities: toArray<Opportunity>(flat.opportunities),
     lists: toArray<{ id: string; name: string }>(flat.lists),
+    interaction: normalizeInteraction((flat as unknown as Record<string, unknown>).interaction),
   };
+}
+
+// Absent or malformed means no interaction line, never an invented one.
+function normalizeInteraction(raw: unknown): PersonInteraction | null {
+  const record = objectOrEmpty(raw);
+  const inbound = wholeNumber(record.inbound);
+  const outbound = wholeNumber(record.outbound);
+  if (inbound + outbound === 0) return null;
+  return { lastInboundAt: textOrNull(record.lastInboundAt), lastOutboundAt: textOrNull(record.lastOutboundAt), inbound, outbound };
 }
 
 function normalizeOrganizationDetail(data: unknown): OrganizationDetail {
@@ -686,7 +699,17 @@ function normalizeImportRow(raw: unknown): ImportRow {
     matchEntityType: textOrNull(record.matchEntityType),
     matchEntityId: textOrNull(record.matchEntityId),
     postQuote: postQuoteOf(record.raw),
+    mailbox: mailboxCountsOf(record.raw),
   };
+}
+
+// A mailbox row keeps counts only. Any other raw row has no such counts.
+function mailboxCountsOf(raw: unknown): MailboxCounts | null {
+  const record = parseMaybeJson(raw);
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return null;
+  const counts = record as Record<string, unknown>;
+  if (typeof counts.inbound !== 'number' || typeof counts.outbound !== 'number') return null;
+  return { inbound: wholeNumber(counts.inbound), outbound: wholeNumber(counts.outbound), lastSeenAt: textOrNull(counts.lastSeenAt) };
 }
 
 // The batch and its rows may arrive as { batch, rows } or as the batch with items beside it.
@@ -1168,6 +1191,8 @@ export const api = {
       ),
     csvStage: async (input: CsvImportInput) =>
       normalizeRun(await request<Run>('POST', '/imports/csv', { body: input })),
+    mailboxStage: async (input: MailboxCaptureInput) =>
+      normalizeRun(await request<Run>('POST', '/imports/mailbox', { body: input })),
     // The rows come with their raw source so a row named in a post can show the quote that names it.
     get: async (id: string, params: { cursor?: string | null; limit?: number; status?: string }) =>
       normalizeImportPage(

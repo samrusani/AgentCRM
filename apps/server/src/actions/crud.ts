@@ -25,6 +25,7 @@ import {
   updateEntityIn,
 } from './entities.js';
 import { promoteForStageIn, promotePersonIn } from './lifecycle.js';
+import { linkStoredMessagesToPerson } from './mailLinks.js';
 import { entityTypeSchema, idSchema, isoTimestamp } from './schemas.js';
 import type { Opportunity, Organization, Person, Row, Task } from '../records.js';
 
@@ -84,6 +85,8 @@ export function createPersonIn(tx: Tx, data: PersonInput) {
       now,
     );
   tx.audit('person.create', 'person', id, { name: `${data.firstName} ${data.lastName}`.trim() });
+  // Mail already stored for this address now belongs to the person. Linking never promotes.
+  if (data.email) linkStoredMessagesToPerson(tx, id, data.email);
   emitRecord(tx, 'person', id);
   return requirePerson(tx.db, tx.workspaceId, id);
 }

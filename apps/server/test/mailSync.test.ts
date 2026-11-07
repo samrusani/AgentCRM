@@ -58,6 +58,7 @@ describe('inbound sync', () => {
       direction: 'in',
       person_id: person.id,
       from_email: 'ada@lanternrow.invalid',
+      from_name: 'Ada Testwell',
       subject: 'Re: hello',
       body_text: 'Happy to talk next week.',
     });
@@ -543,5 +544,21 @@ describe('a message that keeps failing', () => {
     expect((await syncMail(env.ctx)).messagesStored).toBe(1);
     expect(env.db.prepare('SELECT body_text FROM email_message').get()).toEqual({ body_text: 'Thanks for reaching out.' });
     expect(count(env, 'task')).toBe(0);
+  });
+});
+
+describe('sender display name', () => {
+  it('stores the cleaned display name from the From header and null when there is none', async () => {
+    const env = await freshEnv();
+    stub.addInbound({ from: '"Bea ​Lanternrow" <bea@lanternrow.invalid>', timestamp: at(env, 1) });
+    stub.addInbound({ from: 'plain@lanternrow.invalid', timestamp: at(env, 2) });
+    stub.addInbound({ from: '"bare@lanternrow.invalid" <bare@lanternrow.invalid>', timestamp: at(env, 3) });
+    await syncMail(env.ctx);
+    const rows = env.db.prepare('SELECT from_email, from_name FROM email_message ORDER BY provider_timestamp').all();
+    expect(rows).toEqual([
+      { from_email: 'bea@lanternrow.invalid', from_name: 'Bea Lanternrow' },
+      { from_email: 'plain@lanternrow.invalid', from_name: null },
+      { from_email: 'bare@lanternrow.invalid', from_name: null },
+    ]);
   });
 });

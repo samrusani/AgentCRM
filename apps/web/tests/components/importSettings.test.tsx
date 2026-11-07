@@ -22,7 +22,7 @@ let calls: Call[];
 let putFailure: boolean;
 
 const COPY =
-  'Staged rows from Apify imports, CSV files, and lead capture are saved without review. Duplicates and invalid rows are still skipped. Runs started by the agent always wait for your review.';
+  'Staged rows from Apify imports, CSV files, and lead capture are saved without review. Duplicates and invalid rows are still skipped. Runs started by the agent, and mailbox scans, always wait for your review.';
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });

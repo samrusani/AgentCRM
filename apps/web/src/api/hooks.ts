@@ -15,6 +15,7 @@ import type {
   ApifyConnectorInput,
   ApifyRunInput,
   CsvImportInput,
+  MailboxCaptureInput,
   DraftOutreachInput,
   GmailCredentialsInput,
   ImportSettings,
@@ -789,6 +790,18 @@ export function useStageCsv() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: CsvImportInput) => api.imports.csvStage(input),
+    onSuccess: (run) => {
+      queryClient.setQueryData(['run', run.id], run);
+      void queryClient.invalidateQueries({ queryKey: ['runs'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+    },
+  });
+}
+
+export function useStageMailbox() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: MailboxCaptureInput) => api.imports.mailboxStage(input),
     onSuccess: (run) => {
       queryClient.setQueryData(['run', run.id], run);
       void queryClient.invalidateQueries({ queryKey: ['runs'] });
