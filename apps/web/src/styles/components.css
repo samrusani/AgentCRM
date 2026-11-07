@@ -2090,11 +2090,9 @@ textarea.input {
 }
 
 /* Template switch sheet */
-.template-field {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+/* Pipeline page: the reason a disabled Delete gives, beside the quiet actions. */
+.pipeline-hint {
+  font-size: 12px;
 }
 .template-option {
   align-items: flex-start;

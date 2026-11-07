@@ -6,8 +6,6 @@ export type EntityType = 'person' | 'organization' | 'opportunity';
 export interface Workspace {
   id: string;
   name: string;
-  template: string;
-  // The workspace version, used as expectedVersion when switching templates.
   version?: number;
 }
 
@@ -17,10 +15,11 @@ export interface WorkspaceTemplate {
   description: string;
   pipelineName: string;
   stageNames: string[];
-  current: boolean;
 }
 
 export interface TemplateSwitchInput {
+  // The pipeline being switched. expectedVersion is that pipeline's version.
+  pipelineId: string;
   template: string;
   // Existing stage id to a stage name of the target template. A stage left out is removed.
   stageMapping: Record<string, string>;
@@ -139,6 +138,9 @@ export interface Stage {
 export interface Pipeline {
   id: string;
   name: string;
+  // The template the pipeline runs, and its version for renames and template switches.
+  template: string;
+  version: number;
   stages: Stage[];
 }
 

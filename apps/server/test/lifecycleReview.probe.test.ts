@@ -156,7 +156,7 @@ describe('backfill and migration safety', () => {
       // Sanity: the same signals inside their own workspace do promote.
       insertOpportunity(db, 'opp_real', 'wsp_2', 'pip_2', 'stg_2b', 'per_ws2_real');
 
-      expect(applyMigrations(db)).toEqual(['019_lifecycle.sql', '020_lifecycle_indexes.sql', '021_worker_lease.sql']);
+      expect(applyMigrations(db)).toEqual(['019_lifecycle.sql', '020_lifecycle_indexes.sql', '021_worker_lease.sql', '022_pipelines.sql']);
       const rows = db.prepare('SELECT id, lifecycle FROM person ORDER BY id').all();
       expect(rows).toEqual([
         { id: 'per_msg_other_ws', lifecycle: 'lead' },
@@ -386,12 +386,14 @@ describe('promotion integrity', () => {
       // A template switch renames stages and is never a signal, even when it lands a deal in a later stage.
       const switched = createPerson(target.ctx, { firstName: 'Switched', lastName: 'Lead' });
       const switchedDeal = createOpportunity(target.ctx, { name: 'Switch deal', personId: switched.id });
-      const workspace = target.db.prepare('SELECT version FROM workspace WHERE id = ?').get(target.workspaceId) as { version: number };
+      // Contract change: the template switch is per pipeline, so it names the pipeline and carries the pipeline's version.
+      const pipeline = target.db.prepare('SELECT id, version FROM pipeline WHERE workspace_id = ?').get(target.workspaceId) as { id: string; version: number };
       switchTemplate(target.ctx, {
+        pipelineId: pipeline.id,
         template: 'client-sales',
         stageMapping: { [stages[0]!.id]: 'Proposal', [stages[3]!.id]: 'Proposal', [stages[2]!.id]: 'Proposal' },
         replaceQualification: false,
-        expectedVersion: workspace.version,
+        expectedVersion: pipeline.version,
       });
       const seq = (target.db.prepare('SELECT s.seq FROM opportunity o JOIN stage s ON s.id = o.stage_id WHERE o.id = ?').get(switchedDeal.id) as { seq: number }).seq;
       expect(seq).toBeGreaterThan(1);

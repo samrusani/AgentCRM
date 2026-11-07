@@ -39,6 +39,8 @@ const KEYS_BY_EVENT: Record<ServerEventName, string[]> = {
     'organization',
     'opportunities',
     'pipelines',
+    // The Delete action on the Pipeline page reads deal counts per pipeline.
+    'stage-counts',
     'tasks',
     'activities',
     'search',

@@ -53,14 +53,49 @@ export function useStageCounts(pipelineId: string | undefined, enabled = true) {
   });
 }
 
+const PIPELINE_KEYS = ['pipelines', 'opportunities', 'stage-counts'];
+
+function invalidateKeys(queryClient: ReturnType<typeof useQueryClient>, keys: string[]) {
+  for (const key of keys) void queryClient.invalidateQueries({ queryKey: [key] });
+}
+
+export function useCreatePipeline() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string; template: string }) => api.createPipeline(input),
+    // Waiting for the reload lets the caller switch the board to the new pipeline once it is in the cache.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pipelines'] }),
+  });
+}
+
+export function useRenamePipeline() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string; expectedVersion: number; name: string }) =>
+      api.renamePipeline(input.id, input.expectedVersion, input.name),
+    onSuccess: () => invalidateKeys(queryClient, PIPELINE_KEYS),
+    onError: (error) => {
+      if (error instanceof ApiError && error.code === 'version_conflict') invalidateKeys(queryClient, ['pipelines']);
+    },
+  });
+}
+
+export function useDeletePipeline() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deletePipeline(id),
+    onSuccess: () => invalidateKeys(queryClient, PIPELINE_KEYS),
+    // A refused delete usually means the deal count moved, so the counts reload.
+    onError: () => invalidateKeys(queryClient, ['pipelines', 'stage-counts']),
+  });
+}
+
 export function useSwitchTemplate() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: TemplateSwitchInput) => api.switchTemplate(input),
     onSuccess: () => {
-      for (const key of [
-        'workspace',
-        'templates',
+      invalidateKeys(queryClient, [
         'pipelines',
         'opportunities',
         'stage-counts',
@@ -69,16 +104,11 @@ export function useSwitchTemplate() {
         'people',
         'person',
         'today',
-      ]) {
-        void queryClient.invalidateQueries({ queryKey: [key] });
-      }
+      ]);
     },
     onError: (error) => {
       if (error instanceof ApiError && error.code === 'version_conflict') {
-        void queryClient.invalidateQueries({ queryKey: ['workspace'] });
-        void queryClient.invalidateQueries({ queryKey: ['pipelines'] });
-        void queryClient.invalidateQueries({ queryKey: ['opportunities'] });
-        void queryClient.invalidateQueries({ queryKey: ['stage-counts'] });
+        invalidateKeys(queryClient, ['pipelines', 'opportunities', 'stage-counts']);
       }
     },
   });

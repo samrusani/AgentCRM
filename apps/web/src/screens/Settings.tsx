@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
 import {
   useConnectors,
@@ -6,13 +5,11 @@ import {
   useImportSettings,
   useModelProvider,
   useSaveImportSettings,
-  useTemplates,
   useWorkspace,
 } from '../api/hooks';
 import { ErrorState, Loading, PageHeader, errorMessage } from '../components/common';
 import { isLocalProvider, modelName, providerAttention, providerName } from '../lib/models';
 import { useUI, type ThemeSetting } from '../lib/ui';
-import { TemplateSheet } from './TemplateSheet';
 
 const THEMES: Array<{ value: ThemeSetting; label: string; hint: string }> = [
   { value: 'system', label: 'System', hint: 'Follow the operating system setting' },
@@ -112,12 +109,6 @@ export function GeneralSettings() {
   const { theme, setTheme } = useUI();
   const health = useHealth();
   const workspace = useWorkspace();
-  const templates = useTemplates();
-  const [templateOpen, setTemplateOpen] = useState(false);
-  const templateName =
-    templates.data?.find((item) => item.current)?.name ??
-    templates.data?.find((item) => item.id === workspace.data?.template)?.name ??
-    workspace.data?.template;
   const modelProvider = useModelProvider();
   const activeProvider = modelProvider.data ?? null;
   const attention = activeProvider ? providerAttention(activeProvider) : null;
@@ -162,18 +153,8 @@ export function GeneralSettings() {
               <dt className="field__label">Name</dt>
               <dd className="field__value">{workspace.data.name}</dd>
             </div>
-            <div className="field">
-              <dt className="field__label">Template</dt>
-              <dd className="field__value template-field">
-                <span>{templateName}</span>
-                <button type="button" className="btn btn--quiet" onClick={() => setTemplateOpen(true)}>
-                  Change template
-                </button>
-              </dd>
-            </div>
           </dl>
         ) : null}
-        {templateOpen ? <TemplateSheet onClose={() => setTemplateOpen(false)} /> : null}
       </section>
 
       <section className="section" aria-labelledby="settings-server">

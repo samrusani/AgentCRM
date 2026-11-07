@@ -44,6 +44,7 @@ export {
 } from './qualify.js';
 export * from './runs.js';
 export { listTemplates, switchTemplate } from './templates.js';
+export { createPipeline, deletePipeline, updatePipeline } from './pipelines.js';
 export * from './workspace.js';
 export * from './workerLease.js';
 export { syncMail, syncMailIfDue } from './mailSync.js';

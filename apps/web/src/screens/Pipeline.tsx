@@ -4,10 +4,12 @@ import { useQueries } from '@tanstack/react-query';
 import { api, isVersionConflict } from '../api/client';
 import {
   useActivities,
+  useDeletePipeline,
   useMoveStage,
   useOpportunities,
   usePatchOpportunity,
   usePipelines,
+  useStageCounts,
 } from '../api/hooks';
 import type { Opportunity, OpportunityStatus, Pipeline as PipelineType, Stage } from '../api/types';
 import {
@@ -26,6 +28,8 @@ import { VirtualTable, type Column } from '../components/VirtualTable';
 import { describeDue, formatAmount, humanize } from '../lib/format';
 import { useUI } from '../lib/ui';
 import { NewOpportunitySheet } from './NewOpportunitySheet';
+import { NewPipelineSheet, RenamePipelineSheet } from './PipelineSheets';
+import { TemplateSheet } from './TemplateSheet';
 
 type View = 'board' | 'table';
 type StatusFilter = 'open' | 'nurture' | 'passed' | 'lost' | 'all';
@@ -78,18 +82,60 @@ function stageMenuItems(
   ];
 }
 
+type PipelineDialog = 'new' | 'rename' | 'template' | null;
+
+// The reason Delete is unavailable, or null when the pipeline can go. Deals are counted across every status.
+function deleteBlock(dealCount: number | null, pipelineCount: number, countFailed: boolean): string | null {
+  if (countFailed) return "Could not count this pipeline's deals.";
+  if (dealCount !== null && dealCount > 0) {
+    return `This pipeline still holds ${dealCount} ${dealCount === 1 ? 'deal' : 'deals'}.`;
+  }
+  if (pipelineCount <= 1) return 'This is the only pipeline.';
+  return null;
+}
+
 export function Pipeline() {
   const pipelines = usePipelines();
+  const { pushToast } = useUI();
   const [params, setParams] = useSearchParams();
   const openId = params.get('opportunity');
-  const [pipelineId, setPipelineId] = useState<string | null>(null);
+  // The selected pipeline rides the URL so a link opens the same board. An unknown or missing id falls back to the first.
+  const requestedPipelineId = params.get('pipeline');
   const [view, setView] = useState<View>('board');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('open');
   const [creating, setCreating] = useState(false);
+  const [dialog, setDialog] = useState<PipelineDialog>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const move = useMoveStage();
+  const remove = useDeletePipeline();
 
   const activePipeline: PipelineType | undefined =
-    pipelines.data?.find((pipeline) => pipeline.id === pipelineId) ?? pipelines.data?.[0];
+    pipelines.data?.find((pipeline) => pipeline.id === requestedPipelineId) ?? pipelines.data?.[0];
+  const stageCounts = useStageCounts(activePipeline?.id);
+  const dealCount = stageCounts.data ? Object.values(stageCounts.data).reduce((sum, count) => sum + count, 0) : null;
+  const countFailed = stageCounts.isError && dealCount === null;
+  const blockedReason = deleteBlock(dealCount, pipelines.data?.length ?? 0, countFailed);
+  const activeId = activePipeline?.id;
+  const resetRemove = remove.reset;
+
+  // An open delete confirm belongs to one pipeline, so it closes whenever the board changes underneath it (select, back
+  // button, a ?pipeline= link, or the pipeline vanishing), not only through the select handler.
+  useEffect(() => {
+    setConfirmingDelete(false);
+    resetRemove();
+  }, [activeId, resetRemove]);
+
+  const selectPipeline = useCallback(
+    (id: string) => {
+      const copy = new URLSearchParams(params);
+      copy.set('pipeline', id);
+      // An open deal belongs to the board it came from, so it closes with the switch.
+      copy.delete('opportunity');
+      setParams(copy);
+      setConfirmingDelete(false);
+    },
+    [params, setParams],
+  );
 
   const list = useOpportunities({
     pipelineId: activePipeline?.id,
@@ -114,9 +160,14 @@ export function Pipeline() {
   }, [openId, everything, list.data]);
   const lookupPending = Boolean(openId) && !openOpportunity && everything.some((result) => result.isPending);
 
+  // A deep link (?opportunity=) shows the deal's own pipeline: when the open deal belongs to another pipeline than the
+  // one selected, the board switches to the deal's pipeline. It runs only when the opened record changes, so choosing
+  // another pipeline afterward is not undone.
   useEffect(() => {
     if (openOpportunity && openOpportunity.pipelineId !== activePipeline?.id) {
-      setPipelineId(openOpportunity.pipelineId);
+      const copy = new URLSearchParams(params);
+      copy.set('pipeline', openOpportunity.pipelineId);
+      setParams(copy, { replace: true });
     }
     // Only follow a deep link when the opened record changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -169,30 +220,97 @@ export function Pipeline() {
 
   const opportunities = list.data ?? [];
 
+  const deletePipeline = () => {
+    const removed = activePipeline;
+    remove.mutate(removed.id, {
+      onSuccess: () => {
+        setConfirmingDelete(false);
+        // The removed id leaves the URL, so the board falls back to the first pipeline.
+        const copy = new URLSearchParams(params);
+        copy.delete('pipeline');
+        copy.delete('opportunity');
+        setParams(copy, { replace: true });
+        pushToast(`Deleted ${removed.name}.`);
+      },
+    });
+  };
+
   return (
     <div className="screen screen--table">
       <PageHeader title="Pipeline">
-        {pipelines.data.length > 1 ? (
-          <>
-            <label className="sr-only" htmlFor="pipeline-select">
-              Pipeline
-            </label>
-            <select
-              id="pipeline-select"
-              className="input input--select"
-              value={activePipeline.id}
-              onChange={(event) => setPipelineId(event.target.value)}
+        <label className="sr-only" htmlFor="pipeline-select">
+          Pipeline
+        </label>
+        <select
+          id="pipeline-select"
+          className="input input--select"
+          value={activePipeline.id}
+          onChange={(event) => selectPipeline(event.target.value)}
+        >
+          {pipelines.data.map((pipeline) => (
+            <option key={pipeline.id} value={pipeline.id}>
+              {pipeline.name}
+            </option>
+          ))}
+        </select>
+        <button type="button" className="btn btn--quiet" onClick={() => setDialog('new')} aria-haspopup="dialog">
+          New pipeline
+        </button>
+        <button type="button" className="btn btn--quiet" onClick={() => setDialog('rename')} aria-haspopup="dialog">
+          Rename
+        </button>
+        <button type="button" className="btn btn--quiet" onClick={() => setDialog('template')} aria-haspopup="dialog">
+          Change template
+        </button>
+        {confirmingDelete ? (
+          <span className="lift__confirm" role="alert">
+            Delete {activePipeline.name}? Its stages are removed too.
+            <button type="button" className="btn btn--danger" disabled={remove.isPending} onClick={deletePipeline}>
+              {remove.isPending ? 'Deleting...' : 'Delete pipeline'}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={remove.isPending}
+              onClick={() => {
+                setConfirmingDelete(false);
+                remove.reset();
+              }}
             >
-              {pipelines.data.map((pipeline) => (
-                <option key={pipeline.id} value={pipeline.id}>
-                  {pipeline.name}
-                </option>
-              ))}
-            </select>
-          </>
+              Keep pipeline
+            </button>
+          </span>
         ) : (
-          <span className="muted">{activePipeline.name}</span>
+          <>
+            <button
+              type="button"
+              className="btn btn--quiet"
+              disabled={blockedReason !== null || dealCount === null}
+              aria-describedby={blockedReason ? 'pipeline-delete-reason' : undefined}
+              onClick={() => {
+                remove.reset();
+                setConfirmingDelete(true);
+              }}
+            >
+              Delete
+            </button>
+            {blockedReason ? (
+              <span className="muted pipeline-hint" id="pipeline-delete-reason">
+                {blockedReason}
+              </span>
+            ) : null}
+            {countFailed ? (
+              <button type="button" className="btn btn--quiet" onClick={() => void stageCounts.refetch()}>
+                Retry
+              </button>
+            ) : null}
+          </>
         )}
+        {remove.isError ? (
+          <span className="inline-error" role="alert">
+            {errorMessage(remove.error)} The pipeline was not deleted.
+          </span>
+        ) : null}
         <label className="sr-only" htmlFor="status-filter">
           Status
         </label>
@@ -253,7 +371,19 @@ export function Pipeline() {
           />
         )}
 
-        {creating ? (
+        {dialog === 'new' ? (
+          <NewPipelineSheet
+            onClose={() => setDialog(null)}
+            onCreated={(created) => {
+              setDialog(null);
+              selectPipeline(created.id);
+            }}
+          />
+        ) : dialog === 'rename' ? (
+          <RenamePipelineSheet pipeline={activePipeline} onClose={() => setDialog(null)} />
+        ) : dialog === 'template' ? (
+          <TemplateSheet pipeline={activePipeline} onClose={() => setDialog(null)} />
+        ) : creating ? (
           <NewOpportunitySheet
             pipelineId={activePipeline.id}
             onClose={() => setCreating(false)}

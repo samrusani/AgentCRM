@@ -814,12 +814,17 @@ export interface ListParams {
   limit?: number;
 }
 
+function normalizePipeline(pipeline: Pipeline): Pipeline {
+  return { ...pipeline, stages: [...(pipeline.stages ?? [])].sort((a, b) => a.seq - b.seq) };
+}
+
 export const api = {
   health: () => request<Health>('GET', '/health'),
   workspace: () => request<Workspace>('GET', '/workspace'),
   templates: async () => asPage<WorkspaceTemplate>(await request<unknown>('GET', '/templates')).items,
-  switchTemplate: (input: TemplateSwitchInput) =>
-    request<Workspace>('POST', '/workspace/template', { body: input }),
+  // Switches one pipeline to another template; the answer is that pipeline with its new stages.
+  switchTemplate: async (input: TemplateSwitchInput) =>
+    normalizePipeline(await request<Pipeline>('POST', '/workspace/template', { body: input })),
 
   today: async (): Promise<TodayData> => {
     const data = await request<Partial<TodayData>>('GET', '/today');
@@ -878,10 +883,14 @@ export const api = {
       request<unknown>('DELETE', `/organizations/${id}/enrichment`, { query: { runId } }),
   },
 
-  pipelines: async () => asPage<Pipeline>(await request<unknown>('GET', '/pipelines')).items.map((pipeline) => ({
-    ...pipeline,
-    stages: [...(pipeline.stages ?? [])].sort((a, b) => a.seq - b.seq),
-  })),
+  pipelines: async () => asPage<Pipeline>(await request<unknown>('GET', '/pipelines')).items.map(normalizePipeline),
+  createPipeline: async (input: { name: string; template: string }) =>
+    normalizePipeline(await request<Pipeline>('POST', '/pipelines', { body: input })),
+  renamePipeline: async (id: string, expectedVersion: number, name: string) =>
+    normalizePipeline(
+      await request<Pipeline>('PATCH', `/pipelines/${encodeURIComponent(id)}`, { body: { expectedVersion, fields: { name } } }),
+    ),
+  deletePipeline: (id: string) => request<unknown>('DELETE', `/pipelines/${encodeURIComponent(id)}`),
 
   opportunities: {
     list: async (params: { pipelineId?: string; stageId?: string; status?: string }) =>

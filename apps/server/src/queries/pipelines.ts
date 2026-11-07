@@ -9,7 +9,16 @@ export interface StageRecord {
   seq: number;
 }
 
-export function listPipelines(db: Db, workspaceId: string) {
+export interface PipelineRecord {
+  id: string;
+  workspaceId: string;
+  name: string;
+  template: string;
+  version: number;
+  stages: StageRecord[];
+}
+
+export function listPipelines(db: Db, workspaceId: string): PipelineRecord[] {
   const pipelines = db
     .prepare('SELECT * FROM pipeline WHERE workspace_id = ? ORDER BY created_at, id')
     .all(workspaceId) as Row[];
@@ -22,6 +31,8 @@ export function listPipelines(db: Db, workspaceId: string) {
     id: String(pipeline.id),
     workspaceId: String(pipeline.workspace_id),
     name: String(pipeline.name),
+    template: String(pipeline.template),
+    version: Number(pipeline.version),
     stages: stages
       .filter((stage) => stage.pipeline_id === pipeline.id)
       .map(
@@ -43,4 +54,14 @@ export function requireStage(db: Db, workspaceId: string, stageId: string): Stag
     .get(workspaceId, stageId) as Row | undefined;
   if (!row) throw notFound('Stage');
   return { id: String(row.id), pipelineId: String(row.pipeline_id), name: String(row.name), seq: Number(row.seq) };
+}
+
+export function getPipeline(db: Db, workspaceId: string, pipelineId: string): PipelineRecord | null {
+  return listPipelines(db, workspaceId).find((pipeline) => pipeline.id === pipelineId) ?? null;
+}
+
+export function requirePipeline(db: Db, workspaceId: string, pipelineId: string): PipelineRecord {
+  const pipeline = getPipeline(db, workspaceId, pipelineId);
+  if (!pipeline) throw notFound('Pipeline');
+  return pipeline;
 }

@@ -26,7 +26,7 @@ export function NewOpportunitySheet({
   onClose,
   onCreated,
 }: {
-  // The pipeline whose stages are offered. Without one, the first pipeline is used.
+  // The pipeline preselected in the Pipeline select: the board being viewed. Without one, the first pipeline is used.
   pipelineId?: string;
   prefill?: NewOpportunityPrefill;
   onClose: () => void;
@@ -37,6 +37,7 @@ export function NewOpportunitySheet({
   const [name, setName] = useState('');
   const [person, setPerson] = useState<PickedRecord | null>(prefill?.person ?? null);
   const [organization, setOrganization] = useState<PickedRecord | null>(prefill?.organization ?? null);
+  const [chosenPipelineId, setChosenPipelineId] = useState(pipelineId ?? '');
   const [stageId, setStageId] = useState('');
   const [amount, setAmount] = useState('');
   const [currency, setCurrency] = useState('USD');
@@ -48,7 +49,7 @@ export function NewOpportunitySheet({
   // replaces or clears it. A hand choice or hand clear is never overwritten.
   const organizationAutofilled = useRef(Boolean(prefill?.organization) && Boolean(prefill?.person));
 
-  const pipeline = pipelines.data?.find((item) => item.id === pipelineId) ?? pipelines.data?.[0];
+  const pipeline = pipelines.data?.find((item) => item.id === chosenPipelineId) ?? pipelines.data?.[0];
   const stages = useMemo(() => [...(pipeline?.stages ?? [])].sort((a, b) => a.seq - b.seq), [pipeline]);
   // The first stage is preselected until the user picks another.
   const selectedStage = stages.find((stage) => stage.id === stageId) ?? stages[0];
@@ -57,6 +58,12 @@ export function NewOpportunitySheet({
   const ready = Boolean(trimmedName) && Boolean(selectedStage) && parsedAmount.valid && !create.isPending;
   // The server marks the linked person as a relationship once a deal sits past the first stage.
   const promotes = Boolean(person) && Boolean(selectedStage) && selectedStage!.seq > 1;
+
+  // Stages belong to one pipeline, so choosing another pipeline resets the stage to that pipeline's first.
+  const pickPipeline = (id: string) => {
+    setChosenPipelineId(id);
+    setStageId('');
+  };
 
   const pickPerson = (record: PickedRecord | null) => {
     setPerson(record);
@@ -83,6 +90,7 @@ export function NewOpportunitySheet({
     try {
       const opportunity = await create.mutateAsync({
         name: trimmedName,
+        // The server derives the pipeline from the stage, and the stage options already follow the chosen pipeline.
         stageId: selectedStage.id,
         ...(person ? { personId: person.id } : {}),
         ...(organization ? { organizationId: organization.id } : {}),
@@ -121,6 +129,21 @@ export function NewOpportunitySheet({
           />
           <RecordPicker kind="person" label="Person" value={person} onChange={pickPerson} />
           <RecordPicker kind="organization" label="Organization" value={organization} onChange={pickOrganization} />
+          <label className="field-label" htmlFor="new-opportunity-pipeline">
+            Pipeline
+          </label>
+          <select
+            id="new-opportunity-pipeline"
+            className="input input--select"
+            value={pipeline.id}
+            onChange={(event) => pickPipeline(event.target.value)}
+          >
+            {pipelines.data?.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
           <label className="field-label" htmlFor="new-opportunity-stage">
             Stage
           </label>

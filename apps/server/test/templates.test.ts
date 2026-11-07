@@ -29,8 +29,12 @@ afterAll(async () => {
   env.cleanup();
 });
 
-const stages = () => listPipelines(env.db, workspaceId)[0]!.stages;
-const version = () => requireWorkspace(env.db).version;
+// Contract change: the template switch is per pipeline. These read the first pipeline's stages and version (the pipeline's
+// version is the expectedVersion, not the workspace's) and `switchFirst` names it in the body.
+const firstPipeline = () => listPipelines(env.db, workspaceId)[0]!;
+const stages = () => firstPipeline().stages;
+const version = () => firstPipeline().version;
+const switchFirst = (input: Record<string, unknown>) => switchTemplate(ctx, { pipelineId: firstPipeline().id, ...input });
 
 // Maps every stage that holds opportunities (and every other stage too) by position onto the target template.
 function positional(templateId: string): Record<string, string> {
@@ -108,12 +112,16 @@ describe('switchTemplate', () => {
     const startVersion = version();
     const activitiesBefore = Number((env.db.prepare("SELECT COUNT(*) AS n FROM activity WHERE kind = 'stage_change'").get() as { n: number }).n);
 
-    const result = switchTemplate(ctx, { template: 'client-sales', stageMapping: mapping, replaceQualification: false, expectedVersion: startVersion });
+    const result = switchFirst({ template: 'client-sales', stageMapping: mapping, replaceQualification: false, expectedVersion: startVersion });
 
-    expect(result).toEqual({ id: workspaceId, name: 'Demo workspace', template: 'client-sales', version: startVersion + 1 });
+    // Contract change: the switch keeps the pipeline's own name instead of renaming it to the template's pipeline name.
+    expect(result).toMatchObject({ id: before.id, name: before.name, template: 'client-sales', version: startVersion + 1 });
+    // workspace.template is no longer written; the pipeline records its own template.
+    expect(requireWorkspace(env.db).template).toBe('startup-fundraising');
+    expect(firstPipeline().template).toBe('client-sales');
     const after = listPipelines(env.db, workspaceId)[0]!;
     expect(after.id).toBe(before.id);
-    expect(after.name).toBe('Sales');
+    expect(after.name).toBe(before.name);
     expect(after.stages.map((stage) => stage.name)).toEqual([...target.stageNames]);
     expect(after.stages.map((stage) => stage.seq)).toEqual([1, 2, 3, 4, 5, 6, 7]);
     const newById = new Map(after.stages.map((stage) => [stage.id, stage.name]));
@@ -127,7 +135,7 @@ describe('switchTemplate', () => {
     expect(Number((env.db.prepare("SELECT COUNT(*) AS n FROM activity WHERE kind = 'stage_change'").get() as { n: number }).n)).toBe(activitiesBefore + opportunities.length);
     expect(activities[0]!.body).toMatch(/^Moved from .+ to .+\.$/);
     const audit = env.db.prepare("SELECT detail FROM audit_event WHERE action = 'workspace.template_change'").get() as { detail: string };
-    expect(JSON.parse(audit.detail)).toMatchObject({ from: 'startup-fundraising', to: 'client-sales', moved: expectedMoved });
+    expect(JSON.parse(audit.detail)).toMatchObject({ pipelineId: before.id, from: 'startup-fundraising', to: 'client-sales', moved: expectedMoved });
     // No stage event points at a deleted stage.
     expect(env.db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
   });
@@ -140,18 +148,18 @@ describe('switchTemplate', () => {
   });
 
   it('replaces the qualification config when asked', () => {
-    switchTemplate(ctx, { template: 'fund-lp', stageMapping: positional('fund-lp'), replaceQualification: true, expectedVersion: version() });
+    switchFirst({ template: 'fund-lp', stageMapping: positional('fund-lp'), replaceQualification: true, expectedVersion: version() });
     const config = readQualificationConfig(env.db, workspaceId);
     expect(config.defaulted).toBeUndefined();
     expect({ exclusions: config.exclusions, criteria: config.criteria }).toEqual(getTemplate('fund-lp')!.defaultQualificationConfig());
-    expect(requireWorkspace(env.db).template).toBe('fund-lp');
-    expect(listPipelines(env.db, workspaceId)[0]!.name).toBe('LP fundraising');
+    expect(firstPipeline().template).toBe('fund-lp');
+    expect(listPipelines(env.db, workspaceId)[0]!.name).toBe('Fundraising');
   });
 
   it('switches back and forth', () => {
     const start = version();
-    switchTemplate(ctx, { template: 'startup-fundraising', stageMapping: positional('startup-fundraising'), replaceQualification: false, expectedVersion: start });
-    switchTemplate(ctx, { template: 'client-sales', stageMapping: positional('client-sales'), replaceQualification: false, expectedVersion: start + 1 });
+    switchFirst({ template: 'startup-fundraising', stageMapping: positional('startup-fundraising'), replaceQualification: false, expectedVersion: start });
+    switchFirst({ template: 'client-sales', stageMapping: positional('client-sales'), replaceQualification: false, expectedVersion: start + 1 });
     expect(version()).toBe(start + 2);
     expect(stages().map((stage) => stage.name)).toEqual([...getTemplate('client-sales')!.stageNames]);
     expect(Number((env.db.prepare('SELECT COUNT(*) AS n FROM stage').get() as { n: number }).n)).toBe(7);
@@ -168,7 +176,7 @@ describe('switchTemplate', () => {
       .prepare('INSERT INTO stage_event (id, created_at, opportunity_id, from_stage_id, to_stage_id, at, actor) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run('evt_history01', '2026-03-01T10:00:00.000Z', someOpportunity, receiving.id, emptied.id, '2026-03-01T10:00:00.000Z', 'user');
     const mapping = Object.fromEntries(current.filter((stage) => stage.id !== emptied.id).map((stage) => [stage.id, getTemplate('startup-fundraising')!.stageNames[stage.seq - 1]!]));
-    const result = switchTemplate(ctx, { template: 'startup-fundraising', stageMapping: mapping, replaceQualification: false, expectedVersion: version() });
+    const result = switchFirst({ template: 'startup-fundraising', stageMapping: mapping, replaceQualification: false, expectedVersion: version() });
     expect(result.template).toBe('startup-fundraising');
     expect(stages().map((stage) => stage.name)).toEqual([...getTemplate('startup-fundraising')!.stageNames]);
     expect(env.db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
@@ -180,52 +188,53 @@ describe('switchTemplate', () => {
   it('saves the old template defaults when nothing was saved and the config is meant to stay', () => {
     env.db.prepare('UPDATE workspace SET settings = NULL WHERE id = ?').run(workspaceId);
     expect(readQualificationConfig(env.db, workspaceId).defaulted).toBe(true);
-    switchTemplate(ctx, { template: 'fund-lp', stageMapping: positional('fund-lp'), replaceQualification: false, expectedVersion: version() });
+    switchFirst({ template: 'fund-lp', stageMapping: positional('fund-lp'), replaceQualification: false, expectedVersion: version() });
     const config = readQualificationConfig(env.db, workspaceId);
     expect(config.defaulted).toBeUndefined();
     expect(config.criteria.map((entry) => entry.id)).toEqual(getTemplate('startup-fundraising')!.defaultQualificationConfig().criteria.map((entry) => entry.id));
   });
 
   it('rejects an unknown template, the current template, bad targets, unmapped stages, and unknown stage ids', () => {
-    const current = requireWorkspace(env.db);
+    const current = firstPipeline();
     const base = { stageMapping: positional('client-sales'), replaceQualification: false, expectedVersion: current.version };
-    expectRejected(() => switchTemplate(ctx, { ...base, template: 'nope' }), 'validation', /Unknown template "nope"/);
-    expectRejected(() => switchTemplate(ctx, { ...base, template: current.template }), 'validation', new RegExp(`already uses the ${getTemplate(current.template)!.name} template`));
+    expectRejected(() => switchFirst({ ...base, template: 'nope' }), 'validation', /Unknown template "nope"/);
+    expectRejected(() => switchFirst({ ...base, template: current.template }), 'validation', new RegExp(`This pipeline already uses the ${getTemplate(current.template)!.name} template`));
     const first = stages()[0]!;
     expectRejected(
-      () => switchTemplate(ctx, { ...base, template: 'client-sales', stageMapping: { ...base.stageMapping, [first.id]: 'Diligence' } }),
+      () => switchFirst({ ...base, template: 'client-sales', stageMapping: { ...base.stageMapping, [first.id]: 'Diligence' } }),
       'validation',
       /"Diligence" is not a stage of the Client sales template/,
     );
     expectRejected(
-      () => switchTemplate(ctx, { ...base, template: 'client-sales', stageMapping: { ...base.stageMapping, stg_missing: 'Research' } }),
+      () => switchFirst({ ...base, template: 'client-sales', stageMapping: { ...base.stageMapping, stg_missing: 'Research' } }),
       'validation',
-      /Stage "stg_missing" is not a stage of this workspace/,
+      /Stage "stg_missing" is not a stage of this pipeline/,
     );
     const holding = env.db.prepare('SELECT s.id, s.name FROM stage s JOIN opportunity o ON o.stage_id = s.id GROUP BY s.id LIMIT 1').get() as { id: string; name: string };
     const partial = { ...base.stageMapping };
     delete partial[holding.id];
     expectRejected(
-      () => switchTemplate(ctx, { ...base, template: 'client-sales', stageMapping: partial }),
+      () => switchFirst({ ...base, template: 'client-sales', stageMapping: partial }),
       'validation',
       new RegExp(`Not mapped: .*${holding.name}`),
     );
-    expectRejected(() => switchTemplate(ctx, { ...base, template: 'client-sales', replaceQualification: 'yes' }), 'validation', /replaceQualification/);
+    expectRejected(() => switchFirst({ ...base, template: 'client-sales', replaceQualification: 'yes' }), 'validation', /replaceQualification/);
     // Nothing changed.
-    expect(requireWorkspace(env.db).version).toBe(current.version);
-    expect(requireWorkspace(env.db).template).toBe(current.template);
+    expect(firstPipeline().version).toBe(current.version);
+    expect(firstPipeline().template).toBe(current.template);
+    expectRejected(() => switchTemplate(ctx, { ...base, template: 'client-sales', pipelineId: 'pip_missing' }), 'not_found', /Pipeline was not found/);
   });
 
-  it('rejects a stale version with version_conflict carrying the current workspace', () => {
-    const current = requireWorkspace(env.db);
+  it('rejects a stale pipeline version with version_conflict carrying the current pipeline', () => {
+    const current = firstPipeline();
     try {
-      switchTemplate(ctx, { template: 'client-sales', stageMapping: positional('client-sales'), replaceQualification: false, expectedVersion: current.version - 1 });
+      switchFirst({ template: 'client-sales', stageMapping: positional('client-sales'), replaceQualification: false, expectedVersion: current.version - 1 });
       throw new Error('Expected a conflict.');
     } catch (error) {
       expect(error).toBeInstanceOf(AppError);
       expect((error as AppError).code).toBe('version_conflict');
       expect((error as AppError).status).toBe(409);
-      expect((error as AppError).current).toEqual({ id: current.id, name: current.name, template: current.template, version: current.version });
+      expect((error as AppError).current).toEqual(current);
     }
   });
 
@@ -234,28 +243,31 @@ describe('switchTemplate', () => {
       const response = await app.inject({ method, url, payload, headers: { host: 'localhost:5173' } });
       return { status: response.statusCode, body: response.json() };
     };
-    const current = requireWorkspace(env.db);
+    const current = firstPipeline();
     const list = await call('GET', '/api/templates');
     expect(list.status).toBe(200);
     expect(list.body.items).toHaveLength(3);
-    expect(Object.keys(list.body.items[0]).sort()).toEqual(['current', 'description', 'id', 'name', 'pipelineName', 'stageNames']);
-    expect(list.body.items.filter((item: { current: boolean }) => item.current).map((item: { id: string }) => item.id)).toEqual([current.template]);
-
-    expect((await call('GET', '/api/workspace')).body).toEqual({ id: current.id, name: current.name, template: current.template, version: current.version });
+    // Contract change: the listing has no current flag; a pipeline's template is read from GET /api/pipelines.
+    expect(Object.keys(list.body.items[0]).sort()).toEqual(['description', 'id', 'name', 'pipelineName', 'stageNames']);
 
     const target = current.template === 'fund-lp' ? 'client-sales' : 'fund-lp';
-    const stale = await call('POST', '/api/workspace/template', { template: target, stageMapping: positional(target), replaceQualification: false, expectedVersion: current.version + 5 });
+    const body = { pipelineId: current.id, template: target, stageMapping: positional(target), replaceQualification: false };
+    const stale = await call('POST', '/api/workspace/template', { ...body, expectedVersion: current.version + 5 });
     expect(stale.status).toBe(409);
     expect(stale.body.error).toMatchObject({ code: 'version_conflict', current: { id: current.id, template: current.template, version: current.version } });
 
-    const bad = await call('POST', '/api/workspace/template', { template: target, stageMapping: {}, replaceQualification: false, expectedVersion: current.version });
+    const bad = await call('POST', '/api/workspace/template', { ...body, stageMapping: {}, expectedVersion: current.version });
     expect(bad.status).toBe(400);
     expect(bad.body.error.code).toBe('validation');
     expect(bad.body.error.message).toContain('Not mapped:');
 
-    const ok = await call('POST', '/api/workspace/template', { template: target, stageMapping: positional(target), replaceQualification: true, expectedVersion: current.version });
+    const missing = await call('POST', '/api/workspace/template', { template: target, stageMapping: {}, replaceQualification: false, expectedVersion: 1 });
+    expect(missing.status).toBe(400);
+    expect(missing.body.error.message).toContain('pipelineId');
+
+    const ok = await call('POST', '/api/workspace/template', { ...body, replaceQualification: true, expectedVersion: current.version });
     expect(ok.status).toBe(200);
-    expect(ok.body).toEqual({ id: current.id, name: current.name, template: target, version: current.version + 1 });
-    expect((await call('GET', '/api/templates')).body.items.find((item: { current: boolean }) => item.current).id).toBe(target);
+    expect(ok.body).toMatchObject({ id: current.id, template: target, version: current.version + 1 });
+    expect((await call('GET', '/api/pipelines')).body.items[0]).toMatchObject({ id: current.id, template: target, version: current.version + 1 });
   });
 });

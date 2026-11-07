@@ -1,17 +1,17 @@
 import { z } from 'zod';
-import type { Db } from '../db.js';
-import { validationError } from '../errors.js';
+import { notFound, validationError } from '../errors.js';
 import { configSchema, currentTemplateDefaults, readSettings } from '../qualification/config.js';
-import { requireWorkspace } from '../queries/workspace.js';
+import { getPipeline } from '../queries/pipelines.js';
 import { getTemplate, templates } from '../templates.js';
 import { type ActionContext, emitRecord, mutate, parseInput, versionConflict } from './context.js';
 import { writeConfigIn } from './qualify.js';
-import type { Row } from '../records.js';
+import { idSchema } from './schemas.js';
 
 export const templateActor = 'system:template';
 
 const switchTemplateSchema = z
   .object({
+    pipelineId: idSchema,
     template: z.string().trim().min(1).max(64),
     stageMapping: z.record(z.string().trim().min(1).max(64), z.string().trim().min(1).max(200)),
     replaceQualification: z.boolean(),
@@ -19,25 +19,19 @@ const switchTemplateSchema = z
   })
   .strict();
 
-export function listTemplates(db: Db, workspaceId: string) {
-  const row = db.prepare('SELECT template FROM workspace WHERE id = ?').get(workspaceId) as { template: string } | undefined;
+// The registry listing. Which template a pipeline runs is read from the pipeline, not from here.
+export function listTemplates() {
   return templates.map((template) => ({
     id: template.id,
     name: template.name,
     description: template.description,
     pipelineName: template.pipelineName,
     stageNames: [...template.stageNames],
-    current: template.id === row?.template,
   }));
 }
 
-// The shape GET /api/workspace returns. A version conflict carries the same shape as the current record.
-function workspaceView(db: Db) {
-  const { id, name, template, version } = requireWorkspace(db);
-  return { id, name, template, version };
-}
-
-// Switches the workspace to another template in one transaction. Records, tags, claims, tasks, and history stay.
+// Switches ONE pipeline to another template in one transaction. The other pipelines, records, tags, claims, tasks, and
+// history stay. The qualification config stays workspace wide, so it is replaced only when asked.
 export function switchTemplate(ctx: ActionContext, input: unknown) {
   const data = parseInput(switchTemplateSchema, input);
   const target = getTemplate(data.template);
@@ -45,24 +39,18 @@ export function switchTemplate(ctx: ActionContext, input: unknown) {
     throw validationError(`Unknown template "${data.template}". Use one of: ${templates.map((template) => template.id).join(', ')}.`);
   }
   return mutate(ctx, (tx) => {
-    const workspace = requireWorkspace(tx.db);
-    if (workspace.id !== tx.workspaceId) throw validationError('The workspace was not found.');
-    if (workspace.version !== data.expectedVersion) throw versionConflict(workspaceView(tx.db));
-    const from = workspace.template;
-    if (from === target.id) throw validationError(`The workspace already uses the ${target.name} template.`);
+    const pipeline = getPipeline(tx.db, tx.workspaceId, data.pipelineId);
+    if (!pipeline) throw notFound('Pipeline');
+    if (pipeline.version !== data.expectedVersion) throw versionConflict(pipeline);
+    const from = pipeline.template;
+    if (from === target.id) throw validationError(`This pipeline already uses the ${target.name} template.`);
 
-    const pipeline = tx.db
-      .prepare('SELECT id FROM pipeline WHERE workspace_id = ? ORDER BY created_at, id LIMIT 1')
-      .get(tx.workspaceId) as Row | undefined;
-    if (!pipeline) throw validationError('The workspace has no pipeline.');
-    const pipelineId = String(pipeline.id);
-    const oldStages = (
-      tx.db.prepare('SELECT id, name FROM stage WHERE pipeline_id = ? ORDER BY seq, id').all(pipelineId) as { id: string; name: string }[]
-    );
+    const pipelineId = pipeline.id;
+    const oldStages = pipeline.stages.map((stage) => ({ id: stage.id, name: stage.name }));
     const oldIds = new Set(oldStages.map((stage) => stage.id));
 
     for (const [stageId, newName] of Object.entries(data.stageMapping)) {
-      if (!oldIds.has(stageId)) throw validationError(`Stage "${stageId}" is not a stage of this workspace.`);
+      if (!oldIds.has(stageId)) throw validationError(`Stage "${stageId}" is not a stage of this pipeline.`);
       if (!target.stageNames.includes(newName)) {
         throw validationError(`"${newName}" is not a stage of the ${target.name} template. Use one of: ${target.stageNames.join(', ')}.`);
       }
@@ -81,8 +69,9 @@ export function switchTemplate(ctx: ActionContext, input: unknown) {
       );
     }
 
-    // Keep the current config as it is. When nothing was saved the config in force is the old template's defaults,
-    // so save those before the template changes, or the new template's defaults would take their place.
+    // Keep the current config as it is. When nothing was saved the config in force is the workspace's default set
+    // (read from workspace.template, which is frozen now that each pipeline records its own template), so save it
+    // explicitly and the rules in force cannot change later.
     const savedConfig = configSchema.safeParse(readSettings(tx.db, tx.workspaceId).qualification);
     if (data.replaceQualification) {
       writeConfigIn(tx, target.defaultQualificationConfig());
@@ -136,20 +125,22 @@ export function switchTemplate(ctx: ActionContext, input: unknown) {
     }
     for (const stage of oldStages) tx.db.prepare('DELETE FROM stage WHERE id = ?').run(stage.id);
 
-    tx.db.prepare('UPDATE pipeline SET name = ? WHERE id = ?').run(target.pipelineName, pipelineId);
+    // The pipeline keeps its own name (names are the user's in a multi pipeline workspace; the template's pipeline name
+    // only prefills the New pipeline sheet). workspace.template is not written: the pipeline records its own template.
     const result = tx.db
-      .prepare('UPDATE workspace SET template = ?, version = version + 1 WHERE id = ? AND version = ?')
-      .run(target.id, tx.workspaceId, data.expectedVersion);
-    if (result.changes !== 1) throw versionConflict(workspaceView(tx.db));
+      .prepare('UPDATE pipeline SET template = ?, version = version + 1 WHERE id = ? AND workspace_id = ? AND version = ?')
+      .run(target.id, pipelineId, tx.workspaceId, data.expectedVersion);
+    if (result.changes !== 1) throw versionConflict(getPipeline(tx.db, tx.workspaceId, pipelineId));
 
-    tx.audit('workspace.template_change', 'workspace', tx.workspaceId, {
+    tx.audit('workspace.template_change', 'pipeline', pipelineId, {
+      pipelineId,
       from,
       to: target.id,
       moved,
       replacedQualification: data.replaceQualification,
       ...(stageEventsDropped > 0 ? { stageEventsDropped } : {}),
     });
-    emitRecord(tx, 'workspace', tx.workspaceId);
-    return workspaceView(tx.db);
+    emitRecord(tx, 'pipeline', pipelineId);
+    return getPipeline(tx.db, tx.workspaceId, pipelineId)!;
   });
 }

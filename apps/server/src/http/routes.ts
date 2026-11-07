@@ -47,6 +47,9 @@ import {
   getModelProvider,
   liftSuppression,
   listTemplates,
+  createPipeline,
+  deletePipeline,
+  updatePipeline,
   listAgentmailInboxes,
   listOllamaModels,
   moveOpportunityStage,
@@ -170,11 +173,11 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   }));
 
   app.get('/api/workspace', async () => {
-    const { id, name, template, version } = requireWorkspace(db);
-    return { id, name, template, version };
+    const { id, name, version } = requireWorkspace(db);
+    return { id, name, version };
   });
 
-  app.get('/api/templates', async () => ({ items: listTemplates(db, workspaceId()), nextCursor: null }));
+  app.get('/api/templates', async () => ({ items: listTemplates(), nextCursor: null }));
   app.post('/api/workspace/template', async (request) => switchTemplate(context(), request.body));
 
   // The capture routes (verify, lookup, capture) are the only ones that need a token. The guard runs before the body is parsed.
@@ -252,6 +255,15 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   });
 
   app.get('/api/pipelines', async () => ({ items: listPipelines(db, workspaceId()), nextCursor: null }));
+  app.post('/api/pipelines', async (request, reply) => {
+    reply.status(201);
+    return createPipeline(context(), request.body);
+  });
+  app.patch('/api/pipelines/:id', async (request) => updatePipeline(context(), idParam(request.params), request.body));
+  app.delete('/api/pipelines/:id', async (request, reply) => {
+    deletePipeline(context(), idParam(request.params));
+    return reply.status(204).send();
+  });
 
   app.get('/api/opportunities', async (request) =>
     listOpportunities(db, workspaceId(), parseInput(opportunitiesQuery, request.query)),

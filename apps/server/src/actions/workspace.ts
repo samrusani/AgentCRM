@@ -30,11 +30,12 @@ export function ensureWorkspace(db: Db, options: BootstrapOptions = {}) {
       template.id,
     );
     const pipelineId = newId('pip');
-    db.prepare('INSERT INTO pipeline (id, created_at, workspace_id, name) VALUES (?, ?, ?, ?)').run(
+    db.prepare('INSERT INTO pipeline (id, created_at, workspace_id, name, template) VALUES (?, ?, ?, ?, ?)').run(
       pipelineId,
       timestamp,
       workspaceId,
       template.pipelineName,
+      template.id,
     );
     template.stageNames.forEach((name, index) => {
       db.prepare('INSERT INTO stage (id, created_at, pipeline_id, name, seq) VALUES (?, ?, ?, ?, ?)').run(

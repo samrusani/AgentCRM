@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { isVersionConflict } from '../api/client';
-import { usePipelines, useStageCounts, useSwitchTemplate, useTemplates, useWorkspace } from '../api/hooks';
-import type { WorkspaceTemplate } from '../api/types';
+import { useStageCounts, useSwitchTemplate, useTemplates } from '../api/hooks';
+import type { Pipeline, WorkspaceTemplate } from '../api/types';
 import { ErrorState, Loading, Sheet, errorMessage } from '../components/common';
 import { SheetSection } from '../components/record';
 import { useUI } from '../lib/ui';
@@ -18,18 +18,15 @@ function positionalTarget(index: number, target: WorkspaceTemplate): string {
   return target.stageNames[Math.min(index, target.stageNames.length - 1)] ?? '';
 }
 
-export function TemplateSheet({ onClose }: { onClose: () => void }) {
+// Switches one pipeline to another template. Its name, stages, and deals change; other pipelines never do.
+export function TemplateSheet({ pipeline, onClose }: { pipeline: Pipeline; onClose: () => void }) {
   const { pushToast } = useUI();
-  const workspace = useWorkspace();
   const templates = useTemplates();
-  const pipelines = usePipelines();
-  const pipeline = pipelines.data?.[0];
-  const counts = useStageCounts(pipeline?.id);
+  const counts = useStageCounts(pipeline.id);
   const apply = useSwitchTemplate();
 
   const items = templates.data ?? [];
-  const currentId =
-    items.find((item) => item.current)?.id ?? items.find((item) => item.id === workspace.data?.template)?.id ?? null;
+  const currentId = pipeline.template;
   const [choice, setChoice] = useState<string | null>(null);
   const selectedId = choice ?? currentId;
   const selected = items.find((item) => item.id === selectedId) ?? null;
@@ -38,7 +35,7 @@ export function TemplateSheet({ onClose }: { onClose: () => void }) {
   const [overrides, setOverrides] = useState<Record<string, string>>({});
   const [replaceQualification, setReplaceQualification] = useState(true);
 
-  const stages = pipeline?.stages ?? [];
+  const stages = pipeline.stages;
   const mapping = useMemo(() => {
     const result: Record<string, string> = {};
     if (!selected) return result;
@@ -48,13 +45,12 @@ export function TemplateSheet({ onClose }: { onClose: () => void }) {
     return result;
   }, [stages, selected, overrides]);
 
-  const loading = workspace.isPending || templates.isPending || pipelines.isPending || (differs && counts.isPending);
-  const loadError = workspace.error ?? templates.error ?? pipelines.error ?? (differs ? counts.error : null);
-  const version = workspace.data?.version;
+  const loading = templates.isPending || (differs && counts.isPending);
+  const loadError = templates.error ?? (differs ? counts.error : null);
+  const version = pipeline.version;
   const countOf = (stageId: string) => counts.data?.[stageId] ?? 0;
   const unmapped = stages.filter((stage) => countOf(stage.id) > 0 && (!mapping[stage.id] || mapping[stage.id] === REMOVE));
-  const canApply =
-    differs && !loading && !loadError && typeof version === 'number' && unmapped.length === 0 && !apply.isPending;
+  const canApply = differs && !loading && !loadError && unmapped.length === 0 && !apply.isPending;
 
   const choose = (id: string) => {
     setChoice(id);
@@ -63,14 +59,14 @@ export function TemplateSheet({ onClose }: { onClose: () => void }) {
   };
 
   const submit = () => {
-    if (!canApply || !selected || typeof version !== 'number') return;
+    if (!canApply || !selected) return;
     const stageMapping: Record<string, string> = {};
     for (const stage of stages) {
       const target = mapping[stage.id];
       if (target && target !== REMOVE) stageMapping[stage.id] = target;
     }
     apply.mutate(
-      { template: selected.id, stageMapping, replaceQualification, expectedVersion: version },
+      { pipelineId: pipeline.id, template: selected.id, stageMapping, replaceQualification, expectedVersion: version },
       {
         onSuccess: () => {
           pushToast(`Template changed to ${selected.name}.`);
@@ -82,8 +78,8 @@ export function TemplateSheet({ onClose }: { onClose: () => void }) {
 
   return (
     <Sheet
-      title="Change template"
-      subtitle="A template sets the pipeline stage names and the default qualification rules."
+      title={`Change template for ${pipeline.name}`}
+      subtitle="A template sets this pipeline's stage names. The qualification rules are shared by every pipeline."
       onClose={onClose}
     >
       {loading ? <Loading what="templates" /> : null}
@@ -92,9 +88,7 @@ export function TemplateSheet({ onClose }: { onClose: () => void }) {
           what="the template details"
           error={loadError}
           onRetry={() => {
-            void workspace.refetch();
             void templates.refetch();
-            void pipelines.refetch();
             void counts.refetch();
           }}
         />
@@ -129,7 +123,8 @@ export function TemplateSheet({ onClose }: { onClose: () => void }) {
             <>
               <SheetSection title="Stages">
                 <p className="muted">
-                  Choose where each current stage goes in {selected.name}. Opportunities move with their stage.
+                  Choose where each current stage goes in {selected.name}. Opportunities move with their stage. The
+                  pipeline keeps its name.
                 </p>
                 <ul className="stage-map">
                   {stages.map((stage) => {
@@ -179,22 +174,18 @@ export function TemplateSheet({ onClose }: { onClose: () => void }) {
           ) : null}
 
           <p className="muted">
-            People, organizations, opportunities, tags, claims, tasks, and history stay as they are. Only the pipeline
-            stages change, and the qualification rules when you choose to replace them.
+            People, organizations, opportunities, tags, claims, tasks, and history stay as they are. Only this
+            pipeline's stages change, and the qualification rules when you choose to replace them. Other pipelines are
+            not touched.
           </p>
 
           {!differs && selected ? (
-            <p className="muted">{selected.name} is the current template. Choose another to change it.</p>
-          ) : null}
-          {differs && typeof version !== 'number' ? (
-            <p className="inline-error" role="alert">
-              The workspace version is not available, so the change cannot be applied. Reload the page and try again.
-            </p>
+            <p className="muted">{pipeline.name} already uses the {selected.name} template. Choose another to change it.</p>
           ) : null}
           {apply.isError ? (
             <p className="inline-error" role="alert">
               {isVersionConflict(apply.error)
-                ? 'The workspace changed since this sheet opened. Close the sheet and open it again, then retry. '
+                ? 'This pipeline changed since this sheet opened. Close the sheet and open it again, then retry. '
                 : 'Could not change the template. '}
               {errorMessage(apply.error)} Nothing was changed.
             </p>

@@ -18,6 +18,7 @@ import { getOrganizationDetail } from '../queries/organizations.js';
 import { getPersonDetail } from '../queries/people.js';
 import { getRunDetail } from '../queries/runs.js';
 import { searchAll } from '../queries/search.js';
+import { listPipelines } from '../queries/pipelines.js';
 import { getCounts } from '../queries/workspace.js';
 
 type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
@@ -63,14 +64,21 @@ export async function startMcpServer(): Promise<void> {
     'crm_describe',
     {
       title: 'Describe the CRM',
-      description: 'Returns the workspace, template, record counts, and the actions these tools allow.',
+      description: 'Returns the workspace, its pipelines with their templates and ordered stage names, record counts, and the actions these tools allow.',
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
     async () =>
       guarded(() => {
         return {
-          workspace: { id: workspace.id, name: workspace.name, template: workspace.template },
+          workspace: { id: workspace.id, name: workspace.name },
+          // Each pipeline runs its own template; the workspace has no single template.
+          pipelines: listPipelines(db, workspace.id).map((pipeline) => ({
+            id: pipeline.id,
+            name: pipeline.name,
+            template: pipeline.template,
+            stageNames: pipeline.stages.map((stage) => stage.name),
+          })),
           counts: getCounts(db, workspace.id),
           modelConnected: isActiveModelReady(db, workspace.id),
           modelProvider: describeModelProvider(db, workspace.id),

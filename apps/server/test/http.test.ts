@@ -38,7 +38,8 @@ describe('basic endpoints', () => {
   });
 
   it('returns the workspace and the today summary', async () => {
-    expect((await get('/api/workspace')).body.template).toBe('startup-fundraising');
+    // Contract change: /api/workspace is { id, name, version }; the template lives on each pipeline.
+    expect(Object.keys((await get('/api/workspace')).body).sort()).toEqual(['id', 'name', 'version']);
     const today = (await get('/api/today')).body;
     expect(Array.isArray(today.tasksDue)).toBe(true);
     expect(today.counts.people).toBe(60);

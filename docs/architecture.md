@@ -28,7 +28,7 @@ IDs are prefixed strings, for example `per_a1b2c3`, generated from random bytes.
 | workspace | name, template, settings (JSON: qualification config) |
 | person | workspace_id, version, first_name, last_name, email, title, organization_id, location, linkedin_url, x_url, lifecycle (lead, relationship), tags (JSON array), next_action_at, updated_at |
 | organization | workspace_id, version, name, domain, kind (fund, company), location, linkedin_url, tags (JSON array), updated_at |
-| pipeline | workspace_id, name |
+| pipeline | workspace_id, version, name, template |
 | stage | pipeline_id, name, seq |
 | opportunity | workspace_id, version, name, pipeline_id, stage_id, organization_id, person_id, amount_target, currency, owner, status (open, passed, lost, nurture), reason, next_action_at, stage_changed_at, updated_at |
 | stage_event | opportunity_id, from_stage_id, to_stage_id, at, actor |
@@ -379,9 +379,9 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 | Method and path | Purpose |
 | --- | --- |
 | GET `/api/health` | `{ ok, version, dbPath }` with dbPath relative to repo root |
-| GET `/api/workspace` | The single demo workspace `{ id, name, template, version }` |
-| GET `/api/templates` | The template registry `{ items: [{ id, name, description, pipelineName, stageNames, current }] }` |
-| POST `/api/workspace/template` | Switch the template (see Templates); returns the updated workspace |
+| GET `/api/workspace` | The single demo workspace `{ id, name, version }`; which template a pipeline runs lives on the pipeline |
+| GET `/api/templates` | The template registry `{ items: [{ id, name, description, pipelineName, stageNames }] }` |
+| POST `/api/workspace/template` | Switch one pipeline's template (see Pipelines and templates); returns the updated pipeline |
 | GET `/api/today` | `{ tasksDue, approvalsPending, runsActive, counts, dayStart, dayEnd }` for the Today screen |
 | GET `/api/people?q=&cursor=&limit=` | Search by name, email, organization name |
 | GET `/api/people/:id` | Person plus `organization`, `affiliationsSummary`, `claims`, `activities`, `tasks`, `opportunities` |
@@ -396,7 +396,10 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 | GET `/api/organizations?q=&cursor=&limit=` | Search by name, domain |
 | GET `/api/organizations/:id` | Organization plus `people`, `claims`, `activities`, `opportunities` |
 | PATCH `/api/organizations/:id` | `{ expectedVersion, fields }`; `linkedinUrl` is editable and canonicalized to a `linkedin.com/company/` URL |
-| GET `/api/pipelines` | Pipelines with ordered stages |
+| GET `/api/pipelines` | Pipelines with ordered stages, each with its `template` and `version` |
+| POST `/api/pipelines` | `{ name, template }`, creates a pipeline with the template's stage set |
+| PATCH `/api/pipelines/:id` | `{ expectedVersion, fields: { name } }`, rename only |
+| DELETE `/api/pipelines/:id` | Deletes an empty pipeline; 409 while any opportunity names it, refused for the last pipeline |
 | GET `/api/opportunities?pipelineId=&stageId=&status=` | Opportunities with joined `organizationName` and `personName` |
 | GET `/api/opportunities/:id` | Opportunity plus `stageEvents`, `claims`, `activities`, `tasks` |
 | POST `/api/opportunities` | Create opportunity |
@@ -446,7 +449,7 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 
 `npm run --silent mcp --prefix apps/server` (and CLI `crm mcp`) starts an MCP server over stdio using the official TypeScript SDK. The `--silent` flag matters: without it npm prints its script banner to stdout and corrupts the protocol stream. Tools, all workspace scoped and read mostly:
 
-- `crm_describe`: capabilities, template, counts, allowed actions, and `modelProvider: { configured, kind, status, model }`, never a key
+- `crm_describe`: capabilities, the pipelines with their names, templates, and ordered stage names (not a single workspace template), counts, allowed actions, and `modelProvider: { configured, kind, status, model }`, never a key
 - `crm_search`: query with type filter, bounded results
 - `crm_get_record`: person, organization, or opportunity by id, with evidence
 - `crm_propose_changes`: validate a batch of field changes, return a preview, write nothing
@@ -457,9 +460,15 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 
 MCP tools call the same actions as the HTTP routes. No tool can decide an approval.
 
-## Templates
+## Pipelines and templates
 
-A template defines the vocabulary of a workspace: the pipeline name, the ordered stage names, and the default qualification config. Three templates ship, defined in code in one registry (`templates.ts`), versioned with the app:
+A workspace holds any number of pipelines, each with its own ordered stage set and its own template. Migration 022 adds `pipeline.version` and `pipeline.template`, backfilled from the workspace's template; `workspace.template` stays as a column but is no longer written, because each pipeline records its own template. Every opportunity belongs to exactly one pipeline and one of its stages; nothing moves a deal across pipelines in this version, and the opportunity sheet offers no pipeline edit (documented limit). Lifecycle promotion already reads a stage's `seq` within its own pipeline, so it needs no change. The qualification config stays workspace wide.
+
+- `POST /api/pipelines` takes `{ name, template }`, validates the name like other record names and the template against the registry, and creates the pipeline with that template's stage set in order, writing one audit event `pipeline.create` and emitting `record_updated`.
+- `PATCH /api/pipelines/:id` takes `{ expectedVersion, fields: { name } }` and renames the pipeline only; a mismatch is the usual 409 `version_conflict`, the audit event is `pipeline.update`.
+- `DELETE /api/pipelines/:id` deletes a pipeline and its stages only when no opportunity of any status names it (otherwise 409 `conflict` naming the count and saying plainly that deals cannot be moved to another pipeline or deleted in this version, so such a pipeline cannot be deleted; a documented limit, never impossible advice) and never the workspace's last pipeline (validation); the audit event is `pipeline.delete`.
+
+A template defines the vocabulary of a pipeline: its default name, the ordered stage names, and the default qualification config. Three templates ship, defined in code in one registry (`templates.ts`), versioned with the app:
 
 | Id | Name | Pipeline | Stages |
 | --- | --- | --- | --- |
@@ -469,8 +478,8 @@ A template defines the vocabulary of a workspace: the pipeline name, the ordered
 
 Default qualification configs per template follow the same shape as the startup one: `fund-lp` qualifies people at funds, family offices, and other allocators (organization kind `fund`; titles partner, principal, chief investment officer, head of, director, family office; tag `lp`), `client-sales` qualifies buyers at companies (organization kind `company`; titles founder, chief executive officer, chief operating officer, vp, head of, director; tag `prospect`). The do not contact exclusion is in every template. Records, tags, claims, tasks, and history never belong to a template.
 
-- `GET /api/templates` lists `{ id, name, description, pipelineName, stageNames, current }`.
-- `POST /api/workspace/template` switches the workspace template in one transaction. Body: `{ template, stageMapping, replaceQualification, expectedVersion }` where `expectedVersion` is the workspace version and `stageMapping` maps every EXISTING stage id to a new stage name from the target template. Every old stage that holds at least one opportunity must be mapped; the server rejects the request naming the unmapped stages otherwise (a stage with no opportunities may be omitted and simply disappears). The transaction renames the pipeline, creates the new stage set in order, moves every opportunity per the mapping writing one `stage_change` activity each (actor `system:template`), deletes the old stages, replaces the qualification config with the target template's defaults when `replaceQualification` is true (otherwise the existing config stays as it is, even where it names tags the new template does not use), updates `workspace.template`, bumps the workspace version (migration 011 adds `workspace.version`), writes one audit event (`workspace.template_change` with from, to, per stage moved counts, and the count of stage history events that pointed at removed empty stages), and emits `record_updated` for the workspace and each moved opportunity. Stage history rows that reference a mapped stage are re-pointed to its replacement; rows pointing only at a removed empty stage are dropped and counted in the audit detail, while the `stage_change` activities keep the real before and after names in text. When `replaceQualification` is false and no config was ever saved, the old template's defaults are saved first so the rules in force do not silently change. A version mismatch is the usual 409.
+- `GET /api/templates` lists `{ id, name, description, pipelineName, stageNames }`; which template a pipeline runs is read from `GET /api/pipelines`, not from this registry listing.
+- `POST /api/workspace/template` switches ONE pipeline's template in one transaction. Body: `{ pipelineId, template, stageMapping, replaceQualification, expectedVersion }` where `expectedVersion` is that pipeline's version and `stageMapping` maps every one of that pipeline's EXISTING stage ids to a new stage name from the target template. Every old stage that holds at least one opportunity must be mapped; the server rejects the request naming the unmapped stages otherwise (a stage with no opportunities may be omitted and simply disappears). The transaction keeps the pipeline's own name, because names are the user's in a multi pipeline workspace (the template's pipeline name is only the prefilled suggestion when creating a pipeline), creates the new stage set in order, moves every one of the pipeline's opportunities per the mapping writing one `stage_change` activity each (actor `system:template`), deletes the old stages, replaces the workspace's qualification config with the target template's defaults when `replaceQualification` is true (otherwise the existing config stays as it is, even where it names tags the new template does not use), updates `pipeline.template`, bumps the pipeline version, writes one audit event (`workspace.template_change` with pipelineId, from, to, per stage moved counts, and the count of stage history events that pointed at removed empty stages), and emits `record_updated` for the pipeline and each moved opportunity. Stage history rows that reference a mapped stage are re-pointed to its replacement; rows pointing only at a removed empty stage are dropped and counted in the audit detail, while the `stage_change` activities keep the real before and after names in text. When `replaceQualification` is false and no config was ever saved, the rules actually in force are saved first (the defaults the workspace started with), so they do not silently change. A version mismatch is the usual 409.
 - Switching back and forth is allowed; nothing is remembered from the previous template beyond the stage history on each opportunity.
 
 ## Backup and restore
