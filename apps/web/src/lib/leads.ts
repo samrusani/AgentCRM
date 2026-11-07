@@ -18,6 +18,7 @@ export const DEFAULT_LEAD_ACTORS: LeadCaptureSettings = {
   commentsActor: 'harvestapi/linkedin-post-comments',
   profileActor: 'harvestapi/linkedin-profile-scraper',
   companyActor: 'harvestapi/linkedin-company',
+  personSearchActor: 'harvestapi/linkedin-profile-search-by-name',
 };
 
 export const ACCEPTED_POST_SHAPES =

@@ -120,16 +120,23 @@ function Allowlist({ connector }: { connector: Connector }) {
   );
 }
 
-const LEAD_FIELDS: Array<{ key: keyof LeadCaptureSettings; label: string }> = [
+const LEAD_FIELDS: Array<{ key: keyof LeadCaptureSettings; label: string; note?: string }> = [
   { key: 'postActor', label: 'Post text' },
   { key: 'reactionsActor', label: 'Reactions' },
   { key: 'commentsActor', label: 'Comments' },
   { key: 'profileActor', label: 'Profile enrichment' },
   { key: 'companyActor', label: 'Company lookup' },
+  {
+    key: 'personSearchActor',
+    label: 'People search actor',
+    note: 'Used by Enrich on a person with no LinkedIn profile saved. Lead capture does not use it.',
+  },
 ];
 
+// Actor ids compare trimmed, with a slash as a tilde, and without regard to case, as the server lowercases them. Only
+// the change check uses this: what is sent on a real change stays as typed.
 function sameActor(a: string, b: string): boolean {
-  return (normalizeActorId(a) ?? a.trim()) === (normalizeActorId(b) ?? b.trim());
+  return (normalizeActorId(a) ?? a.trim()).toLowerCase() === (normalizeActorId(b) ?? b.trim()).toLowerCase();
 }
 
 function LeadCaptureActors({ connector }: { connector: Connector }) {
@@ -185,7 +192,7 @@ function LeadCaptureActors({ connector }: { connector: Connector }) {
       <h4 className="connector__heading" id="apify-lead-heading">
         Lead capture actors
       </h4>
-      {LEAD_FIELDS.map(({ key, label }) => {
+      {LEAD_FIELDS.map(({ key, label, note }) => {
         const isDefault = sameActor(valueOf(key), DEFAULT_LEAD_ACTORS[key]);
         return (
           <div className="connector__form" key={key}>
@@ -216,6 +223,7 @@ function LeadCaptureActors({ connector }: { connector: Connector }) {
                 Reset to default
               </button>
             </div>
+            {note ? <p className="muted">{note}</p> : null}
           </div>
         );
       })}

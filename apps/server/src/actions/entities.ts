@@ -21,6 +21,7 @@ import {
   linkedinProfileUrlMessage,
   xProfileUrlMessage,
 } from './profileUrls.js';
+import { normalizeProfileUrl } from './profileUrls.js';
 import { entityTypeSchema, expectedVersionSchema, idSchema, isoTimestamp, optionalText, tagsSchema } from './schemas.js';
 
 export type UpdatableType = 'person' | 'organization' | 'opportunity' | 'task';
@@ -182,6 +183,22 @@ export function assertEmailAvailable(tx: Tx, email: string, ignoreId?: string): 
     .prepare('SELECT id FROM person WHERE workspace_id = ? AND lower(email) = ? AND id != ?')
     .get(tx.workspaceId, email.toLowerCase(), ignoreId ?? '');
   if (row) throw conflict('A person with this email address already exists.');
+}
+
+// The other person who holds a LinkedIn profile, compared as decoded profile ids without regard to case, so a case or
+// percent spelling difference cannot slip past. Null when nobody else has it.
+export function personHoldingLinkedin(tx: Tx, linkedinUrl: string, ignoreId?: string): string | null {
+  const wanted = normalizeProfileUrl(linkedinUrl)?.toLowerCase();
+  if (!wanted) return null;
+  const rows = tx.db
+    .prepare('SELECT id, linkedin_url FROM person WHERE workspace_id = ? AND linkedin_url IS NOT NULL AND id != ?')
+    .all(tx.workspaceId, ignoreId ?? '') as { id: string; linkedin_url: string }[];
+  const held = rows.find((row) => normalizeProfileUrl(row.linkedin_url)?.toLowerCase() === wanted);
+  return held ? held.id : null;
+}
+
+export function assertLinkedinAvailable(tx: Tx, linkedinUrl: string, ignoreId?: string): void {
+  if (personHoldingLinkedin(tx, linkedinUrl, ignoreId)) throw conflict('A person with this LinkedIn link already exists.');
 }
 
 export function assertDomainAvailable(tx: Tx, domain: string, ignoreId?: string): void {

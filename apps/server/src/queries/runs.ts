@@ -41,7 +41,7 @@ export function listRunSteps(db: Db, runId: string) {
 // Scope keys of an enrichment run that hold scraped text or the frozen lookup target. Agent facing reads leave them
 // out so scraped text reaches no model or agent surface before a person accepted it.
 const enrichAgentHiddenKeys = new Map<string, readonly string[]>([
-  ['enrich_person', ['suggestions', 'profileUrl']],
+  ['enrich_person', ['suggestions', 'profileUrl', 'fullName', 'firstName', 'lastName', 'sourceUrl']],
   ['enrich_organization', ['suggestions', 'target', 'sourceUrl']],
 ]);
 

@@ -388,6 +388,7 @@ export interface LeadCaptureSettings {
   commentsActor: string;
   profileActor: string;
   companyActor: string;
+  personSearchActor: string;
 }
 
 export interface ApifyConnectorInput {
@@ -678,6 +679,8 @@ export interface EnrichmentRun {
   detail?: string | null;
   // How many suggestions the run produced in all, including 0. Only pending ones are listed.
   suggestedCount?: number;
+  // Person runs only: a name search (no LinkedIn profile saved at start) or a profile scrape. Absent from older servers.
+  mode?: 'profile' | 'name';
 }
 
 export interface EnrichmentSuggestion {

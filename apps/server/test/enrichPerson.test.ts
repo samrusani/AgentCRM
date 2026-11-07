@@ -152,7 +152,7 @@ describe('enrich_person run', () => {
     expect(detail.scope.suggestions).toBeUndefined();
     const state = await call('GET', `/api/people/${person.id}/enrichment`);
     expect(state.body).toEqual({
-      run: { id: detail.id, status: 'failed', startedAt: detail.startedAt, detail: detail.steps[2]!.detail, suggestedCount: 0 },
+      run: { id: detail.id, status: 'failed', startedAt: detail.startedAt, detail: detail.steps[2]!.detail, suggestedCount: 0, mode: 'profile' },
       suggestions: [],
     });
   });
@@ -231,11 +231,9 @@ describe('enrich_person start guards', () => {
     }
   });
 
-  it('requires an existing person with a LinkedIn profile', () => {
+  it('requires an existing person', () => {
+    // Name mode contract change: a person without a LinkedIn profile now starts a name search instead of being refused.
     const bare = createPerson(env.ctx, { firstName: 'No', lastName: 'Profile' });
-    expect(failure(() => startRun(env.ctx, { kind: 'enrich_person', scope: { personId: bare.id } }))).toBe(
-      'validation: Save a LinkedIn profile on this person before enriching them.',
-    );
     expect(failure(() => startRun(env.ctx, { kind: 'enrich_person', scope: { personId: 'per_missing' } }))).toMatch(/^validation: That person was not found/);
     expect(failure(() => startRun(env.ctx, { kind: 'enrich_person', scope: {} }))).toMatch(/^validation: /);
     expect(failure(() => startRun(env.ctx, { kind: 'enrich_person', scope: { personId: bare.id, extra: 1 } }))).toMatch(/^validation: /);
@@ -276,7 +274,7 @@ describe('enrichment suggestions', () => {
     const person = newPerson();
     const run = startRun(env.ctx, { kind: 'enrich_person', scope: { personId: person.id } });
     expect((await call('GET', `/api/people/${person.id}/enrichment`)).body).toEqual({
-      run: { id: run.id, status: 'queued', startedAt: null, detail: null, suggestedCount: 0 },
+      run: { id: run.id, status: 'queued', startedAt: null, detail: null, suggestedCount: 0, mode: 'profile' },
       suggestions: [],
     });
   });
@@ -287,7 +285,7 @@ describe('enrichment suggestions', () => {
     const { run, detail } = await enrich(person);
     const pending = await call('GET', `/api/people/${person.id}/enrichment`);
     expect(pending.body).toEqual({
-      run: { id: run.id, status: 'succeeded', startedAt: detail.startedAt, detail: 'Suggested 3 fields to fill: title, location, email.', suggestedCount: 3 },
+      run: { id: run.id, status: 'succeeded', startedAt: detail.startedAt, detail: 'Suggested 3 fields to fill: title, location, email.', suggestedCount: 3, mode: 'profile' },
       suggestions: [
         { field: 'title', value: 'Partner at Harbor Row' },
         { field: 'location', value: 'Port Alder, Aurelia' },
@@ -301,7 +299,7 @@ describe('enrichment suggestions', () => {
     expect((await call('DELETE', `/api/people/${person.id}/enrichment?runId=${run.id}`)).status).toBe(204);
     const handled = await call('GET', `/api/people/${person.id}/enrichment`);
     expect(handled.body).toEqual({
-      run: { id: run.id, status: 'succeeded', startedAt: detail.startedAt, detail: 'Suggested 3 fields to fill: title, location, email.', suggestedCount: 3 },
+      run: { id: run.id, status: 'succeeded', startedAt: detail.startedAt, detail: 'Suggested 3 fields to fill: title, location, email.', suggestedCount: 3, mode: 'profile' },
       suggestions: [],
     });
 
@@ -311,7 +309,7 @@ describe('enrichment suggestions', () => {
     const quiet = newPerson();
     const empty = await enrich(quiet);
     expect((await call('GET', `/api/people/${quiet.id}/enrichment`)).body).toEqual({
-      run: { id: empty.run.id, status: 'succeeded', startedAt: empty.detail.startedAt, detail: 'The profile offered nothing new.', suggestedCount: 0 },
+      run: { id: empty.run.id, status: 'succeeded', startedAt: empty.detail.startedAt, detail: 'The profile offered nothing new.', suggestedCount: 0, mode: 'profile' },
       suggestions: [],
     });
   });

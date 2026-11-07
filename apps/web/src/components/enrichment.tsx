@@ -18,38 +18,34 @@ import { errorMessage } from './common';
 import { SheetSection } from './record';
 
 export const ENRICH_COST_LINE = 'Runs one profile scrape on your Apify account.';
+export const ENRICH_NAME_COST_LINE =
+  'No profile saved, so this searches LinkedIn by their name on your Apify account. Check the match before accepting.';
 export const ENRICH_ORG_COST_LINE = 'Runs one company lookup on your Apify account.';
 export const ENRICH_NEEDS_APIFY = 'Connect Apify in Settings to enrich';
-export const ENRICH_NEEDS_LINKEDIN = 'Add a LinkedIn profile first';
+export const ENRICH_CHECK_FAILED = 'Could not check the Apify connector. Retry from Settings.';
 export const ENRICH_NOTHING_NEW = 'Nothing new to suggest.';
 export const ENRICH_FAILED = 'The enrich run did not finish.';
 
 interface EnrichControlViewProps {
   subjectId: string;
   costLine: string;
-  // Person enrichment needs a saved LinkedIn profile; organization enrichment can run by name.
-  needsLinkedin: boolean;
-  linkedinUrl?: string | null;
   enrichment: { data: EnrichmentState | undefined };
   start: { isPending: boolean; isError: boolean; error: unknown; mutate: (id: string) => void };
 }
 
 // The Enrich button and its lines. Rendered beside the Fields title, so the lines wrap below it.
-function EnrichControlView({ subjectId, costLine, needsLinkedin, linkedinUrl, enrichment, start }: EnrichControlViewProps) {
+function EnrichControlView({ subjectId, costLine, enrichment, start }: EnrichControlViewProps) {
   const { query: connectorQuery, connector } = useApifyConnector();
 
   const connected = Boolean(connector) && connector?.status !== 'error';
   const runOpen = Boolean(enrichment.data?.run && isRunActive(enrichment.data.run.status));
   const enriching = runOpen || start.isPending;
 
-  const missingLinkedin = needsLinkedin && !linkedinUrl;
-
   // Name the missing piece once the connector check has settled, so the line never flashes while loading.
-  let reason: string | null = null;
-  if (!connected && !connectorQuery.isPending) reason = ENRICH_NEEDS_APIFY;
-  else if (connected && missingLinkedin) reason = ENRICH_NEEDS_LINKEDIN;
+  // When the check itself failed, say so rather than claiming Apify is not connected.
+  const reason = connected || connectorQuery.isPending ? null : connectorQuery.isError ? ENRICH_CHECK_FAILED : ENRICH_NEEDS_APIFY;
 
-  const blocked = !connected || missingLinkedin;
+  const blocked = !connected;
   const reasonId = `enrich-reason-${subjectId}`;
 
   return (
@@ -84,9 +80,8 @@ export function EnrichControl({ personId, linkedinUrl }: { personId: string; lin
   return (
     <EnrichControlView
       subjectId={personId}
-      costLine={ENRICH_COST_LINE}
-      needsLinkedin
-      linkedinUrl={linkedinUrl}
+      // Without a saved profile the run is a name search, which the line says before any money is spent.
+      costLine={linkedinUrl ? ENRICH_COST_LINE : ENRICH_NAME_COST_LINE}
       enrichment={enrichment}
       start={start}
     />
@@ -100,7 +95,6 @@ export function OrganizationEnrichControl({ organizationId }: { organizationId: 
     <EnrichControlView
       subjectId={organizationId}
       costLine={ENRICH_ORG_COST_LINE}
-      needsLinkedin={false}
       enrichment={enrichment}
       start={start}
     />
@@ -115,9 +109,9 @@ interface AcceptVars {
 
 interface SuggestionsViewProps {
   version: number;
-  // Organization runs can match by name, so the run detail names the company found. It shows above the
-  // list there; the person sheet shows the detail only when nothing is pending.
-  detailAbovePending: boolean;
+  // A run that matched by name has a detail naming who was found, and it shows above the list so a wrong match is
+  // visible before any Accept. Organization runs always show it; a person run only when it was a name search.
+  detailAbovePending: boolean | ((run: NonNullable<EnrichmentState['run']>) => boolean);
   enrichment: { data: EnrichmentState | undefined; refetch: () => unknown };
   accept: { isPending: boolean; mutate: (vars: AcceptVars, options: { onError: (error: unknown) => void; onSettled: () => void }) => void };
   dismiss: { isPending: boolean; isError: boolean; error: unknown; mutate: (runId: string) => void };
@@ -161,11 +155,16 @@ function SuggestionsView({ version, detailAbovePending, enrichment, accept, dism
         onError: (error) => {
           const conflict = error instanceof ApiError && error.status === 409;
           const label = ENRICH_FIELD_LABELS[field] ?? field;
+          // A name lookup is refused for reasons the server states (the name changed, a profile was saved, the link is
+          // taken), so its own message is shown instead of the generic field-changed wording.
           setProblem({
             field,
-            message: conflict
-              ? `${label} changed since you opened this record, so the suggestion was not applied.`
-              : `${errorMessage(error)} The suggestion was not applied.`,
+            message:
+              conflict && run.mode === 'name'
+                ? errorMessage(error)
+                : conflict
+                  ? `${label} changed since you opened this record, so the suggestion was not applied.`
+                  : `${errorMessage(error)} The suggestion was not applied.`,
           });
         },
         onSettled: () => setAcceptingField(null),
@@ -174,10 +173,11 @@ function SuggestionsView({ version, detailAbovePending, enrichment, accept, dism
   };
 
   const busy = accept.isPending || dismiss.isPending;
+  const showDetailAbove = typeof detailAbovePending === 'function' ? detailAbovePending(run) : detailAbovePending;
 
   return (
     <SheetSection title="Suggestions">
-      {detailAbovePending && !isRunActive(run.status) && run.detail ? <p className="muted">{run.detail}</p> : null}
+      {showDetailAbove && !isRunActive(run.status) && run.detail ? <p className="muted">{run.detail}</p> : null}
       <ul className="suggestion-list">
         {suggestions.map((suggestion) => {
           const label = ENRICH_FIELD_LABELS[suggestion.field] ?? suggestion.field;
@@ -234,7 +234,8 @@ function SuggestionsView({ version, detailAbovePending, enrichment, accept, dism
   );
 }
 
-// Pending suggestions from the newest enrich run, between Fields and Qualification.
+// Pending suggestions from the newest enrich run, between Fields and Qualification. A name lookup also shows its
+// detail line above them, because that line names the person the search found.
 export function EnrichmentSuggestions({ personId, version }: { personId: string; version: number }) {
   const enrichment = usePersonEnrichment(personId);
   const accept = useAcceptEnrichment();
@@ -242,7 +243,7 @@ export function EnrichmentSuggestions({ personId, version }: { personId: string;
   return (
     <SuggestionsView
       version={version}
-      detailAbovePending={false}
+      detailAbovePending={(run) => run.mode === 'name'}
       enrichment={enrichment}
       accept={{ isPending: accept.isPending, mutate: (vars, options) => accept.mutate({ personId, ...vars }, options) }}
       dismiss={{

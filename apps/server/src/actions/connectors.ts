@@ -79,6 +79,7 @@ const configureSchema = z
         commentsActor: leadCaptureField,
         profileActor: leadCaptureField,
         companyActor: leadCaptureField,
+        personSearchActor: leadCaptureField,
       })
       .strict()
       .optional(),

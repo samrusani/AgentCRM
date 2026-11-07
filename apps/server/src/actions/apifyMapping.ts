@@ -108,8 +108,8 @@ function pickLinkedin(item: Item): string | null {
   return null;
 }
 
-function pickLocation(item: Item): string | null {
-  const direct = clean(item.location, 200);
+export function pickLocation(item: Item, max = 200): string | null {
+  const direct = clean(item.location, max);
   if (direct) return direct;
   const parts = [clean(item.city, 100), clean(item.country, 100)].filter((part): part is string => part !== null);
   return parts.length > 0 ? parts.join(', ') : null;

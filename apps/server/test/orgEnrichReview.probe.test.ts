@@ -521,7 +521,8 @@ describe('shared engine keeps person behavior', () => {
     const person = createPerson(env.ctx, { firstName: 'Same', lastName: 'Person', linkedinUrl: 'https://www.linkedin.com/in/same-person' });
     stub.state.actorItems[profileActorKey] = [{ linkedinUrl: 'https://www.linkedin.com/in/same-person', headline: 'Partner' }];
     const run = startRun(env.ctx, { kind: 'enrich_person', scope: { personId: person.id } });
-    expect(Object.keys(getRunDetail(env.db, env.workspaceId, run.id).scope).sort()).toEqual(['actorId', 'origin', 'personId', 'profileUrl']);
+    // Name mode contract change: the mode is frozen into every person run scope.
+    expect(Object.keys(getRunDetail(env.db, env.workspaceId, run.id).scope).sort()).toEqual(['actorId', 'mode', 'origin', 'personId', 'profileUrl']);
     await driveRunAsync(env, run.id, ['succeeded']);
     const url = 'https://www.linkedin.com/in/same-person';
     expect(stub.state.startBodies).toEqual([{ queries: [url], profileUrls: [url], usernames: [url] }]);
@@ -531,6 +532,7 @@ describe('shared engine keeps person behavior', () => {
       'apifyFinished',
       'apifyRunId',
       'apifyStartedAt',
+      'mode',
       'origin',
       'personId',
       'profileUrl',

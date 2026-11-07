@@ -302,7 +302,7 @@ function messageFrom(...candidates: unknown[]): string | null {
   return null;
 }
 
-// Apify connectors always carry the five actors. An older server that omits them gets the documented defaults.
+// Apify connectors always carry the six actors. An older server that omits them gets the documented defaults.
 function normalizeLeadCapture(kind: unknown, raw: unknown): LeadCaptureSettings | null {
   if (textOrNull(kind) !== 'apify') return null;
   const record = objectOrEmpty(raw);
@@ -312,6 +312,7 @@ function normalizeLeadCapture(kind: unknown, raw: unknown): LeadCaptureSettings 
     commentsActor: textOrNull(record.commentsActor) ?? DEFAULT_LEAD_ACTORS.commentsActor,
     profileActor: textOrNull(record.profileActor) ?? DEFAULT_LEAD_ACTORS.profileActor,
     companyActor: textOrNull(record.companyActor) ?? DEFAULT_LEAD_ACTORS.companyActor,
+    personSearchActor: textOrNull(record.personSearchActor) ?? DEFAULT_LEAD_ACTORS.personSearchActor,
   };
 }
 

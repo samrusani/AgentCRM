@@ -33,6 +33,7 @@ import { defaultAgentBudgetUsd, draftKind, draftScopeSchema, draftStepTitlesFor,
 import {
   enrichByAgentMessage,
   enrichPersonStartScope,
+  enrichPersonNameStepTitles,
   enrichPersonStepTitles,
   scheduleEnrichPersonRun,
 } from './enrichPerson.js';
@@ -380,7 +381,7 @@ export function startRun(ctx: ActionContext, input: unknown, options: StartRunOp
       const enrichScope = enrichPersonStartScope(tx, data.scope.personId);
       const person = requirePerson(tx.db, tx.workspaceId, data.scope.personId);
       title = data.title ?? `Enrich ${person.name}`;
-      stepTitles = enrichPersonStepTitles;
+      stepTitles = enrichScope.mode === 'name' ? enrichPersonNameStepTitles : enrichPersonStepTitles;
       counts = { processed: 0, found: 0, flagged: 0 };
       storedScope = { ...enrichScope };
       auditScope = { personId: enrichScope.personId, actorId: enrichScope.actorId, origin };

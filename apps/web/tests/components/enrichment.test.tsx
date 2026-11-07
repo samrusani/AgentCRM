@@ -299,21 +299,46 @@ describe('Enrich button', () => {
     expect(screen.getByRole('button', { name: 'Enrich' })).toBeDisabled();
   });
 
-  it('is disabled with a reason when the person has no LinkedIn profile', async () => {
+  const NAME_LINE = 'No profile saved, so this searches LinkedIn by their name on your Apify account. Check the match before accepting.';
+
+  // Name mode contract change: a person without a LinkedIn profile can be enriched, so the button no longer waits for one.
+  it('is enabled without a LinkedIn profile and says it searches by name', async () => {
     world.person = { ...world.person, linkedinUrl: null, claims: [] };
     renderPerson();
     await loaded();
-    await waitFor(() => expect(screen.getByText('Add a LinkedIn profile first')).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: 'Enrich' })).toBeDisabled();
+    const head = screen.getByRole('heading', { name: 'Fields' }).parentElement as HTMLElement;
+    await waitFor(() => expect(within(head).getByRole('button', { name: 'Enrich' })).toBeEnabled());
+    expect(within(head).getByText(NAME_LINE)).toBeInTheDocument();
+    expect(screen.queryByText(COST_LINE)).not.toBeInTheDocument();
+    expect(screen.queryByText('Add a LinkedIn profile first')).not.toBeInTheDocument();
   });
 
-  it('names the Apify problem first when both are missing', async () => {
+  it('keeps the profile scrape line when a profile is saved', async () => {
+    renderPerson();
+    await loaded();
+    expect(await screen.findByText(COST_LINE)).toBeInTheDocument();
+    expect(screen.queryByText(NAME_LINE)).not.toBeInTheDocument();
+  });
+
+  it('is disabled only for the Apify reason when there is no profile and Apify is not connected', async () => {
     world.connectors = [];
     world.person = { ...world.person, linkedinUrl: null, claims: [] };
     renderPerson();
     await loaded();
     await waitFor(() => expect(screen.getByText('Connect Apify in Settings to enrich')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Enrich' })).toBeDisabled();
+    expect(screen.getByText(NAME_LINE)).toBeInTheDocument();
     expect(screen.queryByText('Add a LinkedIn profile first')).not.toBeInTheDocument();
+  });
+
+  it('starts a name search run for a person without a profile', async () => {
+    world.person = { ...world.person, linkedinUrl: null, claims: [] };
+    const { user } = renderPerson();
+    await loaded();
+    await user.click(await screen.findByRole('button', { name: 'Enrich' }));
+    await waitFor(() => expect(calls('POST', '/api/runs')).toHaveLength(1));
+    expect(calls('POST', '/api/runs')[0]?.body).toEqual({ kind: 'enrich_person', scope: { personId: 'p1' } });
+    expect(await screen.findByRole('button', { name: 'Enriching' })).toBeDisabled();
   });
 
   it('starts an enrich run for this person and then reads Enriching', async () => {
@@ -369,6 +394,60 @@ describe('suggestions', () => {
       ],
     };
   }
+
+  const NAME_DETAIL =
+    'The search for "Jane Doe" returned Jane Doe (VP Engineering at Acme). Check that this is the right person before accepting anything. Suggested 2 fields to fill: linkedinUrl, title.';
+
+  function withNameSuggestions(mode: 'name' | 'profile' = 'name') {
+    world.person = { ...world.person, linkedinUrl: null, claims: [] };
+    world.enrichment = {
+      run: { id: 'run-n', status: 'succeeded', startedAt: '2026-11-05T09:00:00', detail: mode === 'name' ? NAME_DETAIL : 'Suggested 2 fields to fill: linkedinUrl, title.', suggestedCount: 2, mode },
+      suggestions: [
+        { field: 'linkedinUrl', value: 'https://www.linkedin.com/in/jane-doe', status: 'pending' },
+        { field: 'title', value: 'VP Engineering at Acme', status: 'pending' },
+      ],
+    };
+  }
+
+  it('shows the name search detail above the suggestion rows, so a wrong match is visible before any Accept', async () => {
+    withNameSuggestions();
+    renderPerson();
+    const section = (await screen.findByRole('heading', { name: 'Suggestions' })).closest('section') as HTMLElement;
+    const detail = within(section).getByText(NAME_DETAIL);
+    expect(detail).toHaveClass('muted');
+    const list = section.querySelector('ul') as HTMLElement;
+    expect(detail.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(section).getByText('LinkedIn')).toBeInTheDocument();
+    expect(within(section).getByText('https://www.linkedin.com/in/jane-doe')).toBeInTheDocument();
+    expect(within(section).getAllByRole('button', { name: /^Accept / })).toHaveLength(2);
+  });
+
+  it('accepts the suggested profile link like any other field', async () => {
+    withNameSuggestions();
+    const { user } = renderPerson();
+    await screen.findByRole('heading', { name: 'Suggestions' });
+    await user.click(screen.getByRole('button', { name: 'Accept linkedin' }));
+    await waitFor(() => expect(calls('POST', '/api/people/p1/enrichment')).toHaveLength(1));
+    expect(calls('POST', '/api/people/p1/enrichment')[0]?.body).toEqual({ runId: 'run-n', field: 'linkedinUrl', expectedVersion: 3 });
+  });
+
+  it('keeps the detail line out of a profile run\'s list, which only repeats the rows', async () => {
+    withNameSuggestions('profile');
+    renderPerson();
+    await screen.findByRole('heading', { name: 'Suggestions' });
+    expect(screen.queryByText('Suggested 2 fields to fill: linkedinUrl, title.')).not.toBeInTheDocument();
+  });
+
+  it('shows a failed name search\'s detail as a muted line', async () => {
+    world.person = { ...world.person, linkedinUrl: null, claims: [] };
+    world.enrichment = {
+      run: { id: 'run-f', status: 'failed', startedAt: '2026-11-05T09:00:00', detail: 'The search found nobody by this name, so nothing was suggested.', suggestedCount: 0, mode: 'name' },
+      suggestions: [],
+    };
+    renderPerson();
+    expect(await screen.findByText('The search found nobody by this name, so nothing was suggested.')).toHaveClass('muted');
+    expect(screen.getByRole('button', { name: 'Enrich' })).toBeEnabled();
+  });
 
   it('lists each suggestion between Fields and Qualification', async () => {
     withSuggestions();
