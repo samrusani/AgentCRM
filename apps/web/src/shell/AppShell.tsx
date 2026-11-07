@@ -12,6 +12,7 @@ const DESTINATIONS: Array<{ to: string; label: string; icon: IconName }> = [
   { to: '/leads', label: 'Leads', icon: 'leads' },
   { to: '/relationships', label: 'Relationships', icon: 'people' },
   { to: '/pipeline', label: 'Pipeline', icon: 'pipeline' },
+  { to: '/reports', label: 'Reports', icon: 'panel' },
   { to: '/research', label: 'Research', icon: 'research' },
 ];
 

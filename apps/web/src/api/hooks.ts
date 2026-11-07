@@ -119,6 +119,17 @@ export function useHealth() {
   return useQuery({ queryKey: ['health'], queryFn: api.health });
 }
 
+// Reports are computed live on the server and never written to, so there is nothing to invalidate. A short stale
+// time keeps a period switch back and forth from refetching.
+export function useReports(days: number | null, pipelineId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['reports', days, pipelineId ?? ''],
+    queryFn: () => api.reports(days, pipelineId),
+    enabled,
+    staleTime: 15_000,
+  });
+}
+
 export function useToday() {
   const connection = useEventConnection();
   return useQuery({

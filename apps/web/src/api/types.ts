@@ -280,6 +280,35 @@ export interface TodayData {
   counts: Record<string, number>;
 }
 
+export interface ReportMoney {
+  currency: string;
+  amount: number;
+}
+
+export type ReportSource = 'mailbox' | 'linkedin' | 'csv' | 'captured' | 'manual';
+
+export interface ReportsData {
+  pipeline: Array<{
+    stageId: string;
+    name: string;
+    seq: number;
+    openCount: number;
+    openAmounts: ReportMoney[];
+    passedCount: number;
+    passedAmounts: ReportMoney[];
+    lostCount: number;
+    lostAmounts: ReportMoney[];
+  }>;
+  stageFlow: Array<{ stageId: string; name: string; seq: number; entered: number }>;
+  intake: { weeks: Array<{ weekStart: string; total: number; bySource: Record<ReportSource, number> }> };
+  outreach: { sends: number; replies: number; bounces: number; optOuts: number };
+  runs: {
+    groups: Array<{ kind: string; status: string; count: number }>;
+    estimatedUsd: number;
+    runsWithEstimate: number;
+  };
+}
+
 export interface SearchResults {
   people: Person[];
   organizations: Organization[];

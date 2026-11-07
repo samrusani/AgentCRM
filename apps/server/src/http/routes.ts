@@ -100,6 +100,7 @@ import { getRunDetail, listApprovals, listRuns, requireApproval } from '../queri
 import { searchAll } from '../queries/search.js';
 import { getMailSummary, listSendIntents, listSuppressions } from '../queries/sendIntents.js';
 import { listTasks } from '../queries/tasks.js';
+import { getReports } from '../queries/reports.js';
 import { getToday } from '../queries/today.js';
 import { requireWorkspace } from '../queries/workspace.js';
 import type { AppOptions } from './app.js';
@@ -130,6 +131,10 @@ const opportunitiesQuery = z.object({
   stageId: z.string().optional(),
   status: z.enum(['open', 'passed', 'lost', 'nurture']).optional(),
   ...pagingQuery,
+});
+const reportsQuery = z.object({
+  days: z.enum(['30', '90', '365']).transform(Number).optional(),
+  pipelineId: z.string().min(1).optional(),
 });
 const tasksQuery = z.object({ filter: z.enum(['today', 'overdue', 'open', 'done']).optional(), ...pagingQuery });
 const activitiesQuery = z.object({
@@ -215,6 +220,14 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   app.put('/api/imports/settings', async (request) => setImportSettings(context(), request.body));
 
   app.get('/api/today', async () => getToday(db, workspaceId()));
+
+  // Read only and computed live. A pipelineId that names no pipeline answers 200 with empty pipeline sections
+  // instead of 404, so a stale link or a deleted pipeline still renders the screen.
+  app.get('/api/reports', async (request) => {
+    const query = parseInput(reportsQuery, request.query);
+    const now = new Date((options.now ?? (() => new Date().toISOString()))());
+    return getReports(db, workspaceId(), (query.days ?? null) as 30 | 90 | 365 | null, query.pipelineId ?? null, now);
+  });
 
   app.get('/api/people', async (request) =>
     listPeople(db, workspaceId(), parseInput(peopleQuery, request.query)),

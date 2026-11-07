@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { EmptyState } from './components/common';
 import { Pipeline } from './screens/Pipeline';
 import { Leads, Relationships } from './screens/Relationships';
+import { Reports } from './screens/Reports';
 import { Research } from './screens/Research';
 import { ConnectorSettings } from './screens/ConnectorSettings';
 import { ModelProviderSettings } from './screens/ModelProviderSettings';
@@ -20,6 +21,7 @@ export function App() {
         <Route path="/leads" element={<Leads />} />
         <Route path="/relationships" element={<Relationships />} />
         <Route path="/pipeline" element={<Pipeline />} />
+        <Route path="/reports" element={<Reports />} />
         <Route path="/research" element={<Research />} />
         <Route path="/settings" element={<Settings />}>
           <Route index element={<Navigate to="/settings/general" replace />} />

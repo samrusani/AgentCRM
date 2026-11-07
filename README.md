@@ -4,7 +4,7 @@
 
 **The CRM that people and AI agents operate together.**
 
-<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-2690-15685b?style=flat" alt="2690 tests">
+<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-2747-15685b?style=flat" alt="2747 tests">
 
 [Quick start](#quick-start) · [What works](#what-works-today) · [Architecture docs](docs/architecture.md)
 
@@ -89,7 +89,7 @@ Run it from the repository root, or make the `--prefix` path absolute. Keep `--s
 
 ## What works today
 
-Every row below is backed by tests: 2,690 across the server (1,786), the web app (622), and the browser extension (282). "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
+Every row below is backed by tests: 2,747 across the server (1,825), the web app (640), and the browser extension (282). "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
 
 ### Core CRM
 
@@ -103,6 +103,7 @@ Every row below is backed by tests: 2,690 across the server (1,786), the web app
 | Evidence: field claims with source and verification status | Working, synthetic sources |
 | Templates: startup fundraising, fund LP fundraising, client sales, applied per pipeline with a guided switch that maps stages | Working |
 | Qualification: editable criteria, per criterion verdicts with evidence, fit sort | Working; unknown never counts as a match |
+| Reports: pipeline state and closures, stage flow, weekly intake by source, outreach outcomes, and run spend, all computed live from the local database with estimates labelled as such | Working, read only |
 | Backup and restore: consistent snapshots and a guarded restore | Working, CLI |
 | Performance: measured against the published budgets at 100,000 people and 1,000,000 activities | 9 of 9 budgets pass; see docs/performance.md |
 

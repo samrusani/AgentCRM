@@ -919,3 +919,102 @@
 .panel__model--attention {
   color: var(--warn);
 }
+
+/* Reports: cards reuse the Today grid and card language; bars are plain divs with the value as text beside them. */
+.reports-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.report-note {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+.report-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.report-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 38%) minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 13px;
+}
+.report-row__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.report-row__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.report-bar {
+  display: flex;
+  flex: 0 1 auto;
+  height: 12px;
+  min-width: 2px;
+  overflow: hidden;
+  border-radius: 3px;
+}
+.report-bar__fill {
+  height: 100%;
+  background: var(--accent-tint);
+}
+.report-bar__fill--2 {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.report-bar__fill--3 {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.report-bar__fill--4 {
+  background: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.report-bar__fill--5 {
+  background: color-mix(in srgb, var(--ink-muted) 25%, transparent);
+}
+.report-row__value {
+  font-size: 12px;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+.report-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+.report-legend__swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  border-radius: 2px;
+  vertical-align: baseline;
+}
+.report-figures {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+.report-figure dt {
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+.report-figure dd {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}

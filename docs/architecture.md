@@ -404,6 +404,7 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 | GET `/api/organizations?q=&cursor=&limit=` | Search by name, domain |
 | GET `/api/organizations/:id` | Organization plus `people`, `claims`, `activities`, `opportunities` |
 | PATCH `/api/organizations/:id` | `{ expectedVersion, fields }`; `linkedinUrl` is editable and canonicalized to a `linkedin.com/company/` URL |
+| GET `/api/reports?days=&pipelineId=` | The reports shape (see Reports); read only, human surface |
 | GET `/api/pipelines` | Pipelines with ordered stages, each with its `template` and `version` |
 | POST `/api/pipelines` | `{ name, template }`, creates a pipeline with the template's stage set |
 | PATCH `/api/pipelines/:id` | `{ expectedVersion, fields: { name } }`, rename only |
@@ -496,6 +497,20 @@ The sender of a stored message is read the way RFC 5322 means it: quoted display
 Mailbox capture is a run of kind `mailbox_capture` (origin `user` only, no MCP tool, agent origin rejected), started from the web with an optional `sinceDays` window (1 to 3650, default all stored mail). Its ledger mirrors the CSV import: scan and stage, validate, dedupe, review. The scan aggregates one candidate per correspondent address: the from address of every stored inbound row plus every recipient of every stored outbound row inside the window, case folded, excluding addresses that belong to a connected mail account, suppressed addresses, addresses already on a person, and machine senders (a documented prefix list on the local part: no-reply, noreply, do-not-reply, donotreply, mailer-daemon, postmaster, bounce, bounces, notification, notifications, alert, alerts, newsletter, unsubscribe; the review gate is the real filter, so the list stays short and conservative). Each staged row maps `email` and, when any stored row carries one, the most recent non empty `name` for that address; its raw column keeps counts only, `{ email, name, inbound, outbound, firstSeenAt, lastSeenAt }`, never subjects or body text, so message content cannot reach the review surface or a claim. Batch `source_kind` is `mailbox`, `source_ref` is `{ sinceDays, scannedMessages, correspondents }`. Validation and dedupe follow the CSV rules exactly (email against existing people and pending batches; a rejected correspondent reappears on a later scan, the same documented limit as re-importing a CSV). The `import_review` payload's sample rows carry email, name, inbound, outbound, and lastSeenAt so the human can judge each correspondent. Accept creates people as leads with claims per field (`source_type` `import`, source URL null, extraction method `mailbox:scan`), tags `mailbox-import` and `via-<runId>`, links the address's stored messages to the new person in the same transaction, and, when any linked inbound mail exists, promotes the person with reason `replied` in that same transaction, because that person has already written to the user; this is the one promotion that fires from stored mail, and it fires only at accept time on a freshly created person, so a manual demotion can never be undone by it.
 
 Interaction history: `GET /api/people/:id` gains `interaction: { lastInboundAt, lastOutboundAt, inbound, outbound }`, null when the person has no linked messages, computed live from `email_message` via the existing person index. It is derived presentation, not a claim, and it is left out of model facing reads in this version (documented; counts and dates may open to agents later as a deliberate decision). The person sheet renders it as one plain line.
+
+## Reports
+
+Reports answer, from the local database alone, how the pipeline and the intake are doing. Everything is computed live from existing tables at read time: no new tables, no snapshots, no migration, no model call, and no network. Numbers derived from list prices or usage estimates keep the word estimate next to them, as everywhere else.
+
+`GET /api/reports?days=&pipelineId=` answers one JSON shape for a period (`days` one of 30, 90, 365, or absent for all time; `pipelineId` scopes the pipeline sections and defaults to the first pipeline):
+
+- `pipeline`: per stage of the chosen pipeline, the open deal count and amount sums now, plus `passed` and `lost` counts and amount sums for deals in those statuses whose `updated_at` falls inside the period (status is current state, so the period filter is an approximation stated in the UI copy). A deal carries its own currency, so every amount sum is per currency, never a mixed total.
+- `stageFlow`: per stage, how many deals ENTERED it inside the period, read from `stage_event` rows (creation counts as entering the first recorded stage), so conversion between neighbouring stages can be judged; re-entries count again and the UI says so.
+- `intake`: people created inside the period, bucketed by week and by source, where source is read from the person's tags in precedence order (`mailbox-import`, `linkedin-leads`, `csv-import`, `captured`, else manual), which is how imports already label their people.
+- `outreach`: inside the period, send intents accepted, replies (inbound linked messages), bounces, and opt outs, from `send_intent`, `email_message`, and `suppression`.
+- `runs`: runs finished inside the period bucketed by kind and status, with the sum of their `counts.estimatedUsd` where present, labelled an estimate.
+
+Reports are a human surface in this version: no MCP tool reads them and nothing from reports reaches a model facing read (the underlying records are already readable by agents through their own gates; the aggregates add nothing new, but the surface stays closed until opening it is a deliberate decision). The route sits behind the same loopback binding as everything else.
 
 ## Pipelines and templates
 

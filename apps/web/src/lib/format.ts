@@ -38,6 +38,13 @@ export function formatDate(iso: string | null | undefined): string {
   return new Date(time).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+// A report week is keyed by its Monday (UTC) as YYYY-MM-DD and labelled "3 Nov" style, never shifted by the local zone.
+export function formatWeek(weekStart: string): string {
+  const time = Date.parse(`${weekStart}T00:00:00.000Z`);
+  if (Number.isNaN(time)) return weekStart;
+  return new Date(time).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+}
+
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '';
   const time = Date.parse(iso);

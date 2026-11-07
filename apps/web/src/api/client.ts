@@ -72,6 +72,7 @@ import type {
   Suppression,
   Task,
   TodayData,
+  ReportsData,
   TemplateSwitchInput,
   Workspace,
   WorkspaceTemplate,
@@ -868,6 +869,19 @@ export const api = {
   // Switches one pipeline to another template; the answer is that pipeline with its new stages.
   switchTemplate: async (input: TemplateSwitchInput) =>
     normalizePipeline(await request<Pipeline>('POST', '/workspace/template', { body: input })),
+
+  // Read only. days is 30, 90, 365, or null for all time.
+  reports: async (days: number | null, pipelineId: string | undefined): Promise<ReportsData> => {
+    // A section the server left out reads as empty, like api.today's lists, so the screen never maps undefined.
+    const data = objectOrEmpty(await request<unknown>('GET', '/reports', { query: { days, pipelineId } }));
+    return {
+      pipeline: toArray(data.pipeline),
+      stageFlow: toArray(data.stageFlow),
+      intake: { weeks: toArray(objectOrEmpty(data.intake).weeks) },
+      outreach: { sends: 0, replies: 0, bounces: 0, optOuts: 0, ...objectOrEmpty(data.outreach) },
+      runs: { estimatedUsd: 0, runsWithEstimate: 0, ...objectOrEmpty(data.runs), groups: toArray(objectOrEmpty(data.runs).groups) },
+    } as ReportsData;
+  },
 
   today: async (): Promise<TodayData> => {
     const data = await request<Partial<TodayData>>('GET', '/today');
