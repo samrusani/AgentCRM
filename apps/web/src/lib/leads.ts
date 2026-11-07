@@ -36,12 +36,19 @@ function safeDecode(value: string): string {
   }
 }
 
+// Removes the invisible format characters a copy out of a web page or message can carry: soft hyphen, zero width
+// spaces and joiners, direction marks and embeddings, word joiner and invisible operators, and the byte order mark.
+// String.trim leaves these in, so a field holding only these would otherwise read as filled in.
+export function stripInvisible(text: string): string {
+  return text.replace(/[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, '');
+}
+
 // A pasted link is rarely the bare link. A copy out of post text or a message brings invisible formatting characters,
 // wrapping quotes or brackets, and trailing punctuation along, and none of those can appear where they sit in an
 // accepted post link. They are removed before the shape check, and the tidied link is what the run receives.
 // The server still validates whatever it is sent.
 export function tidyLink(url: string): string {
-  const visible = url.replace(/[­​-‏‪-‮⁠-⁯﻿]/g, '').trim();
+  const visible = stripInvisible(url).trim();
   return visible.replace(/^[('"‘“‹«[{<]+/, '').replace(/[.,;:!?'"…’”›»)\]}>]+$/, '');
 }
 

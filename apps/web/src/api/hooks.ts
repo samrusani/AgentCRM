@@ -313,6 +313,12 @@ export function usePatchPerson() {
       void queryClient.invalidateQueries({ queryKey: ['person', input.id] });
       // An organization counts as a relationship when one of its people is, so a lifecycle change can move it.
       if ('lifecycle' in input.fields) void queryClient.invalidateQueries({ queryKey: ['organizations'] });
+      // Linking or unlinking changes the people list on both organization sheets.
+      if ('organizationId' in input.fields) {
+        void queryClient.invalidateQueries({ queryKey: ['organizations'] });
+        void queryClient.invalidateQueries({ queryKey: ['organization'] });
+        void queryClient.invalidateQueries({ queryKey: ['search'] });
+      }
     },
   });
 }
@@ -323,6 +329,17 @@ export function useCreatePerson() {
     mutationFn: (input: NewPersonInput) => api.people.create(input),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['people'] });
+      void queryClient.invalidateQueries({ queryKey: ['organizations'] });
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
+    },
+  });
+}
+
+export function useCreateOrganization() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string }) => api.organizations.create(input),
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['organizations'] });
       void queryClient.invalidateQueries({ queryKey: ['search'] });
     },

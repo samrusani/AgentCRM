@@ -860,6 +860,7 @@ export const api = {
       );
       return { ...page, items: page.items.map(normalizeOrganization) };
     },
+    create: (input: { name: string }) => request<Organization>('POST', '/organizations', { body: input }),
     get: async (id: string) =>
       normalizeOrganizationDetail(await request<unknown>('GET', `/organizations/${id}`)),
     patch: (id: string, expectedVersion: number, fields: Record<string, unknown>) =>

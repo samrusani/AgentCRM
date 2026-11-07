@@ -2319,6 +2319,14 @@ fieldset.connector__form > legend {
   white-space: nowrap;
   font-weight: 550;
 }
+.picker__option[aria-disabled='true'] {
+  cursor: default;
+  opacity: 0.6;
+}
+.picker__option--create .picker__option-name {
+  max-width: 100%;
+  font-weight: 450;
+}
 .picker__option-detail {
   min-width: 0;
   overflow: hidden;

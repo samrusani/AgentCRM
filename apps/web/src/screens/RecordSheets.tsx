@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { isVersionConflict } from '../api/client';
 import type { Claim, Lifecycle } from '../api/types';
-import { useOrganization, usePatchOrganization, usePatchPerson, usePerson } from '../api/hooks';
+import { useCreateOrganization, useOrganization, usePatchOrganization, usePatchPerson, usePerson } from '../api/hooks';
 import { ErrorState, Loading, Sheet, errorMessage } from '../components/common';
 import { TaskRow } from '../components/TaskRow';
 import {
@@ -21,7 +21,9 @@ import {
 import { Chip } from '../components/common';
 import { EnrichControl, EnrichmentSuggestions, OrganizationEnrichControl, OrganizationEnrichmentSuggestions } from '../components/enrichment';
 import { PersonFollowupLine } from '../components/followups';
+import { Icon } from '../components/Icons';
 import { QualificationSection } from '../components/qualification';
+import { RecordPicker, type PickedRecord } from '../components/RecordPicker';
 import { NewOpportunitySheet } from './NewOpportunitySheet';
 import { describeDue, formatAgo, humanize, personName } from '../lib/format';
 import { useUI, type SelectedRecord } from '../lib/ui';
@@ -113,6 +115,201 @@ function LifecycleValue({
   );
 }
 
+interface OrganizationProblem {
+  kind: 'conflict' | 'error';
+  message: string;
+}
+
+// The person's Organization row. It reads like the other editable fields, but editing swaps in the record picker.
+// Choosing an organization saves at once. Escape or a click outside cancels without saving.
+function OrganizationValue({
+  organization,
+  save,
+  onOpen,
+  onReload,
+}: {
+  organization: { id: string; name: string } | null;
+  save: (organizationId: string | null) => Promise<void>;
+  onOpen: (id: string) => void;
+  onReload: () => Promise<unknown>;
+}) {
+  const createOrganization = useCreateOrganization();
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [problem, setProblem] = useState<OrganizationProblem | null>(null);
+  const editRef = useRef<HTMLDivElement>(null);
+  const pencilRef = useRef<HTMLButtonElement>(null);
+  const wasEditing = useRef(false);
+  // The organization a create just made. If the link that follows fails, the failure names it.
+  const createdRef = useRef<PickedRecord | null>(null);
+  // A create or a save in flight owns the row, so cancelling waits for it.
+  const working = saving || createOrganization.isPending;
+
+  useEffect(() => {
+    if (wasEditing.current && !editing) pencilRef.current?.focus();
+    wasEditing.current = editing;
+    if (!editing) createdRef.current = null;
+  }, [editing]);
+
+  const stopEditing = () => {
+    setEditing(false);
+    setProblem(null);
+  };
+
+  useEffect(() => {
+    if (!editing || working) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (event.target instanceof Node && !editRef.current?.contains(event.target)) stopEditing();
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [editing, working]);
+
+  // While editing, Escape never reaches the sheet, whatever holds focus: the disabled input during a create, the
+  // "Saving..." text, or the page body after a click on the note. The picker's own handler closes its open list first.
+  // Otherwise Escape cancels the edit, or does nothing while a create or save is in flight.
+  useEffect(() => {
+    if (!editing) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      const target = event.target;
+      const row = editRef.current;
+      const pickerListOpen =
+        target instanceof HTMLInputElement &&
+        target.getAttribute('role') === 'combobox' &&
+        Boolean(row?.contains(target) && row.querySelector('[role="listbox"]'));
+      if (pickerListOpen) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!working) stopEditing();
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [editing, working]);
+
+  const commit = async (organizationId: string | null) => {
+    setSaving(true);
+    setProblem(null);
+    try {
+      await save(organizationId);
+      createdRef.current = null;
+      setEditing(false);
+    } catch (error) {
+      const created = createdRef.current;
+      if (isVersionConflict(error)) {
+        // Refetch so a second pick without Reload carries the current version.
+        void onReload();
+        const current = (error.current ?? {}) as Record<string, unknown>;
+        const currentName = current.organizationName;
+        setProblem({
+          kind: 'conflict',
+          message: `The organization changed since you opened this record. ${
+            typeof currentName === 'string' && currentName
+              ? `It is now "${currentName}".`
+              : 'The current value is different from the one you saw.'
+          } Your change was not saved.`,
+        });
+      } else if (created && created.id === organizationId) {
+        setProblem({
+          kind: 'error',
+          message: `"${created.name}" was added but not linked. Search for it and pick it to finish linking.`,
+        });
+      } else {
+        setProblem({ kind: 'error', message: `${errorMessage(error)} The organization was not changed.` });
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // The create resolves to a picked record, so a new organization saves through the same path as an existing one.
+  const create = async (name: string): Promise<PickedRecord> => {
+    const created = await createOrganization.mutateAsync({ name });
+    createdRef.current = { id: created.id, name: created.name };
+    return { id: created.id, name: created.name };
+  };
+
+  const reload = async () => {
+    await onReload();
+    stopEditing();
+  };
+
+  if (!editing) {
+    return (
+      <div className="editable">
+        {organization ? (
+          <button type="button" className="link link--button" onClick={() => onOpen(organization.id)}>
+            {organization.name}
+          </button>
+        ) : (
+          <span className="muted">None</span>
+        )}
+        <button
+          ref={pencilRef}
+          type="button"
+          className="icon-btn icon-btn--small"
+          aria-label="Edit organization"
+          onClick={() => {
+            setProblem(null);
+            setEditing(true);
+          }}
+        >
+          <Icon name="pencil" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="editable" ref={editRef}>
+      {saving ? (
+        <span className="muted" role="status">
+          Saving...
+        </span>
+      ) : (
+        <div className="editable__input">
+          <RecordPicker
+            kind="organization"
+            label="Organization"
+            hideLabel
+            autoFocus
+            value={null}
+            onChange={(record) => {
+              if (record) void commit(record.id);
+            }}
+            onCreate={create}
+          />
+        </div>
+      )}
+      {organization && !saving && !createOrganization.isPending ? (
+        <button
+          type="button"
+          className="btn btn--quiet"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => void commit(null)}
+        >
+          Remove organization
+        </button>
+      ) : null}
+      {problem?.kind === 'conflict' ? (
+        <div className="conflict" role="alert">
+          <p>{problem.message}</p>
+          <div className="conflict__actions">
+            <button type="button" className="btn" onMouseDown={(event) => event.preventDefault()} onClick={() => void reload()}>
+              Reload record
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {problem?.kind === 'error' ? (
+        <p className="muted" role="alert">
+          {problem.message}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function PersonSheet({
   id,
   onClose,
@@ -141,6 +338,13 @@ export function PersonSheet({
       expectedVersion: versionOverride ?? person.version,
       fields: { [field]: value === '' ? null : value },
     });
+    await query.refetch();
+  };
+
+  // An organization id links the person; null removes the link. The server checks that the organization exists.
+  const saveOrganization = async (organizationId: string | null) => {
+    if (!person) return;
+    await patch.mutateAsync({ id, expectedVersion: person.version, fields: { organizationId } });
     await query.refetch();
   };
 
@@ -193,13 +397,12 @@ export function PersonSheet({
                 <EditableValue label="Title" field="title" value={person.title} save={saveField('title')} onReload={() => query.refetch()} />
               </FieldRow>
               <FieldRow label="Organization" claims={claimsForField(person.claims, 'organizationId')} openClaim={openClaim} onToggleClaim={toggleClaim}>
-                {person.organization ? (
-                  <button type="button" className="link link--button" onClick={() => onOpenOrganization(person.organization!.id)}>
-                    {person.organization.name}
-                  </button>
-                ) : (
-                  <span className="muted">None</span>
-                )}
+                <OrganizationValue
+                  organization={person.organization ? { id: person.organization.id, name: person.organization.name } : null}
+                  save={saveOrganization}
+                  onOpen={onOpenOrganization}
+                  onReload={() => query.refetch()}
+                />
               </FieldRow>
               <FieldRow label="Email" claims={claimsForField(person.claims, 'email')} openClaim={openClaim} onToggleClaim={toggleClaim}>
                 <span className={person.email ? '' : 'muted'}>{person.email || 'Not set'}</span>

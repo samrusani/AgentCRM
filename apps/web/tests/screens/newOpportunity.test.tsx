@@ -407,6 +407,8 @@ describe('Record picker', () => {
     expect(input).toHaveFocus();
   });
 
+  // The picker creates records only when a call site passes onCreate (the person sheet's Organization row does).
+  // The new opportunity sheet does not, so its pickers still never create.
   it('searches through the search endpoint and never creates a record', async () => {
     const { user } = renderSheet();
     await sheetReady();
