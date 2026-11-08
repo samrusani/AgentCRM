@@ -707,6 +707,8 @@ export interface ImportReviewPayload {
   transcript: boolean;
   // True for a mailbox capture: the people come from mail already synced to this computer.
   mailbox: boolean;
+  // Mailbox reviews: how many staged people have written to the user, so accepting promotes them. Null on other imports and on reviews created before this field existed.
+  willPromote: number | null;
   counts: ImportCounts;
   sample: ImportSampleRow[];
 }

@@ -745,12 +745,12 @@ describe('lookup and inline chip (second wave)', () => {
     expect(text(h)).toBe('Add to AgentCRM');
   });
 
-  it('CONFIRMS: a content script instance left behind by an extension reload keeps its own host, so the page ends up with two chips', async () => {
+  it('KILLS: a second instance sweeps the first one\'s host on its first check, so the page never shows two chips (exclusive mount)', async () => {
     await boot('linkedin', '/in/jane', '<body><div id="row"><h1>Jane Doe</h1></div></body>', () => none);
     expect(hosts()).toHaveLength(1);
     vi.resetModules();
     await import('../src/content/linkedin');
-    expect(hosts()).toHaveLength(2);
+    expect(hosts()).toHaveLength(1);
   });
 });
 

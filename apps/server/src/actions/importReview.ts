@@ -766,6 +766,25 @@ export function requestImportReview(tx: Tx, runId: string, seq: number, request:
       ? { ...base, title: mapped.title, linkedinUrl: mapped.linkedinUrl, kind: mapped.kind === 'organization' ? 'organization' : 'person' }
       : base;
   });
+  // A mailbox accept promotes each new person with stored inbound mail, so count those staged rows now, with the
+  // predicate the accept applies: any unfiled stored inbound message from the row's address, across all stored mail,
+  // not just the scanned window, because linkStoredMessagesToPerson links everything whatever window the scan used.
+  const willPromote =
+    batch.sourceKind === 'mailbox'
+      ? (
+          tx.db
+            .prepare(
+              `SELECT COUNT(*) AS n FROM import_row r
+               WHERE r.batch_id = ? AND r.status = 'staged'
+                 AND EXISTS (
+                   SELECT 1 FROM email_message m
+                   WHERE m.workspace_id = ? AND m.person_id IS NULL AND m.direction = 'in'
+                     AND m.from_email = lower(trim(json_extract(r.mapped, '$.email')))
+                 )`,
+            )
+            .get(batch.id, tx.workspaceId) as { n: number }
+        ).n
+      : null;
   const payload = {
     batchId: batch.id,
     ...request.payloadSource,
@@ -775,6 +794,7 @@ export function requestImportReview(tx: Tx, runId: string, seq: number, request:
       duplicates: counts.duplicates,
       invalid: counts.invalid,
     },
+    ...(willPromote === null ? {} : { willPromote }),
     sample,
   };
   const serialized = JSON.stringify(payload);

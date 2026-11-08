@@ -292,10 +292,26 @@ describe('scan and staging', () => {
       batchId: expect.any(String),
       sinceDays: null,
       counts: { fetched: 1, staged: 1, duplicates: 0, invalid: 0 },
+      willPromote: 1,
       sample: [{ email: 'ada@lanternrow.invalid', name: 'Ada Quill', inbound: 2, outbound: 1, lastSeenAt: daysAgo(env, 2) }],
     });
     const steps = getRunDetail(env.db, env.workspaceId, run.id).steps;
     expect(steps.map((step) => step.status)).toEqual(['done', 'done', 'done', 'done']);
+  });
+
+  it('counts willPromote as the staged rows with inbound mail, not rows with only outbound mail or duplicates', () => {
+    const env = freshEnv();
+    store(env, { direction: 'in', from: 'ada@lanternrow.invalid', at: daysAgo(env, 4) });
+    store(env, { direction: 'in', from: 'cy@lanternrow.invalid', at: daysAgo(env, 4) });
+    store(env, { direction: 'out', to: ['ben@lanternrow.invalid'], at: daysAgo(env, 3) });
+    store(env, { direction: 'out', to: ['ben@lanternrow.invalid'], at: daysAgo(env, 2) });
+    store(env, { direction: 'in', from: 'dup@lanternrow.invalid', at: daysAgo(env, 4) });
+    const run = startMailboxCapture(env.ctx, {});
+    addPerson(env, 'Dup', 'dup@lanternrow.invalid');
+    driveRun(env, run.id, ['waiting_approval']);
+    const payload = getRunDetail(env.db, env.workspaceId, run.id).approvals[0]!.payload as Record<string, unknown>;
+    expect(payload.counts).toMatchObject({ staged: 3, duplicates: 1 });
+    expect(payload.willPromote).toBe(2);
   });
 
   it('marks an address already staged in another pending mailbox import as a duplicate', () => {

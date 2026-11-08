@@ -314,7 +314,36 @@ export function startChip(config: ChipConfig): void {
     if (state === 'idle' && response?.ok === true && response.exists === true) render('inCrm');
   };
 
+  // False once the extension was reloaded or removed: this script is then an orphan and must stop.
+  const contextAlive = (): boolean => {
+    try {
+      return typeof chrome.runtime?.id === 'string' && chrome.runtime.id.length > 0;
+    } catch {
+      return false;
+    }
+  };
+
+  // Removes every capture host in the page that is not this instance's own, such as one an orphaned script left behind.
+  const sweepForeignHosts = () => {
+    for (const el of Array.from(document.querySelectorAll('#agentcrm-capture-host'))) {
+      if (el !== host) el.remove();
+    }
+  };
+
+  let dead = false;
+  let interval: ReturnType<typeof setInterval> | undefined;
+
   const check = () => {
+    if (dead) return;
+    if (!contextAlive()) {
+      dead = true;
+      if (interval !== undefined) clearInterval(interval);
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
+      unmount();
+      return;
+    }
+    sweepForeignHosts();
     const key = currentKey();
     if (key !== lastKey) {
       lastKey = key;
@@ -332,9 +361,11 @@ export function startChip(config: ChipConfig): void {
   };
 
   check();
+  // An instance whose first check already found the context dead starts nothing: no poll, no listener.
+  if (dead) return;
   // A page script can dispatch a synthetic popstate; only the browser's own (trusted) ones count. The poll covers the rest.
   window.addEventListener('popstate', (event) => {
     if (event.isTrusted) check();
   });
-  setInterval(check, 800);
+  interval = setInterval(check, 800);
 }

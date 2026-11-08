@@ -525,3 +525,68 @@ describe('linkedin live structure end to end', () => {
     expect('phone' in h.sent('capture')[0]!.payload).toBe(false);
   });
 });
+
+describe('orphaned content script and exclusive mount', () => {
+  const PAGE = '<body><div id="row"><h1>Jane Doe</h1></div></body>';
+
+  it('tears down on the first tick after the extension id disappears, and later ticks do nothing', async () => {
+    const h = await boot('linkedin', '/in/jane', PAGE, reply(NOT_IN_CRM));
+    expect(h.hosts()).toHaveLength(1);
+    vi.stubGlobal('chrome', { runtime: { sendMessage: h.sendMessage, id: undefined } });
+    await h.settle(900);
+    expect(h.hosts()).toHaveLength(0);
+    // The interval is cleared: a removed anchor would otherwise bring the chip back.
+    document.body.innerHTML = '<div id="row2"><h1>Jane Doe</h1></div>';
+    await h.settle(5000);
+    expect(h.hosts()).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('treats an empty extension id as dead', async () => {
+    const h = await boot('linkedin', '/in/jane', PAGE, reply(NOT_IN_CRM));
+    vi.stubGlobal('chrome', { runtime: { sendMessage: h.sendMessage, id: '' } });
+    await h.settle(900);
+    expect(h.hosts()).toHaveLength(0);
+  });
+
+  it('treats a throwing chrome.runtime access as dead', async () => {
+    const h = await boot('linkedin', '/in/jane', PAGE, reply(NOT_IN_CRM));
+    expect(h.hosts()).toHaveLength(1);
+    vi.stubGlobal('chrome', {
+      get runtime(): never {
+        throw new Error('Extension context invalidated.');
+      },
+    });
+    await h.settle(900);
+    expect(h.hosts()).toHaveLength(0);
+    document.body.innerHTML = '<div id="row2"><h1>Jane Doe</h1></div>';
+    await h.settle(5000);
+    expect(h.hosts()).toHaveLength(0);
+  });
+
+  it('removes a stale host planted by an older instance, leaving exactly the live one', async () => {
+    const h = await boot('linkedin', '/in/jane', PAGE, reply(NOT_IN_CRM));
+    const own = h.host()!;
+    const stale = document.createElement('div');
+    stale.id = 'agentcrm-capture-host';
+    document.body.append(stale);
+    expect(h.hosts()).toHaveLength(2);
+    await h.settle(900);
+    expect(h.hosts()).toEqual([own]);
+    expect(own.isConnected).toBe(true);
+  });
+
+  it('removes a stale host that was in the page before this instance mounted', async () => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    document.documentElement.innerHTML = '<body><div id="agentcrm-capture-host"></div><div id="row"><h1>Jane Doe</h1></div></body>';
+    history.pushState({}, '', '/in/jane');
+    const stale = document.getElementById('agentcrm-capture-host')!;
+    vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async () => NOT_IN_CRM), id: 'ext' } });
+    await import('../src/content/linkedin');
+    await vi.advanceTimersByTimeAsync(900);
+    const hosts = document.querySelectorAll('#agentcrm-capture-host');
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0]).not.toBe(stale);
+  });
+});

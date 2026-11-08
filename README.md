@@ -4,7 +4,7 @@
 
 **The CRM that people and AI agents operate together.**
 
-<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-3496-15685b?style=flat" alt="3496 tests">
+<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-3530-15685b?style=flat" alt="3530 tests">
 
 [Quick start](#quick-start) · [What works](#what-works-today) · [Architecture docs](docs/architecture.md)
 
@@ -93,7 +93,7 @@ The client spawns the MCP server as a child process per session and it dies with
 
 ## What works today
 
-Every row below is backed by tests: 3,496 across the server (2,415), the web app (799), and the browser extension (282), plus 7 on the desktop shell's helpers. "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
+Every row below is backed by tests: 3,530 across the server (2,422), the web app (813), and the browser extension (295), plus 7 on the desktop shell's helpers. "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
 
 ### Core CRM
 
@@ -136,7 +136,7 @@ Every row below is backed by tests: 3,496 across the server (2,415), the web app
 | Auto accept imports: an off by default setting saves staged rows from your own imports without review, with the decision still recorded; runs started by the agent always wait | Working |
 | LinkedIn lead capture: paste a post URL or a lnkd.in short link (resolved before anything is fetched), read the people and organizations named in the post text, scrape reactions and comments, enrich new people, one review; or paste the post text itself and capture with no Apify account at all | Working, verified against stubbed Apify and model APIs; runs on your own Apify account and model key, and a pasted capture needs only the model |
 | Call transcript capture: paste a call transcript and a model reads out the people and organizations it names, each with the verbatim line it was read from; every row waits for your review, nothing unverifiable is ever staged, and the transcript itself never reaches any agent surface | Working, verified against a stubbed model API; needs a connected model provider |
-| Mailbox scan: stage the people you already correspond with from mail synced to this computer, with message counts for judging each row; nothing is fetched or billed, every scan waits for your review whatever the auto accept setting, correspondents who wrote to you arrive as relationships, and every person with linked mail shows when you last heard from them and last wrote to them | Working, verified against stored mail fixtures; needs a connected mail provider |
+| Mailbox scan: stage the people you already correspond with from mail synced to this computer, with message counts for judging each row; nothing is fetched or billed, every scan waits for your review whatever the auto accept setting, correspondents who wrote to you arrive as relationships (with a review hint saying how many tasks your promotion automations would create), and every person with linked mail shows when you last heard from them and last wrote to them | Working, verified against stored mail fixtures; needs a connected mail provider |
 | Browser extension: one click capture of the LinkedIn or X profile you are viewing, with the button sitting next to the profile name and showing In CRM when the person is already saved; token guarded, nothing leaves your machine | Working; load unpacked from apps/extension, generate the token in Settings |
 
 ### Email and follow-ups

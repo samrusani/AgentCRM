@@ -109,6 +109,7 @@ export function parseImportReviewPayload(payload: unknown): ImportReviewPayload 
     transcript: record.transcript === true,
     // Only a mailbox capture review carries the window it scanned, even when that is all mail (null).
     mailbox: 'sinceDays' in record,
+    willPromote: optionalCount(record.willPromote),
     counts: normalizeCounts(record.counts),
     sample,
   };

@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { Approval, ImportCounts, ImportReviewPayload } from '../api/types';
+import { useAutomations } from '../api/hooks';
 import { formatAgo } from '../lib/format';
 import { formatCount, profileLabel } from '../lib/imports';
 
@@ -51,6 +52,23 @@ export function batchHref(batchId: string, runId: string | null): string {
   if (runId) params.set('run', runId);
   params.set('batch', batchId);
   return `/research?${params.toString()}`;
+}
+
+// Advisory only: shows how many tasks accepting would create, from the enabled person_promoted rules read live.
+// It renders nothing until the rules have loaded, and when no rule would fire.
+function PromotionHint({ willPromote }: { willPromote: number }) {
+  const automations = useAutomations();
+  if (!automations.data) return null;
+  const rules = automations.data.filter((rule) => rule.enabled === true && rule.triggerKind === 'person_promoted').length;
+  if (rules === 0) return null;
+  const tasks = willPromote * rules;
+  return (
+    <p className="muted">
+      Accepting promotes up to <span className="num">{formatCount(willPromote)}</span>{' '}
+      {willPromote === 1 ? 'person who has' : 'people who have'} written to you. Up to <span className="num">{formatCount(tasks)}</span> {tasks === 1 ? 'task' : 'tasks'} will be created by{' '}
+      <span className="num">{formatCount(rules)}</span> automation {rules === 1 ? 'rule' : 'rules'}.
+    </p>
+  );
 }
 
 export function ImportReviewBody({ approval, review }: { approval: Approval; review: ImportReviewPayload }) {
@@ -165,6 +183,9 @@ export function ImportReviewBody({ approval, review }: { approval: Approval; rev
           Showing <span className="num">{sample.length}</span> of <span className="num">{formatCount(counts.staged)}</span>{' '}
           staged rows.
         </p>
+      ) : null}
+      {review.mailbox && review.willPromote !== null && review.willPromote > 0 ? (
+        <PromotionHint willPromote={review.willPromote} />
       ) : null}
       <p className="muted">
         Duplicates and invalid rows are not imported. Each one lists its reason in the batch.

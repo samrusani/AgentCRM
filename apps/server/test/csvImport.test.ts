@@ -208,6 +208,7 @@ describe('csv staging', () => {
     const approval = waiting.approvals[0]!;
     expect(approval).toMatchObject({ kind: 'import_review', status: 'pending', title: 'Review 1 imported row from leads.csv' });
     expect(approval.payload).toMatchObject({ batchId, fileName: 'leads.csv', counts: { fetched: 4, staged: 1, duplicates: 2, invalid: 1 } });
+    expect(approval.payload).not.toHaveProperty('willPromote');
 
     const reviewed = await get(`/api/imports/${batchId}`);
     expect(reviewed.body.status).toBe('awaiting_review');
