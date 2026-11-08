@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { AppError } from './errors.js';
 import { backfillProfileUrls } from './actions/profileUrls.js';
 import { migrationsDirectory, repoRoot, resolveDatabasePath } from './paths.js';
 
@@ -53,6 +54,33 @@ export function appliedMigrations(db: Db): string[] {
   return (db.prepare('SELECT name FROM migrations ORDER BY name').all() as { name: string }[]).map(
     (row) => row.name,
   );
+}
+
+export interface SchemaGuard {
+  check(): void;
+}
+
+const staleServerMessage =
+  'The database schema changed after this server started, usually because AgentCRM was updated. Start a new client session so a fresh server runs the current code.';
+
+// Snapshots the applied migrations now. check() throws stale_server when they differ later or cannot be read.
+// A tripped guard stays tripped without querying again: the running code cannot reload, and the file may be gone.
+export function createSchemaGuard(db: Db): SchemaGuard {
+  const snapshot = new Set(appliedMigrations(db));
+  let tripped = false;
+  return {
+    check() {
+      if (!tripped) {
+        try {
+          const current = appliedMigrations(db);
+          tripped = current.length !== snapshot.size || current.some((name) => !snapshot.has(name));
+        } catch {
+          tripped = true;
+        }
+      }
+      if (tripped) throw new AppError('stale_server', staleServerMessage);
+    },
+  };
 }
 
 // Data work a migration cannot do in plain SQL runs right after its file, in the same transaction.

@@ -488,6 +488,18 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 
 MCP tools call the same actions as the HTTP routes. No tool can decide an approval.
 
+### Schema staleness guard
+
+A client spawns the MCP server as a child process per session, and that process can outlive the code it was started from: updating AgentCRM applies new migrations to the database the moment a current process opens it, and restoring a backup can swap the schema under a running process. A stale process serving anyway is the failure mode this guard removes.
+
+At startup, after applying its own migrations, the MCP process memorizes the applied migration list. Before every tool call, and at the start of every worker tick in that process, it re-reads the `migrations` table (one read of a few dozen short rows) and compares the names with what it memorized. Any difference trips the guard: extra rows (an update ran), missing rows (an older snapshot was restored), or a table that cannot be read at all (the file was replaced or deleted). From that moment:
+
+- Every tool answers the error code `stale_server` with a message that names the fix: start a new client session, which spawns a fresh server running the current code. The refusal is permanent for the process, because the running JavaScript cannot reload the code on disk.
+- The process's worker stops itself and releases the worker lease, so a current process advances runs instead. The release is best effort: if even that write fails, the lease expires on its own timeout.
+- A job already mid flight when the schema changed finishes or fails under the normal retry rules; the guard prevents new work, it does not abort running work (accepted limit).
+
+The guard only reads; the one write it ever causes is the lease release. `stale_server` joins the error codes with HTTP status 503, though no HTTP route throws it today: the dev stack restarts the API server on every code change and the desktop app starts it fresh at launch, so only the long lived MCP process needs the check.
+
 ## People lists
 
 A list is a named, hand curated set of people ("UK Angels", "Energy investors"), for an overview the big tables cannot give. Migration 023 creates `list` (id prefix `lst`, workspace scoped, versioned, named like other records: trimmed, 1 to 200 characters) and `list_member` (one row per list and person, primary key on the pair, foreign keys to both, an index on `person_id`). Lists hold people only in this version; organizations are a documented gap. Membership is curation, not a fact about the person: adding or removing a member never bumps the person's version, writes no claim, and emits `record_updated` for the list, not the person. Deleting a person cascades their memberships. Tags are untouched; qualification, drafts, and capture keep scoping by tag, and lists feed no automation in this version (documented limit).

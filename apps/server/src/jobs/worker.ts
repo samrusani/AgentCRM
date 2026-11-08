@@ -277,7 +277,7 @@ export function startWorker(
   onError: (error: unknown) => void,
   // Only the API server sends and syncs mail. The MCP process never does, so an agent session cannot submit a message.
   // leaseKind says which kind of process this is for the worker lease; the API server is the preferred worker.
-  options: { recover?: boolean; mail?: boolean; leaseKind?: WorkerLeaseKind } = {},
+  options: { recover?: boolean; mail?: boolean; leaseKind?: WorkerLeaseKind; guard?: { check(): void } } = {},
 ): Worker {
   const mail = options.mail ?? true;
   if (options.recover ?? true) {
@@ -286,11 +286,34 @@ export function startWorker(
     if (mail) recoverSubmittingIntents(ctx);
   }
   const identity = newWorkerLeaseIdentity(options.leaseKind ?? 'server');
-  const timer = setInterval(createWorkerTick(ctx, identity, onError, { mail }), workerTickMilliseconds);
+  const tick = createWorkerTick(ctx, identity, onError, { mail });
+  let tripped = false;
+  const release = (): void => {
+    try {
+      releaseWorkerLease(ctx, identity);
+    } catch {
+      // Best effort. The lease expires on its own timeout.
+    }
+  };
+  const timer = setInterval(() => {
+    if (options.guard) {
+      try {
+        options.guard.check();
+      } catch {
+        // A stale process stops for good and hands the lease to a current one.
+        tripped = true;
+        clearInterval(timer);
+        release();
+        return;
+      }
+    }
+    tick();
+  }, workerTickMilliseconds);
   return {
     stop: () => {
       clearInterval(timer);
-      releaseWorkerLease(ctx, identity);
+      if (tripped) release();
+      else releaseWorkerLease(ctx, identity);
     },
   };
 }

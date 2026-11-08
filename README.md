@@ -4,7 +4,7 @@
 
 **The CRM that people and AI agents operate together.**
 
-<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-3230-15685b?style=flat" alt="3230 tests">
+<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-3264-15685b?style=flat" alt="3264 tests">
 
 [Quick start](#quick-start) · [What works](#what-works-today) · [Architecture docs](docs/architecture.md)
 
@@ -89,11 +89,11 @@ claude mcp add agentcrm -- npm run --silent mcp --prefix apps/server
 
 Run it from the repository root, or make the `--prefix` path absolute. Keep `--silent`: it stops npm from writing its own output into the stdio channel the MCP protocol uses. Other MCP clients, Codex included, can launch the same command from their config.
 
-The client spawns the MCP server as a child process per session and it dies with that session. Two consequences: a "Transport closed" error means the process ended (for example it was killed, or the machine slept), and the fix is starting a new client session, which spawns a fresh one; and after updating AgentCRM, start a new client session too, so the agent runs the new code rather than a server spawned before the update.
+The client spawns the MCP server as a child process per session and it dies with that session. Two consequences: a "Transport closed" error means the process ended (for example it was killed, or the machine slept), and the fix is starting a new client session, which spawns a fresh one; and after updating AgentCRM, start a new client session too, so the agent runs the new code rather than a server spawned before the update. A server you forget to restart notices on its own: it checks before every tool call that the database schema still matches the code it started with, and once the schema has changed (an update ran, or a backup was restored) every tool answers the error `stale_server` naming that same fix, and its job worker stands down so a current process advances runs.
 
 ## What works today
 
-Every row below is backed by tests: 3,230 across the server (2,196), the web app (752), and the browser extension (282), plus 7 on the desktop shell's helpers. "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
+Every row below is backed by tests: 3,264 across the server (2,230), the web app (752), and the browser extension (282), plus 7 on the desktop shell's helpers. "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
 
 ### Core CRM
 

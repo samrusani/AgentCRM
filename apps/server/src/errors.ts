@@ -1,4 +1,4 @@
-export type ErrorCode = 'validation' | 'not_found' | 'version_conflict' | 'conflict' | 'unauthorized' | 'internal';
+export type ErrorCode = 'validation' | 'not_found' | 'version_conflict' | 'conflict' | 'unauthorized' | 'stale_server' | 'internal';
 
 const statusByCode: Record<ErrorCode, number> = {
   validation: 400,
@@ -6,6 +6,7 @@ const statusByCode: Record<ErrorCode, number> = {
   version_conflict: 409,
   conflict: 409,
   unauthorized: 401,
+  stale_server: 503,
   internal: 500,
 };
 
