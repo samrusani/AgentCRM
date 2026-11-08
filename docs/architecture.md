@@ -516,6 +516,16 @@ Mailbox capture is a run of kind `mailbox_capture` (origin `user` only, no MCP t
 
 Interaction history: `GET /api/people/:id` gains `interaction: { lastInboundAt, lastOutboundAt, inbound, outbound }`, null when the person has no linked messages, computed live from `email_message` via the existing person index. It is derived presentation, not a claim, and it is left out of model facing reads in this version (documented; counts and dates may open to agents later as a deliberate decision). The person sheet renders it as one plain line.
 
+## The desktop app
+
+The desktop app is a thin macOS shell around the product, not a second product: an Electron main process in `apps/desktop` that starts the existing API server in-process, opens one window on it, and quits when the window closes. Nothing about the data model, the action service, or the guards changes; the shell is a different way to launch the same server.
+
+- On launch the shell starts the Fastify server on a loopback port the OS picks (never a fixed port, so a running dev stack is never collided with), with the database defaulting to `~/Library/Application Support/AgentCRM/agentcrm.db` when `AGENTCRM_DB` is not set; the env override always wins, so pointing the app at a repo database stays one variable. The folder is created on first launch, and nothing migrates data between locations: the README says which file each way of running uses.
+- The server learns to serve the built web app: when `AGENTCRM_WEB_DIST` names a folder, it serves those static files at `/` (API routes keep their prefix and win), with the SPA fallback to `index.html` for route paths; without the variable nothing is served at `/`, exactly as today. The desktop shell sets it to the bundled web build.
+- The window loads only the loopback origin, with `contextIsolation` on, `nodeIntegration` off, and no preload API; a link to any other origin opens in the default browser instead of navigating the window. The web UI needs nothing from Electron, which is the point.
+- Quit semantics: closing the window quits the app; quitting stops the worker (releasing the worker lease) and closes the server before exit, so the next process to open the database takes over cleanly.
+- Running and packaging: `npm run desktop` from the repository root builds the web app and launches the shell from source; `npm run desktop:pack` produces an unsigned local `.app` with electron-builder's directory target, enough for the owner's own machine. Signing and notarization are out of scope until the app is distributed (documented).
+
 ## Saved views
 
 A saved view is a named shortcut to a screen state: the filters a user keeps returning to ("UK angels, fit sorted", "Open deals, UK pipeline"), stored once and applied with one click. A view stores no data and no query of its own: applying one only navigates, building the URL from a whitelist, so a view can never show rows the screen's own rules would not.

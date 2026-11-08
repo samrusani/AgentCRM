@@ -1,9 +1,11 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { ZodError } from 'zod';
 import type { Db } from '../db.js';
+import { webDistDirectory } from '../config.js';
 import { AppError } from '../errors.js';
 import type { EventBus } from '../events.js';
 import { registerRoutes } from './routes.js';
+import { createStaticWeb } from './staticWeb.js';
 
 export interface AppOptions {
   db: Db;
@@ -12,6 +14,8 @@ export interface AppOptions {
   logLevel?: string;
   // Tests replace the clock so jobs and timestamps follow a fake time.
   now?: () => string;
+  // Folder holding the built web app; defaults to AGENTCRM_WEB_DIST. Null or unset serves nothing at "/".
+  webDist?: string | null;
 }
 
 // Exact match: a loopback name, optionally followed by a colon and a port of one to five digits.
@@ -62,8 +66,18 @@ export function buildApp(options: AppOptions): FastifyInstance {
     return undefined;
   });
 
-  app.setNotFoundHandler((request, reply) => {
-    reply.status(404).send(envelope('not_found', `No route matches ${request.method} ${request.url.split('?')[0]}.`));
+  const webDist = options.webDist === undefined ? webDistDirectory() : options.webDist;
+  const serveStatic = webDist ? createStaticWeb(webDist) : null;
+
+  app.setNotFoundHandler(async (request, reply) => {
+    const urlPath = request.url.split('?')[0] ?? '/';
+    if (serveStatic && (request.method === 'GET' || request.method === 'HEAD')) {
+      const file = await serveStatic(urlPath);
+      if (file) {
+        return reply.header('cache-control', file.cacheControl).type(file.contentType).send(file.body);
+      }
+    }
+    return reply.status(404).send(envelope('not_found', `No route matches ${request.method} ${urlPath}.`));
   });
 
   app.setErrorHandler((error, request, reply) => {

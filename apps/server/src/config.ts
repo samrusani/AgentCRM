@@ -6,6 +6,13 @@ export function apiPort(): number {
   return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? parsed : 4720;
 }
 
+// When set to a folder, the server also serves that built web app at "/" (the desktop shell sets it). Unset means
+// nothing is served at "/", the default for the browser and CLI setups.
+export function webDistDirectory(): string | null {
+  const raw = process.env.AGENTCRM_WEB_DIST;
+  return raw && raw.length > 0 ? raw : null;
+}
+
 export function stepIntervalMilliseconds(): number {
   const raw = process.env.AGENTCRM_STEP_MS;
   const parsed = raw ? Number(raw) : 1000;

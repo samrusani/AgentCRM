@@ -44,11 +44,14 @@ export async function startServer(options: { port?: number; databasePath?: strin
     }
     throw error;
   }
+  // Port 0 asks the OS for a free port; report the one it picked.
+  const address = app.server.address();
+  const boundPort = address && typeof address === 'object' ? address.port : port;
   const people = Number((db.prepare('SELECT COUNT(*) AS n FROM person').get() as { n: number }).n);
-  console.log(`AgentCRM API listening on http://${apiHost}:${port} (database ${displayDatabasePath(databasePath)})`);
+  console.log(`AgentCRM API listening on http://${apiHost}:${boundPort} (database ${displayDatabasePath(databasePath)})`);
   if (imapFakeEnabled()) console.log('AGENTCRM_IMAP_FAKE=1: IMAP and SMTP use an in process fake mail server. No real mail is sent or read. Debug routes are under /api/debug/imap-fake.');
   if (people === 0) console.log('The database has no records yet. Run "npm run seed" to add synthetic demo data.');
-  return { app, db, port, close };
+  return { app, db, port: boundPort, close };
 }
 
 export function runUntilSignal(server: RunningServer): void {

@@ -10,6 +10,8 @@
   },
   "scripts": {
     "setup": "npm install --no-audit --no-fund && npm install --prefix apps/server --no-audit --no-fund && npm install --prefix apps/web --no-audit --no-fund && npm install --prefix apps/extension --no-audit --no-fund",
+    "desktop": "npm run build --prefix apps/web && npm start --prefix apps/desktop",
+    "desktop:pack": "npm run build --prefix apps/web && npm run pack --prefix apps/desktop",
     "dev": "concurrently -n server,web -c blue,green \"npm run dev --prefix apps/server\" \"npm run dev --prefix apps/web\"",
     "seed": "npm run seed --prefix apps/server",
     "build": "npm run build --prefix apps/server && npm run build --prefix apps/web && npm run build --prefix apps/extension",

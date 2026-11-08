@@ -21,6 +21,9 @@ wiki/
 # Local tool config
 .claude/
 
+# Desktop shell build output
+release/
+
 # OS and editor noise
 .DS_Store
 Thumbs.db

@@ -1,0 +1,40 @@
+{
+  "name": "agentcrm-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "macOS desktop shell: starts the AgentCRM API server in process and opens one window on it.",
+  "main": "dist/main.js",
+  "author": "AgentCRM",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "npm run build && electron .",
+    "pack": "npm run build && electron-builder --dir",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  },
+  "build": {
+    "appId": "dev.agentcrm.desktop",
+    "productName": "AgentCRM",
+    "directories": { "output": "release" },
+    "files": ["dist/**/*", "package.json"],
+    "extraResources": [{ "from": "../web/dist", "to": "web" }],
+    "mac": {
+      "target": [{ "target": "dir", "arch": ["arm64"] }],
+      "identity": null,
+      "category": "public.app-category.business"
+    }
+  }
+}
