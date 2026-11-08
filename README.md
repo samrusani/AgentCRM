@@ -65,7 +65,7 @@ npm run dev
 
 Open http://127.0.0.1:5173 in your browser. The API listens on http://127.0.0.1:4720. Both bind to loopback only.
 
-Prefer a Mac app over a terminal? `npm install --prefix apps/desktop` once, then `npm run desktop` opens AgentCRM as its own window: the same server running in-process on a port the OS picks, with its database in `~/Library/Application Support/AgentCRM/` (set `AGENTCRM_DB` to use another file, such as this repository's `data/agentcrm.db`). `npm run desktop:pack` builds an unsigned local `AgentCRM.app` for your own machine. A dev stack and the app can run side by side; they only share data if you point them at the same file.
+Prefer a Mac app over a terminal? `npm install --prefix apps/desktop` once, then `npm run desktop` opens AgentCRM as its own window: the same server running in-process on a port the OS picks, with its database in `~/Library/Application Support/AgentCRM/` (set `AGENTCRM_DB` to use another file, such as this repository's `data/agentcrm.db`, or run `npm run desktop:repo`, which does exactly that). `npm run desktop:pack` builds an unsigned local `AgentCRM.app` for your own machine. A dev stack and the app can run side by side; they only share data if you point them at the same file, and after pulling new code you should relaunch the app so it never serves a database newer than itself.
 
 `npm run seed` fills the database with clearly synthetic demo data: fictional investors, funds, and companies. All demo names are invented, and any resemblance to a real person or organization is coincidental. Seeding replaces records only: your settings, connectors, and the extension's capture token survive it.
 
