@@ -370,7 +370,7 @@ describe('migration 017 on an existing database', () => {
       db.prepare('INSERT INTO stage (id, created_at, pipeline_id, name, seq) VALUES (?, ?, ?, ?, ?)').run('stg_aaaaaaaaaaaa', '2026-01-01', 'pip_aaaaaaaaaaaa', 'S', 0);
       db.prepare('INSERT INTO opportunity (id, created_at, workspace_id, name, pipeline_id, stage_id, organization_id, stage_changed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('opp_aaaaaaaaaaaa', '2026-01-01', 'wsp_1', 'Legacy round', 'pip_aaaaaaaaaaaa', 'stg_aaaaaaaaaaaa', 'org_aaaaaaaaaaaa', '2026-01-01', '2026-01-01');
 
-      expect(applyMigrations(db)).toEqual(['017_search_index.sql', '018_profile_urls.sql', '019_lifecycle.sql', '020_lifecycle_indexes.sql', '021_worker_lease.sql', '022_pipelines.sql', '023_lists.sql', '024_mailbox.sql', '025_attributes.sql', '026_birthday.sql', '027_automations.sql', '028_sequences.sql']);
+      expect(applyMigrations(db)).toEqual(['017_search_index.sql', '018_profile_urls.sql', '019_lifecycle.sql', '020_lifecycle_indexes.sql', '021_worker_lease.sql', '022_pipelines.sql', '023_lists.sql', '024_mailbox.sql', '025_attributes.sql', '026_birthday.sql', '027_automations.sql', '028_sequences.sql', '029_saved_views.sql']);
       const found = searchAll(db, 'wsp_1', 'legacy');
       expect(found.people.map((row) => row.id)).toEqual(['per_aaaaaaaaaaaa']);
       expect(found.organizations.map((row) => row.id)).toEqual(['org_aaaaaaaaaaaa']);

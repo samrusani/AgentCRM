@@ -2463,3 +2463,12 @@ fieldset.connector__form > legend {
   align-items: flex-start;
   gap: 4px;
 }
+
+.view-row {
+  padding: 6px 0;
+}
+.view-row__name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

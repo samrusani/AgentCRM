@@ -52,6 +52,9 @@ import {
   createSequence,
   deleteSequence,
   updateSequence,
+  createView,
+  deleteView,
+  updateView,
   deleteAutomation,
   updateAutomation,
   createPipeline,
@@ -105,6 +108,7 @@ import { getPersonDetail, listPeople } from '../queries/people.js';
 import { listAttributeDefs } from '../queries/attributes.js';
 import { listAutomations } from '../queries/automations.js';
 import { listSequences } from '../queries/sequences.js';
+import { listViews, viewScreens } from '../queries/views.js';
 import { listLists } from '../queries/lists.js';
 import { listPipelines } from '../queries/pipelines.js';
 import { readQualificationConfig } from '../qualification/config.js';
@@ -331,6 +335,20 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   app.patch('/api/sequences/:id', async (request) => updateSequence(context(), idParam(request.params), request.body));
   app.delete('/api/sequences/:id', async (request, reply) => {
     deleteSequence(context(), idParam(request.params));
+    return reply.status(204).send();
+  });
+
+  app.get('/api/views', async (request) => {
+    const { screen } = parseInput(z.object({ screen: z.enum(viewScreens) }).strict(), request.query);
+    return { items: listViews(db, workspaceId(), screen), nextCursor: null };
+  });
+  app.post('/api/views', async (request, reply) => {
+    reply.status(201);
+    return createView(context(), request.body);
+  });
+  app.patch('/api/views/:id', async (request) => updateView(context(), idParam(request.params), request.body));
+  app.delete('/api/views/:id', async (request, reply) => {
+    deleteView(context(), idParam(request.params));
     return reply.status(204).send();
   });
 

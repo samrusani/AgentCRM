@@ -47,6 +47,8 @@ const KEYS_BY_EVENT: Record<ServerEventName, string[]> = {
     'automations',
     // Sequence changes emit record_updated with entityType sequence; Settings and the prepare editor list them.
     'sequences',
+    // View changes emit record_updated with entityType view; the Views select on Leads, Relationships, and Pipeline lists them.
+    'views',
     // The Delete action on the Pipeline page reads deal counts per pipeline.
     'stage-counts',
     'tasks',

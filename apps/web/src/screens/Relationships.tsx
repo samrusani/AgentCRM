@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   useAddListMembers,
@@ -24,6 +24,8 @@ import { CsvImportSheet } from './CsvImportSheet';
 import { MailboxCaptureSheet } from './MailboxCaptureSheet';
 import { RenameListSheet } from './ListSheets';
 import { NewPersonSheet } from './NewPersonSheet';
+import { SavedViews } from '../components/savedViews';
+import { peopleConfig, peopleSentence, type PeopleViewState } from '../lib/views';
 import { OrganizationSheet, PersonSheet } from './RecordSheets';
 
 type Tab = 'people' | 'organizations';
@@ -84,8 +86,12 @@ function LifecycleScreen({ framing }: { framing: Framing }) {
   const tab: Tab = params.get('tab') === 'organizations' ? 'organizations' : 'people';
   const personId = params.get('person');
   const orgId = params.get('org');
-  const [search, setSearch] = useState('');
+  // The search rides the URL (?q=) so a saved view can carry it. Typing writes it back after a short pause; a q that did
+  // not come from this box (a view applied, a link) replaces what is typed.
+  const urlQ = params.get('q') ?? '';
+  const [search, setSearch] = useState(urlQ);
   const q = useDebouncedValue(search.trim(), 200);
+  const writtenQ = useRef(urlQ.trim());
 
   const sort: PeopleSort = params.get('sort') === 'fit' ? 'fit' : 'default';
   const csvOpen = tab === 'people' && params.get('import') === 'csv';
@@ -109,6 +115,22 @@ function LifecycleScreen({ framing }: { framing: Framing }) {
   // The filter is in force (the table is filtered) but the lists cannot be read: the select must not claim All lists.
   const listUnavailable = Boolean(requestedListId) && !lists.data && lists.isError;
   const listFilter = requestedListId && (!lists.data || activeList) ? requestedListId : undefined;
+
+  useEffect(() => {
+    if (urlQ.trim() === writtenQ.current) return;
+    writtenQ.current = urlQ.trim();
+    setSearch(urlQ);
+  }, [urlQ]);
+  useEffect(() => {
+    if (q === writtenQ.current) return;
+    writtenQ.current = q;
+    const copy = new URLSearchParams(params);
+    if (q) copy.set('q', q.slice(0, 256));
+    else copy.delete('q');
+    setParams(copy, { replace: true });
+    // Only a changed search writes the address; other parameters are read fresh from the address.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
 
   const people = usePeople(q, sort, framing.lifecycle, listFilter);
   const organizations = useOrganizations(q, tab === 'organizations', framing.lifecycle);
@@ -307,9 +329,21 @@ function LifecycleScreen({ framing }: { framing: Framing }) {
   const selecting = tab === 'people' && selected.size > 0;
   const description = activeList && tab === 'people' ? `${framing.description} Showing members of ${activeList.name}.` : framing.description;
 
+  const viewState: PeopleViewState = {
+    tab,
+    q: search,
+    list: activeList ? { id: activeList.id, name: activeList.name } : null,
+    sort,
+  };
+
   return (
     <div className="screen screen--table">
       <PageHeader title={framing.title} description={description}>
+        <SavedViews
+          screen={framing.lifecycle === 'lead' ? 'leads' : 'relationships'}
+          config={peopleConfig(viewState)}
+          sentence={peopleSentence(framing.title, viewState)}
+        />
         <div className="search-box">
           <label className="sr-only" htmlFor="relationships-search">
             Search {tab === 'people' ? 'people' : 'organizations'}

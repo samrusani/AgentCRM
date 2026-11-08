@@ -64,6 +64,8 @@ import type {
   Sequence,
   SequenceFields,
   SequenceInput,
+  SavedView,
+  ViewScreen,
   AttributeEntityType,
   AttributeKind,
   AttributeReading,
@@ -978,6 +980,13 @@ export const api = {
     update: (id: string, expectedVersion: number, fields: SequenceFields) =>
       request<Sequence>('PATCH', `/sequences/${encodeURIComponent(id)}`, { body: { expectedVersion, fields } }),
     remove: (id: string) => request<unknown>('DELETE', `/sequences/${encodeURIComponent(id)}`),
+  },
+  views: {
+    list: async (screen: ViewScreen) => asPage<SavedView>(await request<unknown>('GET', '/views', { query: { screen } })).items,
+    create: (input: { name: string; screen: ViewScreen; config: Record<string, string> }) => request<SavedView>('POST', '/views', { body: input }),
+    update: (id: string, expectedVersion: number, fields: { name?: string; config?: Record<string, string> }) =>
+      request<SavedView>('PATCH', `/views/${encodeURIComponent(id)}`, { body: { expectedVersion, fields } }),
+    remove: (id: string) => request<unknown>('DELETE', `/views/${encodeURIComponent(id)}`),
   },
   automations: {
     list: async () => asPage<Automation>(await request<unknown>('GET', '/automations')).items,

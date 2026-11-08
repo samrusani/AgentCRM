@@ -30,6 +30,8 @@ import { useUI } from '../lib/ui';
 import { NewOpportunitySheet } from './NewOpportunitySheet';
 import { NewPipelineSheet, RenamePipelineSheet } from './PipelineSheets';
 import { TemplateSheet } from './TemplateSheet';
+import { SavedViews } from '../components/savedViews';
+import { pipelineConfig, pipelineSentence } from '../lib/views';
 
 type View = 'board' | 'table';
 type StatusFilter = 'open' | 'nurture' | 'passed' | 'lost' | 'all';
@@ -101,8 +103,22 @@ export function Pipeline() {
   const openId = params.get('opportunity');
   // The selected pipeline rides the URL so a link opens the same board. An unknown or missing id falls back to the first.
   const requestedPipelineId = params.get('pipeline');
-  const [view, setView] = useState<View>('board');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('open');
+  // The board or table view and the status filter ride the URL too (?view=, ?status=), so a saved view can carry them.
+  // An unknown value falls back to the board and to Open, like an unknown pipeline id falls back to the first.
+  const requestedView = params.get('view');
+  const view: View = requestedView === 'table' ? 'table' : 'board';
+  const requestedStatus = params.get('status');
+  const statusFilter: StatusFilter = STATUS_FILTERS.find((filter) => filter.value === requestedStatus)?.value ?? 'open';
+  const setParam = useCallback(
+    (key: 'view' | 'status', value: string) => {
+      const copy = new URLSearchParams(params);
+      copy.set(key, value);
+      setParams(copy, { replace: true });
+    },
+    [params, setParams],
+  );
+  const setView = (next: View) => setParam('view', next);
+  const setStatusFilter = (next: StatusFilter) => setParam('status', next);
   const [creating, setCreating] = useState(false);
   const [dialog, setDialog] = useState<PipelineDialog>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -235,9 +251,16 @@ export function Pipeline() {
     });
   };
 
+  const viewState = { pipeline: { id: activePipeline.id, name: activePipeline.name }, status: statusFilter, view };
+
   return (
     <div className="screen screen--table">
       <PageHeader title="Pipeline">
+        <SavedViews
+          screen="pipeline"
+          config={pipelineConfig(viewState)}
+          sentence={pipelineSentence(viewState)}
+        />
         <label className="sr-only" htmlFor="pipeline-select">
           Pipeline
         </label>

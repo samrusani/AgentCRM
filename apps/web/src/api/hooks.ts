@@ -13,6 +13,7 @@ import type {
   AutomationInput,
   SequenceFields,
   SequenceInput,
+  ViewScreen,
   AttributeKind,
   Lifecycle,
   AcceptEnrichmentInput,
@@ -368,6 +369,37 @@ export function useDeleteSequence() {
     mutationFn: (id: string) => api.sequences.remove(id),
     onSuccess: () => invalidateKeys(queryClient, ['sequences']),
     onError: () => invalidateKeys(queryClient, ['sequences']),
+  });
+}
+
+export function useViews(screen: ViewScreen) {
+  return useQuery({ queryKey: ['views', screen], queryFn: () => api.views.list(screen) });
+}
+
+export function useCreateView() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string; screen: ViewScreen; config: Record<string, string> }) => api.views.create(input),
+    onSuccess: () => invalidateKeys(queryClient, ['views']),
+  });
+}
+
+export function useRenameView() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string; expectedVersion: number; name: string }) =>
+      api.views.update(input.id, input.expectedVersion, { name: input.name }),
+    onSuccess: () => invalidateKeys(queryClient, ['views']),
+    onError: () => invalidateKeys(queryClient, ['views']),
+  });
+}
+
+export function useDeleteView() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.views.remove(id),
+    onSuccess: () => invalidateKeys(queryClient, ['views']),
+    onError: () => invalidateKeys(queryClient, ['views']),
   });
 }
 

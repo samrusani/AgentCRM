@@ -236,6 +236,17 @@ export interface SequenceFields {
   steps?: FollowupStep[];
 }
 
+export type ViewScreen = 'leads' | 'relationships' | 'pipeline';
+
+// A named shortcut to a screen state. The config holds whitelisted URL state only; applying a view navigates.
+export interface SavedView {
+  id: string;
+  name: string;
+  screen: ViewScreen;
+  config: Record<string, string>;
+  version: number;
+}
+
 export type AutomationTriggerKind = 'stage_entered' | 'person_promoted';
 
 // A rule that creates a task when its trigger fires. The trigger kind never changes after creation.

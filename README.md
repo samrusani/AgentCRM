@@ -4,7 +4,7 @@
 
 **The CRM that people and AI agents operate together.**
 
-<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-3082-15685b?style=flat" alt="3082 tests">
+<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-3162-15685b?style=flat" alt="3162 tests">
 
 [Quick start](#quick-start) · [What works](#what-works-today) · [Architecture docs](docs/architecture.md)
 
@@ -91,7 +91,7 @@ The client spawns the MCP server as a child process per session and it dies with
 
 ## What works today
 
-Every row below is backed by tests: 3,082 across the server (2,069), the web app (731), and the browser extension (282). "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
+Every row below is backed by tests: 3,162 across the server (2,128), the web app (752), and the browser extension (282). "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
 
 ### Core CRM
 
@@ -105,6 +105,7 @@ Every row below is backed by tests: 3,082 across the server (2,069), the web app
 | Approvals: review, approve, reject, audit trail | Working |
 | Birthdays: a birthday on each person, with or without the year, and a Today card for the next seven days | Working |
 | Automations: rules like "when a deal enters Diligence, create a task due in 2 days"; an automation only ever creates a task, never edits records or sends anything, so it cannot loop or surprise | Working |
+| Saved views: named shortcuts to the filters you keep returning to on Leads, Relationships, and Pipeline; a view stores only screen state, so it can never show rows the screen's own rules would not | Working |
 | Evidence: field claims with source and verification status | Working, synthetic sources |
 | Templates: startup fundraising, fund LP fundraising, client sales, applied per pipeline with a guided switch that maps stages | Working |
 | Qualification: editable criteria, per criterion verdicts with evidence, fit sort | Working; unknown never counts as a match |
