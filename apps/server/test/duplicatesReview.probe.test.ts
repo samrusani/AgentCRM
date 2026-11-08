@@ -289,7 +289,7 @@ describe('1. data loss in merge', () => {
     // Fails the day a new table starts naming a person without the merge learning about it.
     const known = new Set([
       'opportunity.person_id', 'qualification_result.person_id', 'email_message.person_id', 'send_intent.person_id', 'followup_rule.person_id',
-      'list_member.person_id', 'duplicate_dismissal.person_a_id', 'duplicate_dismissal.person_b_id',
+      'list_member.person_id', 'meeting_attendee.person_id', 'duplicate_dismissal.person_a_id', 'duplicate_dismissal.person_b_id',
       'task.entity_id', 'field_claim.entity_id', 'activity.entity_id', 'attribute_value.entity_id',
       // Not re-pointed, by design: the log, imports' display links, and model call subjects.
       'audit_event.entity_id', 'import_row.match_entity_id', 'model_call.subject_id', 'person_search.entity_id', 'organization_search.entity_id', 'opportunity_search.entity_id',

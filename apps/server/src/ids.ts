@@ -29,7 +29,8 @@ export type IdPrefix =
   | 'atd'
   | 'aut'
   | 'sqn'
-  | 'svw';
+  | 'svw'
+  | 'mtg';
 
 export function randomId(prefix: IdPrefix): string {
   return `${prefix}_${randomBytes(6).toString('hex')}`;

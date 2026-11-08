@@ -51,6 +51,7 @@ export { createAutomation, deleteAutomation, updateAutomation } from './automati
 export { createSequence, deleteSequence, updateSequence } from './sequences.js';
 export { createView, deleteView, updateView } from './views.js';
 export { dismissDuplicate, dismissOrganizationDuplicate, mergeOrganizations, mergePeople } from './duplicates.js';
+export { addMeetingAttendee, createMeeting, deleteMeeting, removeMeetingAttendee, updateMeeting } from './meetings.js';
 export { createAttribute, deleteAttribute, updateAttribute } from './attributes.js';
 export { addListMembers, createList, deleteList, removeListMember, updateList } from './lists.js';
 export * from './workspace.js';

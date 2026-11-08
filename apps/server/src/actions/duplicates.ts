@@ -110,6 +110,13 @@ export function mergePeople(ctx: ActionContext, survivorId: string, input: unkno
         survivor.id,
         other.id,
       ),
+      // Same union pattern as list memberships: an attendee row the survivor already has is dropped, and the cascade
+      // clears the other's rows with the deleted person.
+      meetingAttendances: run(
+        'INSERT OR IGNORE INTO meeting_attendee (meeting_id, person_id, created_at) SELECT meeting_id, ?, created_at FROM meeting_attendee WHERE person_id = ?',
+        survivor.id,
+        other.id,
+      ),
     };
     const qualificationsDeleted = run('DELETE FROM qualification_result WHERE workspace_id = ? AND person_id = ?', tx.workspaceId, other.id);
     // The other's memberships and any dismissals naming it go with the row (both foreign keys cascade).
@@ -228,6 +235,7 @@ export function mergeOrganizations(ctx: ActionContext, survivorId: string, input
       claims: run("UPDATE field_claim SET entity_id = ? WHERE workspace_id = ? AND entity_type = 'organization' AND entity_id = ?", survivor.id, tx.workspaceId, other.id),
       activities: run("UPDATE activity SET entity_id = ? WHERE workspace_id = ? AND entity_type = 'organization' AND entity_id = ?", survivor.id, tx.workspaceId, other.id),
       tasks: run("UPDATE task SET entity_id = ? WHERE workspace_id = ? AND entity_type = 'organization' AND entity_id = ?", survivor.id, tx.workspaceId, other.id),
+      meetings: run('UPDATE meeting SET organization_id = ? WHERE workspace_id = ? AND organization_id = ?', survivor.id, tx.workspaceId, other.id),
     };
     // Dismissals naming the other organization go with the row (both foreign keys cascade).
     run('DELETE FROM organization WHERE id = ? AND workspace_id = ?', other.id, tx.workspaceId);

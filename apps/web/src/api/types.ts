@@ -156,6 +156,54 @@ export interface PersonList {
   updatedAt: string;
 }
 
+// A conversation that happened or is scheduled. Times are ISO strings in UTC; the screens render them local.
+export interface Meeting {
+  id: string;
+  version: number;
+  title: string;
+  startsAt: string;
+  endsAt: string | null;
+  location: string | null;
+  organizationId: string | null;
+  organizationName: string | null;
+  opportunityId: string | null;
+  opportunityName: string | null;
+  notes: string | null;
+  attendeeCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MeetingAttendee {
+  id: string;
+  name: string;
+}
+
+export interface MeetingDetail extends Meeting {
+  attendees: MeetingAttendee[];
+}
+
+export interface MeetingFilters {
+  // Inclusive lower and exclusive upper bound on the start time, as ISO strings.
+  from?: string;
+  to?: string;
+  organizationId?: string;
+  personId?: string;
+  limit?: number;
+  // desc keeps the newest rows under the limit; the past view needs that.
+  order?: 'asc' | 'desc';
+}
+
+export interface NewMeetingInput {
+  title: string;
+  startsAt: string;
+  endsAt?: string | null;
+  location?: string | null;
+  organizationId?: string | null;
+  opportunityId?: string | null;
+  attendeeIds?: string[];
+}
+
 export interface AddMembersResult {
   added: number;
   already: number;
@@ -718,6 +766,8 @@ export interface TranscriptCaptureInput {
   // Names the run. The server defaults it to "Call transcript capture".
   title?: string;
   maxPeople?: number;
+  // The meeting the accepted people join as attendees.
+  meetingId?: string;
 }
 
 export interface MailboxCaptureInput {

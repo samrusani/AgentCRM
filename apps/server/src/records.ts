@@ -228,8 +228,29 @@ export function toApproval(row: Row) {
   };
 }
 
+export function toMeeting(row: Row) {
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    version: Number(row.version),
+    title: String(row.title),
+    startsAt: String(row.starts_at),
+    endsAt: text(row.ends_at),
+    location: text(row.location),
+    organizationId: text(row.organization_id),
+    organizationName: text(row.organization_name),
+    opportunityId: text(row.opportunity_id),
+    opportunityName: text(row.opportunity_name),
+    notes: text(row.notes),
+    attendeeCount: Number(row.attendee_count ?? 0),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  };
+}
+
 export type Person = ReturnType<typeof toPerson>;
 export type Organization = ReturnType<typeof toOrganization>;
+export type Meeting = ReturnType<typeof toMeeting>;
 export type Opportunity = ReturnType<typeof toOpportunity>;
 export type Activity = ReturnType<typeof toActivity>;
 export type Task = ReturnType<typeof toTask>;

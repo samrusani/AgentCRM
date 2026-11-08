@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useFollowupRules, useMailSummary, useSendIntents, useStartRun, useToday } from '../api/hooks';
+import { useFollowupRules, useMailSummary, useMeetings, useSendIntents, useStartRun, useToday } from '../api/hooks';
 import { ApprovalCard, useSettledApprovals } from '../components/approvals';
 import { EmptyState, ErrorState, Loading, PageHeader, errorMessage } from '../components/common';
 import { Followups } from '../components/followups';
@@ -12,6 +12,7 @@ import { TaskRow } from '../components/TaskRow';
 import { describeDue, formatBirthday } from '../lib/format';
 import { recordLink } from '../lib/links';
 import { isFollowupActive } from '../lib/mail';
+import { attendeeLabel, formatClock, isTomorrow, todayAndTomorrowBounds } from '../lib/meetings';
 import { useUI } from '../lib/ui';
 
 // One Today section as a card. The title stays a real heading; the count sits beside it, not inside it, so the
@@ -52,6 +53,10 @@ export function Today() {
   const outboxCount = (intents.data ?? []).filter((intent) => intent.status !== 'cancelled').length;
   const followupCount = (followupRules.data ?? []).filter(isFollowupActive).length;
   const replyCount = mailSummary.data?.repliesNeedingAttention ?? 0;
+  // Today's and tomorrow's meetings in the viewer's zone. Fixed for the life of the screen so the query key holds still.
+  const meetingBounds = useMemo(() => todayAndTomorrowBounds(), []);
+  const meetings = useMeetings(meetingBounds);
+  const meetingItems = meetings.data ?? [];
 
   const startDemo = () =>
     startRun.mutate(undefined, {
@@ -200,6 +205,34 @@ export function Today() {
                           : `Birthday on ${formatBirthday(birthday.date.slice(5))}`}
                       </span>
                     </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </TodayCard>
+
+          <TodayCard id="today-meetings" title="Meetings" count={meetingItems.length}>
+            {meetings.isError ? (
+              <ErrorState what="meetings" error={meetings.error} onRetry={() => void meetings.refetch()} />
+            ) : meetings.isPending ? (
+              <Loading what="meetings" />
+            ) : meetingItems.length === 0 ? (
+              <EmptyState message="Nothing scheduled for today or tomorrow." />
+            ) : (
+              <ul className="task-list">
+                {meetingItems.map((meeting) => (
+                  <li key={meeting.id} className="task">
+                    <div className="task__text">
+                      <span className="task__title">
+                        <Link className="link" to={`/meetings?meeting=${encodeURIComponent(meeting.id)}`}>
+                          {meeting.title}
+                        </Link>
+                      </span>
+                      <span className="task__meta">{attendeeLabel(meeting.attendeeCount)}</span>
+                    </div>
+                    <span className="task__due num">
+                      {isTomorrow(meeting.startsAt) ? `Tomorrow ${formatClock(meeting.startsAt)}` : formatClock(meeting.startsAt)}
+                    </span>
                   </li>
                 ))}
               </ul>

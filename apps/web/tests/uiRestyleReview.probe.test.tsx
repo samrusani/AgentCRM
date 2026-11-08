@@ -110,7 +110,7 @@ function renderToday() {
   );
 }
 
-const TITLES = ['Approvals waiting', 'Outbox', 'Follow-ups', 'Replies', 'Tasks due and overdue', 'Active runs', 'Birthdays'];
+const TITLES = ['Approvals waiting', 'Outbox', 'Follow-ups', 'Replies', 'Tasks due and overdue', 'Active runs', 'Birthdays', 'Meetings'];
 
 const countOf = (title: string): string | null => {
   const heading = screen.getByRole('heading', { level: 2, name: title });

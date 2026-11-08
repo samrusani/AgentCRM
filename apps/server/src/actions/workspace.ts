@@ -74,6 +74,8 @@ const recordTables = [
   'task',
   'activity',
   'stage_event',
+  'meeting_attendee',
+  'meeting',
   'opportunity',
   'list_member',
   'duplicate_dismissal',

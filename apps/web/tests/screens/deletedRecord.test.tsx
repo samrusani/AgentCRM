@@ -102,6 +102,9 @@ describe('record_deleted event handling', () => {
     client.setQueryData(['person', 'per_keep'], { id: 'per_keep' });
     client.setQueryData(['organization', 'org_gone'], { id: 'org_gone' });
     client.setQueryData(['organization', 'org_keep'], { id: 'org_keep' });
+    client.setQueryData(['meeting', 'mtg_gone'], { id: 'mtg_gone' });
+    client.setQueryData(['meeting', 'mtg_keep'], { id: 'mtg_keep' });
+    client.setQueryData(['meetings', '', ''], []);
     client.setQueryData(['duplicates'], { pairs: [] });
     const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
     renderHook(() => useServerEvents(), { wrapper });
@@ -120,6 +123,22 @@ describe('record_deleted event handling', () => {
     expect(client.getQueryData(['organization', 'org_gone'])).toBeUndefined();
     expect(client.getQueryData(['organization', 'org_keep'])).toBeDefined();
     expect(client.getQueryData(['person', 'per_gone'])).toBeDefined();
+  });
+
+  it('removes the exact meeting cache and refreshes the meeting lists', () => {
+    FakeEventSource.instances[0].dispatch('record_deleted', JSON.stringify({ type: 'record_deleted', entityType: 'meeting', entityId: 'mtg_gone' }));
+    expect(client.getQueryData(['meeting', 'mtg_gone'])).toBeUndefined();
+    expect(client.getQueryData(['meeting', 'mtg_keep'])).toBeDefined();
+    expect(client.getQueryData(['person', 'per_gone'])).toBeDefined();
+    expect(client.getQueryState(['meetings', '', ''])?.isInvalidated).toBe(true);
+    expect(client.getQueryState(['meeting', 'mtg_keep'])?.isInvalidated).toBe(true);
+  });
+
+  it('refreshes the meeting lists and sheets on record_updated without removing them', () => {
+    FakeEventSource.instances[0].dispatch('record_updated', JSON.stringify({ entityType: 'meeting', entityId: 'mtg_gone' }));
+    expect(client.getQueryData(['meeting', 'mtg_gone'])).toBeDefined();
+    expect(client.getQueryState(['meeting', 'mtg_gone'])?.isInvalidated).toBe(true);
+    expect(client.getQueryState(['meetings', '', ''])?.isInvalidated).toBe(true);
   });
 
   it('still invalidates when the payload cannot be parsed', () => {

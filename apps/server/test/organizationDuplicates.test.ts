@@ -488,7 +488,7 @@ describe('mergeOrganizations', () => {
       detail: {
         survivorId: survivor,
         otherId: other,
-        moved: { people: 2, opportunities: 2, claims: 2, activities: 3, tasks: 1 },
+        moved: { people: 2, opportunities: 2, claims: 2, activities: 3, tasks: 1, meetings: 0 },
         filled: { fields: ['location', 'linkedinUrl'], attributes: 0 },
         displaced: { fields: { domain: 'other.com' }, attributes: [], tags: [] },
       },

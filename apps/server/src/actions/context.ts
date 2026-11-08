@@ -126,6 +126,7 @@ const entityTables: Record<string, string> = {
   person: 'person',
   organization: 'organization',
   opportunity: 'opportunity',
+  meeting: 'meeting',
 };
 
 export function versionConflict(current: unknown): AppError {

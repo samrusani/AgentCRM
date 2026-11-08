@@ -66,6 +66,11 @@ import {
   updateAttribute,
   deletePipeline,
   addListMembers,
+  addMeetingAttendee,
+  createMeeting,
+  deleteMeeting,
+  removeMeetingAttendee,
+  updateMeeting,
   createList,
   deleteList,
   removeListMember,
@@ -115,6 +120,8 @@ import { listAutomations } from '../queries/automations.js';
 import { listSequences } from '../queries/sequences.js';
 import { listViews, viewScreens } from '../queries/views.js';
 import { listLists } from '../queries/lists.js';
+import { listMeetings, requireMeeting } from '../queries/meetings.js';
+import { isoTimestamp } from '../actions/schemas.js';
 import { scanDuplicates, scanOrganizationDuplicates } from '../queries/duplicates.js';
 import { listPipelines } from '../queries/pipelines.js';
 import { readQualificationConfig } from '../qualification/config.js';
@@ -157,6 +164,14 @@ const opportunitiesQuery = z.object({
 const reportsQuery = z.object({
   days: z.enum(['30', '90', '365']).transform(Number).optional(),
   pipelineId: z.string().min(1).optional(),
+});
+const meetingsQuery = z.object({
+  from: isoTimestamp.optional(),
+  to: isoTimestamp.optional(),
+  organizationId: z.string().min(1).optional(),
+  personId: z.string().min(1).optional(),
+  limit: pagingQuery.limit,
+  order: z.enum(['asc', 'desc']).optional(),
 });
 const tasksQuery = z.object({ filter: z.enum(['today', 'overdue', 'open', 'done']).optional(), ...pagingQuery });
 const activitiesQuery = z.object({
@@ -378,6 +393,23 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   app.delete('/api/lists/:id/members/:personId', async (request) => {
     const { id, personId } = parseInput(z.object({ id: z.string().min(1), personId: z.string().min(1) }), request.params);
     return removeListMember(context(), id, personId);
+  });
+
+  app.get('/api/meetings', async (request) => listMeetings(db, workspaceId(), parseInput(meetingsQuery, request.query)));
+  app.get('/api/meetings/:id', async (request) => requireMeeting(db, workspaceId(), idParam(request.params)));
+  app.post('/api/meetings', async (request, reply) => {
+    reply.status(201);
+    return createMeeting(context(), request.body);
+  });
+  app.patch('/api/meetings/:id', async (request) => updateMeeting(context(), idParam(request.params), request.body));
+  app.delete('/api/meetings/:id', async (request, reply) => {
+    deleteMeeting(context(), idParam(request.params));
+    return reply.status(204).send();
+  });
+  app.post('/api/meetings/:id/attendees', async (request) => addMeetingAttendee(context(), idParam(request.params), request.body));
+  app.delete('/api/meetings/:id/attendees/:personId', async (request) => {
+    const { id, personId } = parseInput(z.object({ id: z.string().min(1), personId: z.string().min(1) }), request.params);
+    return removeMeetingAttendee(context(), id, personId);
   });
 
   app.get('/api/opportunities', async (request) =>

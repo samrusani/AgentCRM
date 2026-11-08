@@ -13,12 +13,20 @@ function formatCharacters(count: number): string {
 
 // The Research entry for call transcripts: paste the text and a model reads out the people and organizations it
 // names. The server validates every field again.
-export function TranscriptCaptureCard({ onStarted }: { onStarted: (run: Run) => void }) {
+export function TranscriptCaptureCard({
+  onStarted,
+  meeting,
+}: {
+  onStarted: (run: Run) => void;
+  // Set when the capture is opened from a meeting: the call name starts as the meeting title and the people the review
+  // accepts join the meeting's attendees.
+  meeting?: { id: string; title: string };
+}) {
   const start = useStartTranscriptCapture();
   const provider = useModelProvider();
   const [text, setText] = useState('');
   const [textCut, setTextCut] = useState(false);
-  const [title, setTitle] = useState('');
+  const [title, setTitle] = useState(meeting?.title ?? '');
 
   const providerReady = provider.data?.ready === true;
   const hasText = text.trim() !== '';
@@ -48,7 +56,10 @@ export function TranscriptCaptureCard({ onStarted }: { onStarted: (run: Run) => 
     event.preventDefault();
     if (!canStart) return;
     const name = title.trim();
-    start.mutate({ transcriptText: text, ...(name !== '' ? { title: name } : {}) }, { onSuccess: onStarted });
+    start.mutate(
+      { transcriptText: text, ...(name !== '' ? { title: name } : {}), ...(meeting ? { meetingId: meeting.id } : {}) },
+      { onSuccess: onStarted },
+    );
   };
 
   const providerLine = provider.isError ? (
@@ -124,6 +135,7 @@ export function TranscriptCaptureCard({ onStarted }: { onStarted: (run: Run) => 
       <p className="muted lead-capture__note">
         Reading the transcript uses your active model provider and spends model usage; costs shown are estimates. Every
         row waits for your review before anything is saved.
+        {meeting ? ' The people you accept join this meeting as attendees.' : ''}
       </p>
     </section>
   );

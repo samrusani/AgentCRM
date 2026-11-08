@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { EmptyState } from './components/common';
 import { Duplicates } from './screens/Duplicates';
+import { Meetings } from './screens/Meetings';
 import { Pipeline } from './screens/Pipeline';
 import { Leads, Relationships } from './screens/Relationships';
 import { Reports } from './screens/Reports';
@@ -23,6 +24,7 @@ export function App() {
         <Route path="/relationships" element={<Relationships />} />
         <Route path="/duplicates" element={<Duplicates />} />
         <Route path="/pipeline" element={<Pipeline />} />
+        <Route path="/meetings" element={<Meetings />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/research" element={<Research />} />
         <Route path="/settings" element={<Settings />}>
@@ -37,7 +39,7 @@ export function App() {
           path="*"
           element={
             <div className="screen">
-              <EmptyState message="This page does not exist. Use the navigation to open Today, Leads, Relationships, Pipeline, or Research." />
+              <EmptyState message="This page does not exist. Use the navigation to open Today, Leads, Relationships, Pipeline, Meetings, or Research." />
             </div>
           }
         />

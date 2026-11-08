@@ -440,6 +440,7 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
     organizationsCreated: createdOrganizations.size,
   });
   for (const id of createdOrganizations) emitRecord(tx, 'organization', id);
+  if (transcript) linkTranscriptAttendees(tx, runId, batch.id, scope);
 
   return {
     accepted,
@@ -448,6 +449,30 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
     counts,
     truncated: scope.fetchStoppedEarly !== undefined && scope.fetchStoppedEarly !== null,
   };
+}
+
+// A transcript run started from a meeting links every person the transcript named to that meeting: the people this accept
+// created and the people the rows matched (known before staging or taken after it). Organization rows match
+// organizations and link nothing. The meeting is looked up once; one deleted since staging links nothing and the accept
+// goes on unchanged. The link is insert-or-ignore, so a person already on the meeting changes nothing.
+function linkTranscriptAttendees(tx: Tx, runId: string, batchId: string, scope: Record<string, unknown>): void {
+  const meetingId = typeof scope.meetingId === 'string' ? scope.meetingId : null;
+  if (!meetingId) return;
+  const meeting = tx.db.prepare('SELECT 1 FROM meeting WHERE id = ? AND workspace_id = ?').get(meetingId, tx.workspaceId);
+  if (!meeting) return;
+  const people = tx.db
+    .prepare(
+      `SELECT DISTINCT r.match_entity_id AS id FROM import_row r JOIN person p ON p.id = r.match_entity_id
+       WHERE r.batch_id = ? AND r.match_entity_type = 'person' AND r.status IN ('accepted', 'duplicate') AND p.workspace_id = ?`,
+    )
+    .all(batchId, tx.workspaceId) as { id: string }[];
+  const insert = tx.db.prepare('INSERT OR IGNORE INTO meeting_attendee (meeting_id, person_id, created_at) VALUES (?, ?, ?)');
+  let added = 0;
+  for (const person of people) added += insert.run(meetingId, person.id, tx.now()).changes;
+  if (added > 0) {
+    tx.audit('meeting.attendee_add', 'meeting', meetingId, { added, runId });
+    emitRecord(tx, 'meeting', meetingId);
+  }
 }
 
 // The approve path of an import_review approval, shared by a human decision and the auto accept setting:

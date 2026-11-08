@@ -175,7 +175,7 @@ describe('Nav rail', () => {
     const labels = within(nav)
       .getAllByRole('link')
       .map((link) => link.textContent);
-    expect(labels).toEqual(['Today', 'Leads', 'Relationships', 'Pipeline', 'Reports', 'Research', 'Settings']);
+    expect(labels).toEqual(['Today', 'Leads', 'Relationships', 'Pipeline', 'Meetings', 'Reports', 'Research', 'Settings']);
     expect(within(nav).getByRole('link', { name: 'Leads' })).toHaveAttribute('href', '/leads');
   });
 });

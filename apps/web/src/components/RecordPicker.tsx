@@ -7,7 +7,7 @@ import { personName } from '../lib/format';
 import { stripInvisible } from '../lib/leads';
 import { useDebouncedValue } from '../lib/useDebouncedValue';
 
-export type PickerKind = 'person' | 'organization';
+export type PickerKind = 'person' | 'organization' | 'opportunity';
 
 // What the picker hands back. A person also carries its organization so a form can prefill from it.
 export interface PickedRecord {
@@ -84,6 +84,13 @@ export function RecordPicker({
         organizationName: person.organizationName ?? null,
       }));
     }
+    if (kind === 'opportunity') {
+      return (search.data?.opportunities ?? []).slice(0, MAX_MATCHES).map((opportunity) => ({
+        id: opportunity.id,
+        name: opportunity.name,
+        detail: opportunity.organizationName || undefined,
+      }));
+    }
     return (search.data?.organizations ?? []).slice(0, MAX_MATCHES).map((organization) => ({
       id: organization.id,
       name: organization.name,
@@ -101,7 +108,7 @@ export function RecordPicker({
     focusNext.current = null;
   }, [value]);
 
-  const noun = kind === 'person' ? 'people' : 'organizations';
+  const noun = kind === 'person' ? 'people' : kind === 'opportunity' ? 'deals' : 'organizations';
   // The list reflects the typed text only once the debounce has caught up with the input.
   const listCurrent = debounced === typed;
   const settled = debounced.length > 0 && listCurrent && !search.isFetching;
@@ -225,7 +232,7 @@ export function RecordPicker({
         aria-label={hideLabel ? label : undefined}
         aria-busy={creating || undefined}
         aria-activedescendant={showPopover && optionCount > 0 ? `${baseId}-option-${active}` : undefined}
-        placeholder={kind === 'person' ? 'Search people' : 'Search organizations'}
+        placeholder={kind === 'person' ? 'Search people' : kind === 'opportunity' ? 'Search deals' : 'Search organizations'}
         autoComplete="off"
         spellCheck={false}
         autoFocus={autoFocus}

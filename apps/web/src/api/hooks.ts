@@ -24,6 +24,8 @@ import type {
   ApifyRunInput,
   CsvImportInput,
   MailboxCaptureInput,
+  MeetingFilters,
+  NewMeetingInput,
   TranscriptCaptureInput,
   DraftOutreachInput,
   GmailCredentialsInput,
@@ -548,6 +550,84 @@ export function useRemoveListMembers() {
   return useMutation({
     mutationFn: (input: { listId: string; personIds: string[] }) => api.lists.removeMembers(input.listId, input.personIds),
     onSettled: () => invalidateKeys(queryClient, LIST_KEYS),
+  });
+}
+
+// Meeting changes show in the Meetings screen, the Today card, and open meeting sheets.
+const MEETING_KEYS = ['meetings', 'meeting'];
+
+export function useMeetings(filters: MeetingFilters = {}) {
+  return useQuery({
+    queryKey: ['meetings', filters.from ?? '', filters.to ?? '', filters.organizationId ?? '', filters.personId ?? '', filters.limit ?? '', filters.order ?? ''],
+    queryFn: () => api.meetings.list(filters),
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useMeeting(id: string | null) {
+  return useQuery({
+    queryKey: ['meeting', id],
+    queryFn: () => api.meetings.get(id as string),
+    enabled: Boolean(id),
+  });
+}
+
+export function useCreateMeeting() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: NewMeetingInput) => api.meetings.create(input),
+    onSuccess: (meeting) => {
+      queryClient.setQueryData(['meeting', meeting.id], meeting);
+      invalidateKeys(queryClient, MEETING_KEYS);
+    },
+  });
+}
+
+export function useUpdateMeeting() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string; expectedVersion: number; fields: Record<string, unknown> }) =>
+      api.meetings.patch(input.id, input.expectedVersion, input.fields),
+    onSuccess: (meeting) => {
+      queryClient.setQueryData(['meeting', meeting.id], meeting);
+      invalidateKeys(queryClient, MEETING_KEYS);
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.code === 'version_conflict') invalidateKeys(queryClient, MEETING_KEYS);
+    },
+  });
+}
+
+export function useDeleteMeeting() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.meetings.remove(id),
+    onSuccess: () => invalidateKeys(queryClient, MEETING_KEYS),
+    onError: () => invalidateKeys(queryClient, MEETING_KEYS),
+  });
+}
+
+export function useAddMeetingAttendee() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { meetingId: string; personId: string }) => api.meetings.addAttendee(input.meetingId, input.personId),
+    onSuccess: (meeting) => {
+      queryClient.setQueryData(['meeting', meeting.id], meeting);
+      invalidateKeys(queryClient, MEETING_KEYS);
+    },
+    onError: () => invalidateKeys(queryClient, MEETING_KEYS),
+  });
+}
+
+export function useRemoveMeetingAttendee() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { meetingId: string; personId: string }) => api.meetings.removeAttendee(input.meetingId, input.personId),
+    onSuccess: (meeting) => {
+      queryClient.setQueryData(['meeting', meeting.id], meeting);
+      invalidateKeys(queryClient, MEETING_KEYS);
+    },
+    onError: () => invalidateKeys(queryClient, MEETING_KEYS),
   });
 }
 

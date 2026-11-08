@@ -326,12 +326,12 @@ function OrganizationValue({
   );
 }
 
-function isNotFound(error: unknown): boolean {
+export function isNotFound(error: unknown): boolean {
   return error instanceof ApiError && error.code === 'not_found';
 }
 
 // The record is gone, usually merged into another one. No retry: asking again cannot bring it back.
-function DeletedRecord({ onClose }: { onClose: () => void }) {
+export function DeletedRecord({ onClose }: { onClose: () => void }) {
   return (
     <div className="state">
       <p className="state__body">This record was deleted, usually because it was merged into another record.</p>

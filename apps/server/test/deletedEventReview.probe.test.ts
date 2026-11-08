@@ -62,7 +62,7 @@ describe('emission honesty', () => {
       });
     }
     // ACCEPTED: workspace.ts deletes wholesale via DELETE FROM ${table} (reset), documented as emitting no record_deleted.
-    expect(hits.sort()).toEqual(['src/actions/duplicates.ts:116', 'src/actions/duplicates.ts:233']);
+    expect(hits.sort()).toEqual(['src/actions/duplicates.ts:123', 'src/actions/duplicates.ts:241']);
   });
 
   it.each(['person', 'organization'] as const)('KILLS: a %s merge aborted late inside the transaction emits nothing and deletes nothing', (kind) => {

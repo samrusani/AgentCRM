@@ -8,7 +8,7 @@ import { isActiveModelReady } from '../queries/modelProvider.js';
 import { getRun, getRunDetail, listRunSteps } from '../queries/runs.js';
 import { type MappedRow } from './apifyMapping.js';
 import { markConnectorError, requireActiveModel } from './connectors.js';
-import { type ActionContext, mutate, parseInput, type Tx, withTxActor } from './context.js';
+import { type ActionContext, assertEntityExists, mutate, parseInput, type Tx, withTxActor } from './context.js';
 import { type AdvanceResult, setCounts, startStep } from './demoResearch.js';
 import {
   completeStep,
@@ -20,6 +20,7 @@ import {
   writeBatchCounts,
 } from './importReview.js';
 import { enqueueJobIn } from './jobs.js';
+import { idSchema } from './schemas.js';
 import { costText, plural, sentence, setImportCounts, syncModelCost, updateScope } from './leadCapture.js';
 import { type ExtractedEntry, mapExtractedEntry } from './leadCaptureMapping.js';
 import { hasPendingModelCall, markModelCallPending, settleModelCallReportsIn } from './modelCalls.js';
@@ -87,6 +88,8 @@ const startSchema = z
       .max(maxTranscriptCharacters, `Use a transcript of at most ${maxTranscriptCharacters.toLocaleString('en-US')} characters`),
     title: z.string().trim().min(1).max(200).optional(),
     maxPeople: z.number().int().min(1).max(hardTranscriptPeople).default(defaultTranscriptPeople),
+    // The meeting the accepted people join as attendees. Validated against the workspace when the run starts.
+    meetingId: idSchema.optional(),
   })
   .strict();
 
@@ -94,6 +97,8 @@ interface TranscriptScope {
   // Removed once staging has consumed the extraction.
   transcriptText?: string;
   maxPeople: number;
+  // Kept after the transcript is scrubbed: accept reads it to link the accepted people to the meeting.
+  meetingId?: string;
   provider?: ModelProviderKind;
   model?: string;
   extraction?: Extraction;
@@ -132,12 +137,14 @@ export function startTranscriptCapture(ctx: ActionContext, input: unknown, optio
 
   const runId = mutate(ctx, (rawTx) => {
     const tx = withTxActor(rawTx, ctx.actor);
+    if (data.meetingId) assertEntityExists(tx, 'meeting', data.meetingId);
     const id = tx.newId('run');
     const now = tx.now();
     const title = data.title ?? defaultTranscriptTitle;
     const scope: TranscriptScope = {
       transcriptText: data.transcriptText,
       maxPeople: data.maxPeople,
+      ...(data.meetingId ? { meetingId: data.meetingId } : {}),
       provider: pinned.kind,
       model: pinned.model,
       origin,
@@ -159,6 +166,7 @@ export function startTranscriptCapture(ctx: ActionContext, input: unknown, optio
       kind: transcriptCaptureKind,
       transcriptCharacters: data.transcriptText.length,
       maxPeople: data.maxPeople,
+      ...(data.meetingId ? { meetingId: data.meetingId } : {}),
       origin,
       provider: pinned.kind,
       model: pinned.model,

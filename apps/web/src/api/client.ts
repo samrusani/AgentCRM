@@ -24,6 +24,10 @@ import type {
   CriterionField,
   CsvImportInput,
   MailboxCaptureInput,
+  Meeting,
+  MeetingDetail,
+  MeetingFilters,
+  NewMeetingInput,
   TranscriptCaptureInput,
   MailboxCounts,
   PersonInteraction,
@@ -1032,6 +1036,20 @@ export const api = {
       request<Organization>('POST', `/organizations/${encodeURIComponent(input.survivorId)}/merge`, {
         body: { otherId: input.otherId, expectedVersion: input.expectedVersion, otherExpectedVersion: input.otherExpectedVersion },
       }),
+  },
+
+  meetings: {
+    list: async (filters: MeetingFilters = {}) =>
+      asPage<Meeting>(await request<unknown>('GET', '/meetings', { query: { ...filters } })).items,
+    get: (id: string) => request<MeetingDetail>('GET', `/meetings/${encodeURIComponent(id)}`),
+    create: (input: NewMeetingInput) => request<MeetingDetail>('POST', '/meetings', { body: input }),
+    patch: (id: string, expectedVersion: number, fields: Record<string, unknown>) =>
+      request<MeetingDetail>('PATCH', `/meetings/${encodeURIComponent(id)}`, { body: { expectedVersion, fields } }),
+    remove: (id: string) => request<unknown>('DELETE', `/meetings/${encodeURIComponent(id)}`),
+    addAttendee: (id: string, personId: string) =>
+      request<MeetingDetail>('POST', `/meetings/${encodeURIComponent(id)}/attendees`, { body: { personId } }),
+    removeAttendee: (id: string, personId: string) =>
+      request<MeetingDetail>('DELETE', `/meetings/${encodeURIComponent(id)}/attendees/${encodeURIComponent(personId)}`),
   },
 
   lists: {

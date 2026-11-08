@@ -41,6 +41,9 @@ const KEYS_BY_EVENT: Record<ServerEventName, string[]> = {
     'pipelines',
     // List and membership changes emit record_updated for the list; the tables and person sheets show them.
     'lists',
+    // Meeting changes emit record_updated with entityType meeting; the Meetings screen, the Today card, and sheets show them.
+    'meetings',
+    'meeting',
     // Definition changes emit record_updated with entityType attribute_def; Settings lists them and sheets show them.
     'attributes',
     // Rule changes and deletion-driven disables emit record_updated with entityType automation; Settings lists them.
@@ -84,8 +87,10 @@ function removeDeleted(queryClient: QueryClient, data: unknown) {
       ? [['person', entityId], ['enrichment', entityId]]
       : entityType === 'organization'
         ? [['organization', entityId], ['enrichment', 'organization', entityId]]
-        : [];
-  // The broad invalidation that follows covers every active entry (person, organization, and enrichment prefixes
+        : entityType === 'meeting'
+          ? [['meeting', entityId]]
+          : [];
+  // The broad invalidation that follows covers every active entry (person, organization, meeting, and enrichment prefixes
   // are all in the record_deleted key list), so only the inactive copies are dropped here. A second per-id
   // invalidate would stack a second refetch on the open sheet.
   for (const queryKey of keys) {

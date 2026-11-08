@@ -243,7 +243,7 @@ describe('1. data loss sweep', () => {
 
     // The audit counts equal reality, and the displaced attribute value is in the trace.
     const [mergeAudit] = audits('organization.merge');
-    expect(mergeAudit!.detail.moved).toEqual({ people: 2, opportunities: 2, claims: 3, activities: 2, tasks: 2 });
+    expect(mergeAudit!.detail.moved).toEqual({ people: 2, opportunities: 2, claims: 3, activities: 2, tasks: 2, meetings: 0 });
     expect(mergeAudit!.detail.filled.attributes).toBe(1);
     expect(mergeAudit!.detail.displaced.attributes).toEqual([{ attributeId: 'atd_org_a', value: 'other-A' }]);
     expect(mergeAudit!.detail.displaced.tags).toEqual(['t29']); // 1 + 30 tags, survivor first, cap 30
@@ -264,7 +264,7 @@ describe('1. data loss sweep', () => {
     const found = organizationReferencingColumns(env.db);
     const known = new Set([
       // re-pointed by mergeOrganizations
-      'person.organization_id', 'opportunity.organization_id', 'task.entity_id', 'field_claim.entity_id', 'activity.entity_id', 'attribute_value.entity_id',
+      'person.organization_id', 'opportunity.organization_id', 'meeting.organization_id', 'task.entity_id', 'field_claim.entity_id', 'activity.entity_id', 'attribute_value.entity_id',
       // cleared by cascade
       'organization_duplicate_dismissal.organization_a_id', 'organization_duplicate_dismissal.organization_b_id',
       // not re-pointed, by design: the log, imports' display links, model call subjects, the search index
@@ -290,8 +290,8 @@ describe('1. data loss sweep', () => {
       const sql = readFileSync(path.join(dir, file), 'utf8');
       for (const m of sql.matchAll(/REFERENCES\s+organization\s*\(/gi)) grepHits.add(`${file}@${m.index}`);
     }
-    // Four FK declarations exist today: person, opportunity, and the two dismissal columns.
-    expect(grepHits.size).toBe(4);
+    // Five FK declarations exist today: person, opportunity, meeting, and the two dismissal columns.
+    expect(grepHits.size).toBe(5);
   });
 
   it('KILLS: an in-flight enrichment run and a pending change proposal naming the merged away organization fail honestly and write nothing', () => {

@@ -137,7 +137,7 @@ describe('Reports nav entry', () => {
     );
     const nav = screen.getByRole('navigation', { name: 'Main' });
     const labels = within(nav).getAllByRole('link').map((link) => link.textContent);
-    expect(labels.slice(3, 6)).toEqual(['Pipeline', 'Reports', 'Research']);
+    expect(labels.slice(3, 7)).toEqual(['Pipeline', 'Meetings', 'Reports', 'Research']);
     expect(within(nav).getByRole('link', { name: 'Reports' })).toHaveAttribute('href', '/reports');
   });
 });
