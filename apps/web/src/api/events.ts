@@ -45,6 +45,8 @@ const KEYS_BY_EVENT: Record<ServerEventName, string[]> = {
     'attributes',
     // Rule changes and deletion-driven disables emit record_updated with entityType automation; Settings lists them.
     'automations',
+    // Sequence changes emit record_updated with entityType sequence; Settings and the prepare editor list them.
+    'sequences',
     // The Delete action on the Pipeline page reads deal counts per pipeline.
     'stage-counts',
     'tasks',

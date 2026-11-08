@@ -51,7 +51,7 @@ import { requireApproval } from '../queries/runs.js';
 import type { Approval, Row } from '../records.js';
 import { type ActionContext, emitRecord, mutate, parseInput, type Tx } from './context.js';
 import { hashPayload } from './demoResearch.js';
-import { createFollowupRuleIn, followupsInputSchema, readFrozenFollowups } from './followupRules.js';
+import { assertWithinCeiling, createFollowupRuleIn, followupsInputSchema, readFrozenFollowups } from './followupRules.js';
 import { enqueueJobIn } from './jobs.js';
 import { createMailAdapter, type MailAdapter, markMailProviderRejected } from './mailProviders.js';
 import {
@@ -177,6 +177,8 @@ export interface PrepareResult {
 // Nothing leaves the machine here. The worker submits only after a person approves.
 export function prepareSendIntents(ctx: ActionContext, input: unknown): PrepareResult {
   const data = parseInput(prepareSchema, input);
+  // Refused before anything is staged: no step is approved that the engine would only ever expire.
+  if (data.followups) assertWithinCeiling(data.followups.steps);
   if ((data.draftActivityIds ?? []).length === 0 && !data.runId) {
     throw validationError('draftActivityIds: Send draftActivityIds, a runId, or both.');
   }

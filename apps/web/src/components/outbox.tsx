@@ -32,7 +32,7 @@ function OutboxRow({ intent, rules }: { intent: SendIntent; rules: FollowupRule[
   const canAcknowledge = ACKNOWLEDGEABLE_STATUSES.includes(intent.status);
   const showReason = ['blocked', 'failed', 'unknown'].includes(intent.status);
   const when = intent.submittedAt ?? intent.updatedAt;
-  // "Follow-up 1 of 2" when the rule is loaded, else a plain "Follow-up".
+  // "Follow-up 1 of N" when the rule is loaded, else a plain "Follow-up".
   const rule = intent.followupRuleId ? rules.find((entry) => entry.id === intent.followupRuleId) : undefined;
   const marker = intent.followupStep
     ? rule

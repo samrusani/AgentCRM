@@ -61,6 +61,9 @@ import type {
   Automation,
   AutomationFields,
   AutomationInput,
+  Sequence,
+  SequenceFields,
+  SequenceInput,
   AttributeEntityType,
   AttributeKind,
   AttributeReading,
@@ -969,6 +972,13 @@ export const api = {
     remove: (id: string) => request<unknown>('DELETE', `/attributes/${encodeURIComponent(id)}`),
   },
 
+  sequences: {
+    list: async () => asPage<Sequence>(await request<unknown>('GET', '/sequences')).items,
+    create: (input: SequenceInput) => request<Sequence>('POST', '/sequences', { body: input }),
+    update: (id: string, expectedVersion: number, fields: SequenceFields) =>
+      request<Sequence>('PATCH', `/sequences/${encodeURIComponent(id)}`, { body: { expectedVersion, fields } }),
+    remove: (id: string) => request<unknown>('DELETE', `/sequences/${encodeURIComponent(id)}`),
+  },
   automations: {
     list: async () => asPage<Automation>(await request<unknown>('GET', '/automations')).items,
     create: (input: AutomationInput) => request<Automation>('POST', '/automations', { body: input }),

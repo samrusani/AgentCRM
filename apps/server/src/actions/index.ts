@@ -47,6 +47,7 @@ export * from './runs.js';
 export { listTemplates, switchTemplate } from './templates.js';
 export { createPipeline, deletePipeline, updatePipeline } from './pipelines.js';
 export { createAutomation, deleteAutomation, updateAutomation } from './automations.js';
+export { createSequence, deleteSequence, updateSequence } from './sequences.js';
 export { createAttribute, deleteAttribute, updateAttribute } from './attributes.js';
 export { addListMembers, createList, deleteList, removeListMember, updateList } from './lists.js';
 export * from './workspace.js';

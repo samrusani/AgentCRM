@@ -2455,3 +2455,11 @@ fieldset.connector__form > legend {
   flex-wrap: wrap;
   gap: 12px;
 }
+
+/* Prepare to send: the "Use a sequence" select sits under the step editor with its copied line. */
+.prepare-send__sequence {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}

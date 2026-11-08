@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { dailySendCap, followupTickMilliseconds } from '../config.js';
-import { conflict, notFound } from '../errors.js';
+import { conflict, notFound, validationError } from '../errors.js';
 import {
   followupCeilingTaskTitle,
   followupExpiredTaskTitle,
@@ -21,23 +21,22 @@ import { countReserved, countSentToday, dayStartFor, findSuppression } from '../
 import { type ActionContext, emitRecord, mutate, type Tx } from './context.js';
 import { ensureTaskIn, type FrozenMessage, messageHash, transitionIntentIn } from './sendIntentState.js';
 
-// The follow-up plan a person attaches when staging a send. One or two steps. The body is trimmed before its length
-// is checked, and the same text goes to every recipient in the batch.
-export const followupsInputSchema = z
+// One step of a follow-up plan: a wait in whole days and the exact text. The body is trimmed before its length is
+// checked. Follow-up sequences (saved presets) validate their steps with this same schema.
+const followupStepSchema = z
   .object({
-    steps: z
-      .array(
-        z
-          .object({
-            waitDays: z.number().int().min(1).max(30),
-            body: z.string().trim().min(10).max(2000),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(2),
+    waitDays: z.number().int().min(1).max(30),
+    body: z.string().trim().min(10).max(2000),
   })
   .strict();
+
+// One to five steps. The five step cap is a contract: raising it loosens nothing else, because every step's exact text
+// is still frozen into the one send approval. The cumulative ceiling is checked at staging by assertWithinCeiling, not
+// here, so a plan approved earlier still reads back from its frozen payload.
+export const followupStepsSchema = z.array(followupStepSchema).min(1).max(5);
+
+// The follow-up plan a person attaches when staging a send. The same text goes to every recipient in the batch.
+export const followupsInputSchema = z.object({ steps: followupStepsSchema }).strict();
 
 export type FollowupsInput = z.output<typeof followupsInputSchema>;
 
@@ -45,7 +44,20 @@ const dayMilliseconds = 24 * 60 * 60 * 1000;
 // A due step more than this far past its due time is not sent, for example because the computer was off.
 export const followupOverdueMilliseconds = 7 * dayMilliseconds;
 // A rule still unfinished this long after its approval expires.
-export const followupCeilingMilliseconds = 90 * dayMilliseconds;
+export const followupCeilingDays = 90;
+export const followupCeilingMilliseconds = followupCeilingDays * dayMilliseconds;
+
+// Refuses a plan the engine could never finish. The engine expires a rule (reason `ceiling`) when a step comes due more
+// than 90 days after the approval was decided. The first message goes out after the approval and every wait is
+// counted from the previous acceptance, so the last step falls due at least `sum of waits` days after the approval
+// (more with weekend slips and send delays). A sum of 90 or more can therefore only ever expire, so the waits must add
+// up to 89 days or fewer. Used by staging and by sequences, so a preset can never hold a plan staging would refuse.
+export function assertWithinCeiling(steps: readonly { waitDays: number }[]): void {
+  const total = steps.reduce((sum, step) => sum + step.waitDays, 0);
+  if (total >= followupCeilingDays) {
+    throw validationError(`The waits add up to ${total} days; follow-ups stop after ${followupCeilingDays} days. Shorten a wait or remove a step.`);
+  }
+}
 
 interface RuleRow {
   id: string;

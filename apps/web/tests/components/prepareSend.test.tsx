@@ -1,7 +1,7 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useLocation } from 'react-router-dom';
-import { useMailReadiness, useStageSend } from '../../src/api/hooks';
+import { useCreateSequence, useMailReadiness, useSequences, useStageSend } from '../../src/api/hooks';
 import type { StageSendInput } from '../../src/api/types';
 import { PrepareToSend } from '../../src/components/prepareSend';
 import { Router } from '../helpers';
@@ -9,6 +9,8 @@ import { Router } from '../helpers';
 vi.mock('../../src/api/hooks', () => ({
   useMailReadiness: vi.fn(),
   useStageSend: vi.fn(),
+  useSequences: vi.fn(),
+  useCreateSequence: vi.fn(),
   useMailProvider: vi.fn(),
   useMailProviderNamer: vi.fn(),
   useMailSummary: vi.fn(),
@@ -18,7 +20,9 @@ const input: StageSendInput = { draftActivityIds: ['draft-1', 'draft-2'] };
 const VALID_BODY = 'Just checking in on my note from last week.';
 
 const mutate = vi.fn();
+const createMutate = vi.fn();
 let stage: Record<string, unknown>;
+let saved: Array<{ id: string; name: string; version: number; steps: Array<{ waitDays: number; body: string }> }> = [];
 
 function Where() {
   const location = useLocation();
@@ -28,6 +32,8 @@ function Where() {
 function setup(props: { label?: string } = {}) {
   vi.mocked(useMailReadiness).mockReturnValue({ state: 'ready', inboxEmail: 'me@example.com', provider: 'gmail' });
   vi.mocked(useStageSend).mockReturnValue(stage as unknown as ReturnType<typeof useStageSend>);
+  vi.mocked(useSequences).mockReturnValue({ data: saved } as unknown as ReturnType<typeof useSequences>);
+  vi.mocked(useCreateSequence).mockReturnValue({ mutate: createMutate, isPending: false, isError: false, error: null } as unknown as ReturnType<typeof useCreateSequence>);
   const user = userEvent.setup();
   render(
     <Router>
@@ -41,7 +47,7 @@ function setup(props: { label?: string } = {}) {
 const prepareButton = () => screen.getByRole('button', { name: 'Prepare to send' });
 
 async function addStep(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole('button', { name: /^Add (a|a second) follow-up$/ }));
+  await user.click(screen.getByRole('button', { name: 'Add a follow-up' }));
 }
 
 function setBody(index: number, value: string) {
@@ -54,6 +60,8 @@ function setDays(index: number, value: string) {
 
 beforeEach(() => {
   mutate.mockReset();
+  createMutate.mockReset();
+  saved = [];
   stage = { mutate, isPending: false, isError: false, isSuccess: false, data: undefined, error: null };
 });
 
@@ -75,6 +83,7 @@ describe('PrepareToSend without follow-ups', () => {
   it('keeps staging disabled when the connector is not ready', () => {
     vi.mocked(useMailReadiness).mockReturnValue({ state: 'blocked', message: 'No sending connector is in use.', settingsLink: true });
     vi.mocked(useStageSend).mockReturnValue(stage as unknown as ReturnType<typeof useStageSend>);
+    vi.mocked(useSequences).mockReturnValue({ data: [] } as unknown as ReturnType<typeof useSequences>);
     render(
       <Router>
         <PrepareToSend label="Prepare to send" input={input} />
@@ -94,13 +103,16 @@ describe('adding and removing steps', () => {
     expect(screen.getByLabelText('Exact text of follow-up 1')).toHaveValue('');
   });
 
-  it('offers a second follow-up after the first and stops offering at two', async () => {
+  // Contract: up to five follow-ups (docs/design.md, Follow-ups in prepare to send); the add action stops at five.
+  it('keeps offering "Add a follow-up" up to five steps and then says five is the most', async () => {
     const user = setup();
-    await addStep(user);
+    for (let step = 1; step <= 5; step += 1) {
+      await addStep(user);
+      expect(screen.getByLabelText(`Exact text of follow-up ${step}`)).toBeInTheDocument();
+    }
     expect(screen.queryByRole('button', { name: 'Add a follow-up' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Add a second follow-up' }));
-    expect(screen.getByLabelText('Exact text of follow-up 2')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Add a/ })).not.toBeInTheDocument();
+    expect(screen.getByText('Five follow-ups is the most one send can carry.')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Exact text of follow-up 6')).not.toBeInTheDocument();
   });
 
   it('removes a step and goes back to the plain request', async () => {
@@ -216,7 +228,7 @@ describe('body limits, 10 to 2000 characters after trimming', () => {
 });
 
 describe('the staging request', () => {
-  it('blocks staging while any one of two steps is invalid', async () => {
+  it('blocks staging while any one of the steps is invalid', async () => {
     const user = setup();
     await addStep(user);
     await addStep(user);
@@ -299,5 +311,103 @@ describe('request states', () => {
     setup();
     expect(screen.getByText(/Everyone in this selection was left out/)).toBeInTheDocument();
     expect(screen.getByText('This person already has active follow-ups. Stop them to stage again.')).toBeInTheDocument();
+  });
+});
+
+describe('the 90 day ceiling', () => {
+  it('shows the total inline and disables submit when the waits reach 90 days', async () => {
+    const user = setup();
+    for (let step = 1; step <= 3; step += 1) {
+      await addStep(user);
+      setBody(step, VALID_BODY);
+      setDays(step, '30');
+    }
+    expect(screen.getByText('The waits add up to 90 days; follow-ups stop after 90 days. Shorten a wait or remove a step.')).toBeInTheDocument();
+    expect(prepareButton()).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save as sequence' })).toBeDisabled();
+    await user.click(prepareButton());
+    expect(mutate).not.toHaveBeenCalled();
+    setDays(3, '29');
+    expect(screen.queryByText(/The waits add up to/)).not.toBeInTheDocument();
+    expect(prepareButton()).toBeEnabled();
+  });
+});
+
+describe('Use a sequence', () => {
+  const nudges = {
+    id: 'sqn_1',
+    name: 'Gentle nudges',
+    version: 1,
+    steps: [
+      { waitDays: 3, body: 'First saved follow-up text.' },
+      { waitDays: 6, body: 'Second saved follow-up text.' },
+    ],
+  };
+
+  it('shows no select until a sequence exists', () => {
+    setup();
+    expect(screen.queryByLabelText('Use a sequence')).not.toBeInTheDocument();
+  });
+
+  it('copies the steps into the editor, says so, keeps them editable, and stages the edited text', async () => {
+    saved = [nudges];
+    const user = setup();
+    await user.selectOptions(screen.getByLabelText('Use a sequence'), 'Gentle nudges');
+    expect(screen.getByLabelText('Exact text of follow-up 1')).toHaveValue('First saved follow-up text.');
+    expect(screen.getByLabelText('Exact text of follow-up 2')).toHaveValue('Second saved follow-up text.');
+    expect(screen.getAllByLabelText('days after the last send').map((field) => (field as HTMLInputElement).value)).toEqual(['3', '6']);
+    expect(screen.getByText(/Copied the steps from Gentle nudges\. You can edit them freely/)).toBeInTheDocument();
+    setBody(2, 'Edited second follow-up text.');
+    await user.click(prepareButton());
+    // The request carries the editor's text only, never the sequence id.
+    expect(mutate.mock.calls[0]?.[0]).toEqual({
+      draftActivityIds: ['draft-1', 'draft-2'],
+      followups: {
+        steps: [
+          { waitDays: 3, body: 'First saved follow-up text.' },
+          { waitDays: 6, body: 'Edited second follow-up text.' },
+        ],
+      },
+    });
+  });
+
+  it('replaces the steps that were already in the editor', async () => {
+    saved = [nudges];
+    const user = setup();
+    await addStep(user);
+    await addStep(user);
+    await addStep(user);
+    setBody(3, 'A third step that will go.');
+    await user.selectOptions(screen.getByLabelText('Use a sequence'), 'Gentle nudges');
+    expect(screen.queryByLabelText('Exact text of follow-up 3')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Exact text of follow-up 1')).toHaveValue('First saved follow-up text.');
+  });
+});
+
+describe('Save as sequence', () => {
+  it('is offered only once there is a step, and saves the editor under a name', async () => {
+    const user = setup();
+    expect(screen.queryByRole('button', { name: 'Save as sequence' })).not.toBeInTheDocument();
+    await addStep(user);
+    setDays(1, '4');
+    setBody(1, `  ${VALID_BODY}  `);
+    await user.click(screen.getByRole('button', { name: 'Save as sequence' }));
+    const dialog = screen.getByRole('dialog');
+    const save = within(dialog).getByRole('button', { name: 'Save sequence' });
+    expect(save).toBeDisabled();
+    await user.type(within(dialog).getByLabelText('Name'), '  Quick check in ');
+    await user.click(save);
+    expect(createMutate.mock.calls[0]?.[0]).toEqual({ name: 'Quick check in', steps: [{ waitDays: 4, body: VALID_BODY }] });
+    act(() => {
+      (createMutate.mock.calls[0]?.[1] as { onSuccess: () => void }).onSuccess();
+    });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByText('Saved as Quick check in.')).toBeInTheDocument();
+  });
+
+  it('is disabled while a step is invalid', async () => {
+    const user = setup();
+    await addStep(user);
+    expect(screen.getByRole('button', { name: 'Save as sequence' })).toBeDisabled();
   });
 });

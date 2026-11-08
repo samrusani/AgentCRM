@@ -4,6 +4,8 @@ import {
   addSuppression,
   createContext,
   decideApproval,
+  createSequence,
+  deleteSequence,
   disconnectAgentmailConnector,
   prepareSendIntents,
   setMailProvider,
@@ -251,7 +253,8 @@ describe('staging with a follow-up plan', () => {
     const stageWith = (followups: unknown) => () => prepareSendIntents(env.ctx, { draftActivityIds: [draft], followups });
     const good = { waitDays: 2, body: 'A perfectly fine follow-up.' };
     expect(stageWith({ steps: [] })).toThrow(AppError);
-    expect(stageWith({ steps: [good, good, good] })).toThrow(AppError);
+    // Contract: one to five steps (docs/architecture.md, follow-ups staging). Three is fine now; six is refused.
+    expect(stageWith({ steps: [good, good, good, good, good, good] })).toThrow(AppError);
     expect(stageWith({ steps: [{ ...good, waitDays: 0 }] })).toThrow(AppError);
     expect(stageWith({ steps: [{ ...good, waitDays: 31 }] })).toThrow(AppError);
     expect(stageWith({ steps: [{ ...good, waitDays: 1.5 }] })).toThrow(AppError);
@@ -400,6 +403,51 @@ describe('the claim', () => {
     ]);
     // A done rule does nothing more.
     expect(tickFollowupRules(env.ctx)).toBe(0);
+  });
+
+  // Contract: five steps run end to end, one at a time, each measured from the previous acceptance.
+  const fiveSteps = [2, 2, 3, 4, 5].map((waitDays, at) => ({ waitDays, body: `Follow-up number ${at + 1} for the five step plan.` }));
+
+  async function runStep(env: TestEnvironment, ruleId: string): Promise<void> {
+    tickFollowupRules(env.ctx);
+    const armed = ruleRow(env, ruleId);
+    expect(armed.status).toBe('armed');
+    warpTo(env, Date.parse(armed.next_due_at!) + 1000);
+    tickFollowupRules(env.ctx);
+    await drain(env);
+  }
+
+  it('runs a five step rule end to end and sends every step in order', async () => {
+    const env = await freshEnv();
+    const launched = await launch(env, 'Fenn', { steps: fiveSteps });
+    for (let step = 1; step <= 5; step += 1) await runStep(env, launched.ruleId);
+    tickFollowupRules(env.ctx);
+    expect(ruleRow(env, launched.ruleId)).toMatchObject({ status: 'done', next_step: 5, next_due_at: null });
+    expect(stepIntents(env, launched.ruleId).map((item) => [item.followup_step, item.status, item.body])).toEqual(
+      fiveSteps.map((step, at) => [at + 1, 'accepted', step.body]),
+    );
+    expect(agentmail.state.sent).toHaveLength(6);
+  });
+
+  it('still stops mid sequence on a reply, and sends nothing more', async () => {
+    const env = await freshEnv();
+    const launched = await launch(env, 'Gale', { steps: fiveSteps });
+    for (let step = 1; step <= 3; step += 1) await runStep(env, launched.ruleId);
+    insertInbound(env, launched.personId, launched.email, env.ctx.now());
+    tickFollowupRules(env.ctx);
+    expect(ruleRow(env, launched.ruleId)).toMatchObject({ status: 'stopped', stopped_reason: 'replied' });
+    expect(stepIntents(env, launched.ruleId)).toHaveLength(3);
+    expect(agentmail.state.sent).toHaveLength(4);
+  });
+
+  it('keeps running a staged rule after the sequence it was copied from is deleted', async () => {
+    const env = await freshEnv();
+    const saved = createSequence(env.ctx, { name: 'Five touches', steps: fiveSteps });
+    const launched = await launch(env, 'Hale', { steps: saved.steps });
+    deleteSequence(env.ctx, saved.id);
+    expect(JSON.parse(ruleRow(env, launched.ruleId).steps)).toEqual(fiveSteps);
+    await runStep(env, launched.ruleId);
+    expect(stepIntents(env, launched.ruleId)[0]).toMatchObject({ status: 'accepted', body: fiveSteps[0]!.body });
   });
 
   it('keeps the subject Re: prefix from doubling, in any case', () => {

@@ -202,13 +202,28 @@ export function isValidEmailAddress(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
 
-// Follow-ups. Limits mirror the server: one or two steps, 1 to 30 days, 10 to 2000 characters after trimming.
-export const FOLLOWUP_MAX_STEPS = 2;
+// Follow-ups. Limits mirror the server: one to five steps, 1 to 30 days each, 10 to 2000 characters after trimming, and waits that add up to
+// less than the 90 day ceiling (follow-ups stop after 90 days, so a longer plan could never finish).
+export const FOLLOWUP_MAX_STEPS = 5;
+export const FOLLOWUP_CEILING_DAYS = 90;
 export const FOLLOWUP_DEFAULT_WAIT_DAYS = 5;
 export const FOLLOWUP_MIN_WAIT_DAYS = 1;
 export const FOLLOWUP_MAX_WAIT_DAYS = 30;
 export const FOLLOWUP_MIN_BODY = 10;
 export const FOLLOWUP_MAX_BODY = 2000;
+
+// The sentence shown inline (and the refusal the server gives) when the waits pass the ceiling, else null.
+export function followupCeilingProblem(waits: number[]): string | null {
+  const total = waits.reduce((sum, days) => sum + days, 0);
+  if (total < FOLLOWUP_CEILING_DAYS) return null;
+  return `The waits add up to ${total} days; follow-ups stop after ${FOLLOWUP_CEILING_DAYS} days. Shorten a wait or remove a step.`;
+}
+
+// "3 steps over 12 days" for a saved sequence.
+export function sequenceSummary(steps: Array<{ waitDays: number }>): string {
+  const days = steps.reduce((sum, step) => sum + step.waitDays, 0);
+  return `${steps.length} ${steps.length === 1 ? 'step' : 'steps'} over ${days} ${days === 1 ? 'day' : 'days'}`;
+}
 
 export const FOLLOWUP_STOP_SENTENCE =
   'Follow-ups stop on any reply, bounce, opt out, or suppression, and you can stop them at any time. The same text goes to every recipient.';

@@ -11,6 +11,8 @@ import type {
   AttributeEntityType,
   AutomationFields,
   AutomationInput,
+  SequenceFields,
+  SequenceInput,
   AttributeKind,
   Lifecycle,
   AcceptEnrichmentInput,
@@ -335,6 +337,37 @@ export function useDeleteAttribute() {
     onSuccess: () => invalidateKeys(queryClient, ATTRIBUTE_KEYS),
     // A refused delete usually means the definition changed underneath, so the list reloads.
     onError: () => invalidateKeys(queryClient, ['attributes']),
+  });
+}
+
+export function useSequences() {
+  return useQuery({ queryKey: ['sequences'], queryFn: api.sequences.list });
+}
+
+export function useCreateSequence() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: SequenceInput) => api.sequences.create(input),
+    onSuccess: () => invalidateKeys(queryClient, ['sequences']),
+  });
+}
+
+export function useUpdateSequence() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string; expectedVersion: number; fields: SequenceFields }) =>
+      api.sequences.update(input.id, input.expectedVersion, input.fields),
+    onSuccess: () => invalidateKeys(queryClient, ['sequences']),
+    onError: () => invalidateKeys(queryClient, ['sequences']),
+  });
+}
+
+export function useDeleteSequence() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.sequences.remove(id),
+    onSuccess: () => invalidateKeys(queryClient, ['sequences']),
+    onError: () => invalidateKeys(queryClient, ['sequences']),
   });
 }
 

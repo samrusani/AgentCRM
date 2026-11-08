@@ -217,6 +217,25 @@ export interface AttributeDef {
   valueCount: number;
 }
 
+// A saved preset of follow-up steps. Applying one copies its steps into the prepare editor; a staged send never refers
+// back to it.
+export interface Sequence {
+  id: string;
+  name: string;
+  steps: FollowupStep[];
+  version: number;
+}
+
+export interface SequenceInput {
+  name: string;
+  steps: FollowupStep[];
+}
+
+export interface SequenceFields {
+  name?: string;
+  steps?: FollowupStep[];
+}
+
 export type AutomationTriggerKind = 'stage_entered' | 'person_promoted';
 
 // A rule that creates a task when its trigger fires. The trigger kind never changes after creation.

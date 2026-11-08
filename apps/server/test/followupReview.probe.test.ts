@@ -413,7 +413,9 @@ describe('tamper and validation', () => {
       { steps: [{ waitDays: 3, body: 'x'.repeat(2001) }] },
       { steps: [{ waitDays: 3, body: 'A perfectly good follow-up body.', extra: 1 }] },
       { steps: [] },
-      { steps: [steps[0], steps[1], steps[0]] },
+      // Contract: one to five steps, and waits that add up to 90 days or more are refused at staging.
+      { steps: [steps[0], steps[1], steps[0], steps[1], steps[0], steps[1]] },
+      { steps: [{ waitDays: 30, body: 'A perfectly good follow-up body.' }, { waitDays: 30, body: 'A perfectly good follow-up body.' }, { waitDays: 30, body: 'A perfectly good follow-up body.' }] },
       { steps: [steps[0]], extra: true },
       null,
       [],
@@ -422,6 +424,9 @@ describe('tamper and validation', () => {
     for (const followups of bad) {
       expect(() => prepareSendIntents(env.ctx, { draftActivityIds: [draft], followups })).toThrow();
     }
+    // five steps within the ceiling are accepted (waits add up to 89 days)
+    const five = [30, 30, 25, 3, 1].map((waitDays) => ({ waitDays, body: 'A perfectly good follow-up body.' }));
+    expect(() => prepareSendIntents(env.ctx, { draftActivityIds: [draft], followups: { steps: five } })).not.toThrow();
     // exactly 10 trimmed characters and 2000 characters are accepted
     expect(() => prepareSendIntents(env.ctx, { draftActivityIds: [draft], followups: { steps: [{ waitDays: 30, body: '  0123456789  ' }] } })).not.toThrow();
   });

@@ -4,7 +4,7 @@
 
 **The CRM that people and AI agents operate together.**
 
-<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-3001-15685b?style=flat" alt="3001 tests">
+<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-3082-15685b?style=flat" alt="3082 tests">
 
 [Quick start](#quick-start) · [What works](#what-works-today) · [Architecture docs](docs/architecture.md)
 
@@ -91,7 +91,7 @@ The client spawns the MCP server as a child process per session and it dies with
 
 ## What works today
 
-Every row below is backed by tests: 3,001 across the server (2,015), the web app (704), and the browser extension (282). "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
+Every row below is backed by tests: 3,082 across the server (2,069), the web app (731), and the browser extension (282). "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
 
 ### Core CRM
 
@@ -139,13 +139,13 @@ Every row below is backed by tests: 3,001 across the server (2,015), the web app
 | Area | Status |
 | --- | --- |
 | Email: AgentMail, Gmail, Microsoft 365, and IMAP/SMTP (iCloud Mail and Fastmail presets) behind one adapter, reviewed sends with per provider duplicate protection, replies, opt outs, bounces, suppressions | Working. AgentMail, Gmail, and Microsoft are verified against stubbed provider APIs; the IMAP/SMTP connector is verified against its transport seam and a local SMTP socket, not live servers. Gmail and Microsoft use an OAuth client or app registration you create (docs/connect-gmail.md, docs/connect-microsoft.md); iCloud and Fastmail use app passwords |
-| Follow-up rules: up to two pre-approved nudges per send, frozen text, server enforced stops on reply, bounce, opt out, and suppression, threading on Gmail and IMAP | Working, verified against the fake IMAP transport; adversarially reviewed |
+| Follow-up rules: up to five pre-approved nudges per send, frozen text, server enforced stops on reply, bounce, opt out, and suppression, threading on Gmail and IMAP; saved sequences prefill the steps and are never consulted again after approval | Working, verified against the fake IMAP transport; adversarially reviewed |
 
 ### How sending stays safe
 
 - **Word for word approval.** Every message is approved exactly as written before it goes out.
 - **No double sends.** Submits reuse the provider's duplicate protection, so retries do not send twice within its roughly one day window. If an attempt stays unknown past that window, the app shows it to you. It never retries.
-- **Rule bound follow-ups.** When you prepare a send, you can attach up to two pre-written nudges with waits. The one approval covers their exact text.
+- **Rule bound follow-ups.** When you prepare a send, you can attach up to five pre-written nudges with waits, by hand or from a saved sequence. The one approval covers their exact text, and the sequence is never consulted again after it.
 - **Follow-ups stop on their own.** They stop on any reply, bounce, opt out, or suppression. The server refuses to send before it has freshly synced the mailbox, and you can stop them at any time.
 - **Agents cannot send.** MCP, chat, and the CLI cannot approve or submit a send.
 
