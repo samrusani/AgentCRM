@@ -18,6 +18,7 @@ import { createdButNotAdded, ListMenu, useCreateOnce } from '../components/lists
 import { FitCell } from '../components/qualification';
 import { VirtualTable, type Column } from '../components/VirtualTable';
 import { describeDue, humanize, personName } from '../lib/format';
+import { profileHref, profilePath } from '../lib/links';
 import { addedBeforeFailure, addedMessage, removedMessage, withNextStep } from '../lib/lists';
 import { useUI } from '../lib/ui';
 import { CsvImportSheet } from './CsvImportSheet';
@@ -742,6 +743,25 @@ function OrganizationsTable({
       { key: 'name', header: 'Name', width: 'minmax(180px, 1.5fr)', render: (row) => <span className="cell-name">{row.name}</span> },
       { key: 'kind', header: 'Kind', width: '110px', render: (row) => <span className="cell-text">{humanize(row.kind)}</span> },
       { key: 'domain', header: 'Domain', width: 'minmax(140px, 1.2fr)', render: (row) => <span className="cell-text">{row.domain}</span> },
+      {
+        key: 'linkedin',
+        header: 'LinkedIn',
+        width: 'minmax(140px, 1.2fr)',
+        // The path form as a link; a click opens the page, never the row's sheet. A value that does not
+        // parse as a profile URL renders as plain text, so a hostile stored value never links anywhere.
+        render: (row) => {
+          const href = profileHref(row.linkedinUrl);
+          const label = profilePath(row.linkedinUrl);
+          if (!label) return <span className="cell-text" />;
+          return href ? (
+            <a className="link cell-text" href={href} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+              {label}
+            </a>
+          ) : (
+            <span className="cell-text">{label}</span>
+          );
+        },
+      },
       { key: 'location', header: 'Location', width: 'minmax(120px, 1fr)', render: (row) => <span className="cell-text">{row.location}</span> },
     ],
     [],
