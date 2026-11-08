@@ -57,6 +57,10 @@ import type {
   Person,
   PersonDetail,
   PersonList,
+  AttributeDef,
+  AttributeEntityType,
+  AttributeKind,
+  AttributeReading,
   AddMembersResult,
   Pipeline,
   ImportSettings,
@@ -282,6 +286,7 @@ function normalizePersonDetail(data: unknown): PersonDetail {
     opportunities: toArray<Opportunity>(flat.opportunities),
     lists: toArray<{ id: string; name: string }>(flat.lists),
     interaction: normalizeInteraction((flat as unknown as Record<string, unknown>).interaction),
+    attributes: toArray<AttributeReading>(flat.attributes),
   };
 }
 
@@ -305,6 +310,7 @@ function normalizeOrganizationDetail(data: unknown): OrganizationDetail {
     claims: toArray<Claim>(flat.claims),
     activities: toArray<Activity>(flat.activities),
     opportunities: toArray<Opportunity>(flat.opportunities),
+    attributes: toArray<AttributeReading>(flat.attributes),
   };
 }
 
@@ -948,6 +954,16 @@ export const api = {
       await request<Pipeline>('PATCH', `/pipelines/${encodeURIComponent(id)}`, { body: { expectedVersion, fields: { name } } }),
     ),
   deletePipeline: (id: string) => request<unknown>('DELETE', `/pipelines/${encodeURIComponent(id)}`),
+
+  attributes: {
+    list: async (entityType?: AttributeEntityType) =>
+      asPage<AttributeDef>(await request<unknown>('GET', '/attributes', { query: entityType ? { entityType } : {} })).items,
+    create: (input: { entityType: AttributeEntityType; label: string; kind: AttributeKind; description?: string }) =>
+      request<AttributeDef>('POST', '/attributes', { body: input }),
+    update: (id: string, expectedVersion: number, fields: { label?: string; description?: string | null }) =>
+      request<AttributeDef>('PATCH', `/attributes/${encodeURIComponent(id)}`, { body: { expectedVersion, fields } }),
+    remove: (id: string) => request<unknown>('DELETE', `/attributes/${encodeURIComponent(id)}`),
+  },
 
   lists: {
     list: async () => asPage<PersonList>(await request<unknown>('GET', '/lists')).items,

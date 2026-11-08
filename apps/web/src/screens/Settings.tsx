@@ -10,6 +10,7 @@ import {
 import { ErrorState, Loading, PageHeader, errorMessage } from '../components/common';
 import { isLocalProvider, modelName, providerAttention, providerName } from '../lib/models';
 import { useUI, type ThemeSetting } from '../lib/ui';
+import { AttributesSection } from './AttributeSettings';
 
 const THEMES: Array<{ value: ThemeSetting; label: string; hint: string }> = [
   { value: 'system', label: 'System', hint: 'Follow the operating system setting' },
@@ -138,6 +139,8 @@ export function GeneralSettings() {
       </section>
 
       <ImportsSection />
+
+      <AttributesSection />
 
       <section className="section" aria-labelledby="settings-workspace">
         <h2 className="section__title" id="settings-workspace">

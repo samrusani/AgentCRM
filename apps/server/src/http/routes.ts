@@ -47,7 +47,10 @@ import {
   getModelProvider,
   liftSuppression,
   listTemplates,
+  createAttribute,
   createPipeline,
+  deleteAttribute,
+  updateAttribute,
   deletePipeline,
   addListMembers,
   createList,
@@ -93,6 +96,7 @@ import { getImportDetail } from '../queries/imports.js';
 import { getOpportunityDetail, listOpportunities } from '../queries/opportunities.js';
 import { getOrganizationDetail, listOrganizations } from '../queries/organizations.js';
 import { getPersonDetail, listPeople } from '../queries/people.js';
+import { listAttributeDefs } from '../queries/attributes.js';
 import { listLists } from '../queries/lists.js';
 import { listPipelines } from '../queries/pipelines.js';
 import { readQualificationConfig } from '../qualification/config.js';
@@ -283,6 +287,20 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   app.patch('/api/pipelines/:id', async (request) => updatePipeline(context(), idParam(request.params), request.body));
   app.delete('/api/pipelines/:id', async (request, reply) => {
     deletePipeline(context(), idParam(request.params));
+    return reply.status(204).send();
+  });
+
+  app.get('/api/attributes', async (request) => {
+    const { entityType } = parseInput(z.object({ entityType: z.enum(['person', 'organization']).optional() }), request.query);
+    return { items: listAttributeDefs(db, workspaceId(), entityType), nextCursor: null };
+  });
+  app.post('/api/attributes', async (request, reply) => {
+    reply.status(201);
+    return createAttribute(context(), request.body);
+  });
+  app.patch('/api/attributes/:id', async (request) => updateAttribute(context(), idParam(request.params), request.body));
+  app.delete('/api/attributes/:id', async (request, reply) => {
+    deleteAttribute(context(), idParam(request.params));
     return reply.status(204).send();
   });
 

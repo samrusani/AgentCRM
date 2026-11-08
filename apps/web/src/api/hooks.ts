@@ -8,6 +8,8 @@ import {
 import { ApiError, api, type NewOpportunityInput, type NewPersonInput } from './client';
 import { useEventConnection } from './events';
 import type {
+  AttributeEntityType,
+  AttributeKind,
   Lifecycle,
   AcceptEnrichmentInput,
   AcceptOrganizationEnrichmentInput,
@@ -294,6 +296,44 @@ export function useOrganization(id: string | null) {
 
 export function usePipelines() {
   return useQuery({ queryKey: ['pipelines'], queryFn: api.pipelines });
+}
+
+export function useAttributeDefs(entityType: AttributeEntityType) {
+  return useQuery({ queryKey: ['attributes', entityType], queryFn: () => api.attributes.list(entityType) });
+}
+
+// Definition changes show in Settings and on every open sheet (a rename shows in the row label, a delete removes the row).
+const ATTRIBUTE_KEYS = ['attributes', 'person', 'organization'];
+
+export function useCreateAttribute() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { entityType: AttributeEntityType; label: string; kind: AttributeKind; description?: string }) =>
+      api.attributes.create(input),
+    onSuccess: () => invalidateKeys(queryClient, ATTRIBUTE_KEYS),
+  });
+}
+
+export function useUpdateAttribute() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string; expectedVersion: number; fields: { label?: string; description?: string | null } }) =>
+      api.attributes.update(input.id, input.expectedVersion, input.fields),
+    onSuccess: () => invalidateKeys(queryClient, ATTRIBUTE_KEYS),
+    onError: (error) => {
+      if (error instanceof ApiError && error.code === 'version_conflict') invalidateKeys(queryClient, ['attributes']);
+    },
+  });
+}
+
+export function useDeleteAttribute() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.attributes.remove(id),
+    onSuccess: () => invalidateKeys(queryClient, ATTRIBUTE_KEYS),
+    // A refused delete usually means the definition changed underneath, so the list reloads.
+    onError: () => invalidateKeys(queryClient, ['attributes']),
+  });
 }
 
 export function useLists() {

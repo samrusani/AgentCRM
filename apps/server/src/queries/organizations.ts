@@ -1,6 +1,7 @@
 import type { Db } from '../db.js';
 import { notFound } from '../errors.js';
 import { type Row, toOpportunity, toOrganization, toPerson } from '../records.js';
+import { getEntityAttributes } from './attributes.js';
 import { listActivities, modelHiddenActivityKinds } from './activities.js';
 import type { DetailOptions } from './people.js';
 import { listClaims } from './claims.js';
@@ -82,6 +83,8 @@ export function getOrganizationDetail(db: Db, workspaceId: string, id: string, o
   return {
     ...organization,
     people,
+    // Attributes sit before the long tail (claims, activities), so a length bounded agent read keeps them.
+    attributes: getEntityAttributes(db, workspaceId, 'organization', id),
     claims: listClaims(db, workspaceId, 'organization', id),
     activities: listActivities(db, workspaceId, {
       entityType: 'organization',

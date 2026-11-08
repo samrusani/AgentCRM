@@ -4,6 +4,7 @@ import { isVersionConflict } from '../api/client';
 import type { Claim, Lifecycle, PersonInteraction } from '../api/types';
 import { useCreateOrganization, useOrganization, usePatchOrganization, usePatchPerson, usePerson } from '../api/hooks';
 import { ErrorState, Loading, Sheet, errorMessage } from '../components/common';
+import { AttributeRows } from '../components/attributes';
 import { TaskRow } from '../components/TaskRow';
 import {
   EditableValue,
@@ -356,6 +357,13 @@ export function PersonSheet({
     await query.refetch();
   };
 
+  // A custom attribute is an ordinary field in the envelope, addressed as attr:<key>.
+  const saveAttribute = async (key: string, value: unknown, versionOverride?: number) => {
+    if (!person) return;
+    await patch.mutateAsync({ id, expectedVersion: versionOverride ?? person.version, fields: { [`attr:${key}`]: value } });
+    await query.refetch();
+  };
+
   // An organization id links the person; null removes the link. The server checks that the organization exists.
   const saveOrganization = async (organizationId: string | null) => {
     if (!person) return;
@@ -475,6 +483,13 @@ export function PersonSheet({
               <FieldRow label="Lists" openClaim={openClaim} onToggleClaim={toggleClaim}>
                 <PersonLists personId={id} lists={person.lists} />
               </FieldRow>
+              <AttributeRows
+                attributes={person.attributes}
+                save={saveAttribute}
+                onReload={() => query.refetch()}
+                openClaim={openClaim}
+                onToggleClaim={toggleClaim}
+              />
             </dl>
             {typeof person.affiliationsSummary === 'string' && person.affiliationsSummary ? (
               <p className="muted">{person.affiliationsSummary}</p>
@@ -549,6 +564,12 @@ export function OrganizationSheet({
     await query.refetch();
   };
 
+  const saveAttribute = async (key: string, value: unknown, versionOverride?: number) => {
+    if (!organization) return;
+    await patch.mutateAsync({ id, expectedVersion: versionOverride ?? organization.version, fields: { [`attr:${key}`]: value } });
+    await query.refetch();
+  };
+
   if (creatingOpportunity && organization) {
     return (
       <NewOpportunitySheet
@@ -608,6 +629,13 @@ export function OrganizationSheet({
                   <span className="muted">None</span>
                 )}
               </FieldRow>
+              <AttributeRows
+                attributes={organization.attributes}
+                save={saveAttribute}
+                onReload={() => query.refetch()}
+                openClaim={openClaim}
+                onToggleClaim={toggleClaim}
+              />
             </dl>
           </SheetSection>
 

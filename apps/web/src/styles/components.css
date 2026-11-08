@@ -611,6 +611,22 @@ textarea.input {
 .editable__input {
   flex: 1;
 }
+.editable__textarea {
+  min-height: 72px;
+  resize: vertical;
+  font: inherit;
+}
+.editable__text {
+  white-space: pre-wrap;
+}
+.editable__limit {
+  flex-basis: 100%;
+  margin: 0;
+}
+.field__hint {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
 .conflict {
   flex-basis: 100%;
   padding: 8px 10px;
@@ -2393,4 +2409,38 @@ fieldset.connector__form > legend {
 }
 .person-lists .inline-error {
   flex-basis: 100%;
+}
+
+/* Settings, custom attributes: two groups of definitions with quiet row actions. */
+.attr-group + .attr-group {
+  margin-top: 16px;
+}
+.attr-group__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.attr-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.attr-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 0;
+}
+.attr-row__main {
+  min-width: 0;
+  flex: 1 1 240px;
+}
+.attr-row__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
 }

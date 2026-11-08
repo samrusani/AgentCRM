@@ -2,6 +2,7 @@ import type { Db } from '../db.js';
 import { notFound } from '../errors.js';
 import { type Row, toOpportunity, toOrganization, toPerson, toTask } from '../records.js';
 import { containsPattern, paginate, type Page } from './pagination.js';
+import { getEntityAttributes } from './attributes.js';
 import { listActivities, modelHiddenActivityKinds } from './activities.js';
 import { listClaims } from './claims.js';
 import { listsForPerson } from './lists.js';
@@ -160,6 +161,9 @@ export function getPersonDetail(db: Db, workspaceId: string, id: string, options
     ...person,
     organization,
     affiliationsSummary: parts.length > 0 ? parts.join('. ') : 'No affiliations recorded.',
+    // Custom attributes are part of the record, so agent reads (forModel) include them too. They sit before the
+    // long tail (claims, activities), so a length bounded agent read keeps them when the tail is cut.
+    attributes: getEntityAttributes(db, workspaceId, 'person', id),
     claims: listClaims(db, workspaceId, 'person', id),
     activities: listActivities(db, workspaceId, {
       entityType: 'person',

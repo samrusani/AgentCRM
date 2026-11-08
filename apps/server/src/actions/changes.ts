@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { resolveAttributeChanges } from '../attributes.js';
 import { notFound, validationError } from '../errors.js';
 import {
   type ActionContext,
@@ -13,6 +14,7 @@ import {
   type FieldChange,
   loadEntity,
   parseUpdate,
+  splitAttributeFields,
   type UpdatableType,
   updatableTypes,
   updateEntityIn,
@@ -115,8 +117,16 @@ export function proposeChanges(ctx: ActionContext, input: unknown) {
       if (current.version !== base.expectedVersion) {
         errors.push(`Expected version ${base.expectedVersion} but the record is at version ${current.version}.`);
       }
-      diff = computeChanges(current, parsed.fields);
+      const { builtin, attributes } = splitAttributeFields(parsed.fields);
+      diff = computeChanges(current, builtin);
       checkUpdateReferences(tx, change.entityType, change.id, Object.fromEntries(diff.map((entry) => [entry.field, entry.to])), current);
+      // Custom attributes resolve against the live definitions now; apply resolves them again in its own transaction.
+      if (change.entityType === 'person' || change.entityType === 'organization') {
+        diff = [
+          ...diff,
+          ...resolveAttributeChanges(ctx.db, ctx.workspaceId, change.entityType, change.id, attributes).map(({ field, from, to }) => ({ field, from, to })),
+        ];
+      }
     } catch (error) {
       errors.push(error instanceof Error ? error.message : 'The change is not valid.');
     }

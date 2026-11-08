@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Db } from '../db.js';
+import { attributeKeyOfField, resolveAttributeChanges, writeAttributeValues } from '../attributes.js';
 import { conflict, notFound, validationError } from '../errors.js';
 import { getOpportunity } from '../queries/opportunities.js';
 import { getOrganization } from '../queries/organizations.js';
@@ -209,7 +210,7 @@ export function assertDomainAvailable(tx: Tx, domain: string, ignoreId?: string)
   if (row) throw conflict('An organization with this domain already exists.');
 }
 
-export function updateSchemaFor(type: UpdatableType) {
+export function updateSchemaFor(type: UpdatableType, allowEmpty = false) {
   return z
     .object({
       expectedVersion: expectedVersionSchema,
@@ -217,14 +218,40 @@ export function updateSchemaFor(type: UpdatableType) {
         .object(specs[type].fields)
         .partial()
         .strict()
-        .refine((fields) => Object.keys(fields).length > 0, 'Provide at least one field to change'),
+        .refine((fields) => allowEmpty || Object.keys(fields).length > 0, 'Provide at least one field to change'),
     })
     .strict();
 }
 
 export type UpdateInput = { expectedVersion: number; fields: Record<string, unknown> };
 
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+// Custom attributes ride the same envelope as built in fields: attr:<key> on a person or organization. The key shape is
+// checked here; the key itself and the value are resolved against the live definitions where the write happens, because
+// definitions are data and can change between a proposal and its apply.
+export function splitAttributeFields(fields: Record<string, unknown>): {
+  builtin: Record<string, unknown>;
+  attributes: Record<string, unknown>;
+} {
+  const builtin: Record<string, unknown> = {};
+  const attributes: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(fields)) {
+    if (attributeKeyOfField(field) !== null) attributes[field] = value;
+    else builtin[field] = value;
+  }
+  return { builtin, attributes };
+}
+
 export function parseUpdate(type: UpdatableType, input: unknown): UpdateInput {
+  if ((type === 'person' || type === 'organization') && isPlainRecord(input) && isPlainRecord(input.fields)) {
+    const { builtin, attributes } = splitAttributeFields(input.fields);
+    if (Object.keys(attributes).length > 0) {
+      const parsed = parseInput(updateSchemaFor(type, true), { ...input, fields: builtin }) as UpdateInput;
+      return { expectedVersion: parsed.expectedVersion, fields: { ...parsed.fields, ...attributes } };
+    }
+  }
   return parseInput(updateSchemaFor(type), input) as UpdateInput;
 }
 
@@ -245,15 +272,21 @@ export function computeChanges(current: Record<string, unknown>, fields: Record<
   return changes;
 }
 
-// Runs inside an open transaction so batches can apply several updates atomically.
+// Runs inside an open transaction so batches can apply several updates atomically. Custom attribute fields
+// (attr:<key>) resolve against the live definitions in this transaction and count as changes like built in fields.
 export function updateEntityIn(tx: Tx, type: UpdatableType, id: string, parsed: UpdateInput) {
   const spec = specs[type];
   const current = spec.load(tx.db, tx.workspaceId, id);
   if (!current) throw notFound(spec.label);
   if (current.version !== parsed.expectedVersion) throw versionConflict(current);
 
-  const changes = computeChanges(current, parsed.fields);
-  if (changes.length === 0) return current;
+  const { builtin, attributes } = splitAttributeFields(parsed.fields);
+  const attributeChanges =
+    type === 'person' || type === 'organization'
+      ? resolveAttributeChanges(tx.db, tx.workspaceId, type, id, attributes)
+      : [];
+  const changes = computeChanges(current, builtin);
+  if (changes.length === 0 && attributeChanges.length === 0) return current;
 
   const patch = Object.fromEntries(changes.map((change) => [change.field, change.to]));
   spec.checkReferences?.(tx, id, patch, current);
@@ -265,13 +298,17 @@ export function updateEntityIn(tx: Tx, type: UpdatableType, id: string, parsed: 
   const now = tx.now();
   const result = tx.db
     .prepare(
-      `UPDATE ${spec.table} SET ${assignments.join(', ')}, version = version + 1, updated_at = ? WHERE id = ? AND workspace_id = ? AND version = ?`,
+      `UPDATE ${spec.table} SET ${[...assignments, 'version = version + 1', 'updated_at = ?'].join(', ')} WHERE id = ? AND workspace_id = ? AND version = ?`,
     )
     .run(...(values as never[]), now, id, tx.workspaceId, parsed.expectedVersion);
   if (result.changes !== 1) throw versionConflict(spec.load(tx.db, tx.workspaceId, id));
+  if (attributeChanges.length > 0) writeAttributeValues(tx.db, tx.workspaceId, id, attributeChanges, now);
 
+  // Attribute edits record no claim in this version; the audit event is their provenance.
   tx.audit(`${type}.update`, type, id, {
-    changes: Object.fromEntries(changes.map((change) => [change.field, { from: change.from, to: change.to }])),
+    changes: Object.fromEntries(
+      [...changes, ...attributeChanges].map((change) => [change.field, { from: change.from, to: change.to }]),
+    ),
   });
   emitRecord(tx, type, id);
   const updated = spec.load(tx.db, tx.workspaceId, id)!;

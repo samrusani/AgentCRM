@@ -41,6 +41,8 @@ const KEYS_BY_EVENT: Record<ServerEventName, string[]> = {
     'pipelines',
     // List and membership changes emit record_updated for the list; the tables and person sheets show them.
     'lists',
+    // Definition changes emit record_updated with entityType attribute_def; Settings lists them and sheets show them.
+    'attributes',
     // The Delete action on the Pipeline page reads deal counts per pipeline.
     'stage-counts',
     'tasks',

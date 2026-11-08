@@ -194,6 +194,36 @@ export interface PersonDetail extends Omit<Person, 'qualification'> {
   lists: Array<{ id: string; name: string }>;
   // Stored mail linked to this person, or null when none is linked.
   interaction: PersonInteraction | null;
+  // Custom attributes in display order, unset ones included.
+  attributes: AttributeReading[];
+}
+
+export type AttributeEntityType = 'person' | 'organization';
+export type AttributeKind = 'text' | 'number' | 'money';
+
+// A custom attribute definition. Key and kind never change after creation.
+export interface AttributeDef {
+  id: string;
+  entityType: AttributeEntityType;
+  key: string;
+  label: string;
+  kind: AttributeKind;
+  description: string | null;
+  seq: number;
+  version: number;
+  // How many records hold a value for it.
+  valueCount: number;
+}
+
+// One definition with this record's value. Money values carry their currency; other kinds carry null.
+export interface AttributeReading {
+  id: string;
+  key: string;
+  label: string;
+  kind: AttributeKind;
+  description: string | null;
+  value: string | number | null;
+  currency: string | null;
 }
 
 export interface PersonInteraction {
@@ -204,6 +234,7 @@ export interface PersonInteraction {
 }
 
 export interface OrganizationDetail extends Organization {
+  attributes: AttributeReading[];
   people: Person[];
   claims: Claim[];
   activities: Activity[];

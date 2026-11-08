@@ -150,7 +150,7 @@ describe('migration 024', () => {
       message('out_other_ws', 'wsp_2', 'out', 'me@mine.invalid', ['ada@lanternrow.invalid'], null);
       const lifecycleBefore = db.prepare('SELECT id, lifecycle FROM person ORDER BY id').all();
 
-      expect(applyMigrations(db)).toEqual(['024_mailbox.sql']);
+      expect(applyMigrations(db)).toEqual(['024_mailbox.sql', '025_attributes.sql']);
 
       const linked = Object.fromEntries((db.prepare('SELECT id, person_id FROM email_message').all() as { id: string; person_id: string | null }[]).map((row) => [row.id, row.person_id]));
       expect(linked).toEqual({

@@ -121,12 +121,15 @@ interface Problem {
 
 export function FieldRow({
   label,
+  hint,
   children,
   claims,
   openClaim,
   onToggleClaim,
 }: {
   label: string;
+  // A muted line under the row, such as a custom attribute's description.
+  hint?: string | null;
   children: ReactNode;
   claims?: Claim[];
   openClaim: string | null;
@@ -138,6 +141,7 @@ export function FieldRow({
       <dt className="field__label">{label}</dt>
       <dd className="field__value">
         <div className="field__main">{children}</div>
+        {hint ? <p className="muted field__hint">{hint}</p> : null}
         {claims && claims.length > 0 ? (
           <div className="field__chips">
             <EvidenceChips claims={claims} openId={openClaim} onToggle={onToggleClaim} />
@@ -149,6 +153,59 @@ export function FieldRow({
   );
 }
 
+// The wording for a failed save, shared by every editable field: a conflict says what the field is now, any other
+// failure says the edit was not saved.
+function failureProblem(error: unknown, label: string, field: string, next: string): Problem {
+  if (isVersionConflict(error)) {
+    const current = (error.current ?? {}) as Record<string, unknown>;
+    const currentValue = current[field];
+    return {
+      kind: 'conflict',
+      message: `${label} changed since you opened this record. ${
+        typeof currentValue === 'string' && currentValue
+          ? `It is now "${currentValue}".`
+          : 'The current value is different from the one you saw.'
+      } Your edit "${next}" was not saved.`,
+      currentVersion: typeof current.version === 'number' ? current.version : undefined,
+    };
+  }
+  return {
+    kind: 'error',
+    message: `${error instanceof ApiError ? error.message : errorMessage(error)} Your edit was not saved.`,
+  };
+}
+
+function ProblemAlert({
+  problem,
+  onReload,
+  onSaveOver,
+}: {
+  problem: Problem;
+  onReload: () => void;
+  onSaveOver: (version: number) => void;
+}) {
+  return (
+    <div className="conflict" role="alert">
+      <p>{problem.message}</p>
+      <div className="conflict__actions">
+        <button type="button" className="btn" onMouseDown={(event) => event.preventDefault()} onClick={onReload}>
+          Reload record
+        </button>
+        {problem.kind === 'conflict' && problem.currentVersion !== undefined ? (
+          <button
+            type="button"
+            className="btn"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onSaveOver(problem.currentVersion!)}
+          >
+            Save my value over it
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function EditableValue({
   label,
   field,
@@ -156,6 +213,8 @@ export function EditableValue({
   save,
   onReload,
   renderValue,
+  multiline,
+  limit,
 }: {
   label: string;
   field: string;
@@ -164,11 +223,16 @@ export function EditableValue({
   onReload: () => Promise<unknown>;
   // Shows a saved value in another form, such as a link. The edit control stays the same.
   renderValue?: (value: string) => ReactNode;
+  // Edits in a textarea: Enter adds a line, Control or Command with Enter saves, Escape cancels, leaving the field saves.
+  multiline?: boolean;
+  // A character bound, stated only once the draft goes over it. Saving waits until the draft fits.
+  limit?: number;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
   const [saving, setSaving] = useState(false);
   const [problem, setProblem] = useState<Problem | null>(null);
+  const overLimit = limit !== undefined && draft.trim().length > limit;
 
   const begin = () => {
     setDraft(value ?? '');
@@ -182,30 +246,14 @@ export function EditableValue({
       setEditing(false);
       return;
     }
+    if (limit !== undefined && next.length > limit) return;
     setSaving(true);
     try {
       await save(next, versionOverride);
       setEditing(false);
       setProblem(null);
     } catch (error) {
-      if (isVersionConflict(error)) {
-        const current = (error.current ?? {}) as Record<string, unknown>;
-        const currentValue = current[field];
-        setProblem({
-          kind: 'conflict',
-          message: `${label} changed since you opened this record. ${
-            typeof currentValue === 'string' && currentValue
-              ? `It is now "${currentValue}".`
-              : 'The current value is different from the one you saw.'
-          } Your edit "${next}" was not saved.`,
-          currentVersion: typeof current.version === 'number' ? current.version : undefined,
-        });
-      } else {
-        setProblem({
-          kind: 'error',
-          message: `${error instanceof ApiError ? error.message : errorMessage(error)} Your edit was not saved.`,
-        });
-      }
+      setProblem(failureProblem(error, label, field, next));
     } finally {
       setSaving(false);
     }
@@ -217,17 +265,160 @@ export function EditableValue({
     setEditing(false);
   };
 
+  const cancel = () => {
+    setEditing(false);
+    setProblem(null);
+  };
+
+  const inputProps = {
+    value: draft,
+    autoFocus: true,
+    onFocus: (event: { currentTarget: { select: () => void } }) => event.currentTarget.select(),
+    disabled: saving,
+    'aria-label': label,
+    onChange: (event: { target: { value: string } }) => setDraft(event.target.value),
+    onBlur: () => {
+      if (!problem && !saving) void commit();
+    },
+  };
+
   return (
     <div className="editable">
       {editing ? (
-        <input
-          className="input editable__input"
-          value={draft}
-          autoFocus
-          onFocus={(event) => event.currentTarget.select()}
-          disabled={saving}
-          aria-label={label}
-          onChange={(event) => setDraft(event.target.value)}
+        multiline ? (
+          <textarea
+            className="input editable__input editable__textarea"
+            rows={4}
+            {...inputProps}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                void commit();
+              } else if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                cancel();
+              }
+            }}
+          />
+        ) : (
+          <input
+            className="input editable__input"
+            {...inputProps}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                void commit();
+              } else if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                cancel();
+              }
+            }}
+          />
+        )
+      ) : (
+        <>
+          {value && renderValue ? (
+            renderValue(value)
+          ) : (
+            <span className={`${value ? '' : 'muted'}${multiline ? ' editable__text' : ''}`.trim()}>{value || 'Not set'}</span>
+          )}
+          <button type="button" className="icon-btn icon-btn--small" onClick={begin} aria-label={`Edit ${label.toLowerCase()}`}>
+            <Icon name="pencil" />
+          </button>
+        </>
+      )}
+      {editing && overLimit ? (
+        <p className="muted editable__limit" role="status">
+          {label} is limited to {limit} characters. This is {draft.trim().length}.
+        </p>
+      ) : null}
+      {problem ? <ProblemAlert problem={problem} onReload={() => void reload()} onSaveOver={(version) => void commit(version)} /> : null}
+    </div>
+  );
+}
+
+const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'CHF', 'JPY'];
+const MAX_AMOUNT = 1_000_000_000_000;
+
+// A money field: an amount and a currency select, shown like the opportunity amount. Saving sends { amount, currency },
+// clearing the amount sends null. Moving between the amount and the currency select does not save; leaving both does.
+export function EditableMoney({
+  label,
+  field,
+  amount,
+  currency,
+  save,
+  onReload,
+}: {
+  label: string;
+  field: string;
+  amount: number | null;
+  currency: string;
+  save: (value: { amount: number; currency: string } | null, versionOverride?: number) => Promise<void>;
+  onReload: () => Promise<unknown>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [draftCurrency, setDraftCurrency] = useState(currency);
+  const [saving, setSaving] = useState(false);
+  const [problem, setProblem] = useState<Problem | null>(null);
+  const [invalid, setInvalid] = useState(false);
+  const options = CURRENCIES.includes(draftCurrency) ? CURRENCIES : [draftCurrency, ...CURRENCIES];
+
+  const begin = () => {
+    setDraft(amount === null ? '' : String(amount));
+    setDraftCurrency(currency);
+    setProblem(null);
+    setInvalid(false);
+    setEditing(true);
+  };
+
+  const cancel = () => {
+    setEditing(false);
+    setProblem(null);
+    setInvalid(false);
+  };
+
+  const commit = async (versionOverride?: number) => {
+    const text = draft.trim();
+    const parsed = text === '' ? null : Number(text);
+    if (parsed !== null && (!Number.isInteger(parsed) || parsed < 0 || parsed > MAX_AMOUNT)) {
+      setInvalid(true);
+      return;
+    }
+    setInvalid(false);
+    if (versionOverride === undefined && parsed === amount && (parsed === null || draftCurrency === currency)) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      await save(parsed === null ? null : { amount: parsed, currency: draftCurrency }, versionOverride);
+      setEditing(false);
+      setProblem(null);
+    } catch (error) {
+      setProblem(failureProblem(error, label, field, text));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reload = async () => {
+    await onReload();
+    cancel();
+  };
+
+  return (
+    <div className="editable">
+      {editing ? (
+        <div
+          className="amount-row editable__input"
+          onBlur={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+            if (!problem && !saving) void commit();
+          }}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
               event.preventDefault();
@@ -235,42 +426,52 @@ export function EditableValue({
             } else if (event.key === 'Escape') {
               event.preventDefault();
               event.stopPropagation();
-              setEditing(false);
-              setProblem(null);
+              cancel();
             }
           }}
-          onBlur={() => {
-            if (!problem && !saving) void commit();
-          }}
-        />
+        >
+          <input
+            className="input input--number num"
+            type="number"
+            inputMode="numeric"
+            min={0}
+            step={1}
+            placeholder="Optional"
+            value={draft}
+            autoFocus
+            disabled={saving}
+            aria-label={label}
+            aria-invalid={invalid}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+          <select
+            className="input input--select"
+            value={draftCurrency}
+            disabled={saving}
+            aria-label={`${label} currency`}
+            onChange={(event) => setDraftCurrency(event.target.value)}
+          >
+            {options.map((code) => (
+              <option key={code} value={code}>
+                {code}
+              </option>
+            ))}
+          </select>
+        </div>
       ) : (
         <>
-          {value && renderValue ? renderValue(value) : <span className={value ? '' : 'muted'}>{value || 'Not set'}</span>}
+          {amount === null ? <span className="muted">Not set</span> : <span className="num">{formatAmount(amount, currency)}</span>}
           <button type="button" className="icon-btn icon-btn--small" onClick={begin} aria-label={`Edit ${label.toLowerCase()}`}>
             <Icon name="pencil" />
           </button>
         </>
       )}
-      {problem ? (
-        <div className="conflict" role="alert">
-          <p>{problem.message}</p>
-          <div className="conflict__actions">
-            <button type="button" className="btn" onMouseDown={(event) => event.preventDefault()} onClick={() => void reload()}>
-              Reload record
-            </button>
-            {problem.kind === 'conflict' && problem.currentVersion !== undefined ? (
-              <button
-                type="button"
-                className="btn"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => void commit(problem.currentVersion)}
-              >
-                Save my value over it
-              </button>
-            ) : null}
-          </div>
-        </div>
+      {editing && invalid ? (
+        <p className="muted" role="alert">
+          Enter the amount as a whole number, 0 or more.
+        </p>
       ) : null}
+      {problem ? <ProblemAlert problem={problem} onReload={() => void reload()} onSaveOver={(version) => void commit(version)} /> : null}
     </div>
   );
 }

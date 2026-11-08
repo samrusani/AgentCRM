@@ -1,3 +1,4 @@
+import { seedPersonAttributes } from '../attributes.js';
 import type { Db } from '../db.js';
 import { findWorkspace } from '../queries/workspace.js';
 import { type IdPrefix, randomId } from '../ids.js';
@@ -46,6 +47,7 @@ export function ensureWorkspace(db: Db, options: BootstrapOptions = {}) {
         index + 1,
       );
     });
+    seedPersonAttributes(db, workspaceId, timestamp, newId);
     db.prepare(
       'INSERT INTO audit_event (id, created_at, workspace_id, actor, action, entity_type, entity_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     ).run(newId('aud'), timestamp, workspaceId, 'system', 'workspace.create', 'workspace', workspaceId, '{}');
@@ -75,6 +77,7 @@ const recordTables = [
   'opportunity',
   'list_member',
   'list',
+  'attribute_value',
   'person',
   'organization',
 ];
@@ -92,7 +95,7 @@ export function resetRecordData(db: Db): void {
 
 // Deletes every row except the migration log. A full wipe, configuration included; the seed does not use it.
 export function resetAllData(db: Db): void {
-  const tables = [...recordTables, 'connector', 'stage', 'pipeline', 'workspace'];
+  const tables = [...recordTables, 'attribute_def', 'connector', 'stage', 'pipeline', 'workspace'];
   db.transaction(() => {
     // followup_rule.intent_id points at send_intent and send_intent.followup_rule_id points back, so the loop is broken
     // first: clear the intents' references, then the rules go before the intents.

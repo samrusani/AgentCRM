@@ -143,7 +143,7 @@ export async function startMcpServer(): Promise<void> {
     {
       title: 'Propose changes',
       description:
-        'Validates a batch of field changes and returns a preview with a proposalHash. Nothing is written. Fields use the same names as the REST API.',
+        'Validates a batch of field changes and returns a preview with a proposalHash. Nothing is written. Fields use the same names as the REST API; a custom attribute is addressed as attr:<key>, with the keys listed under attributes on the record.',
       inputSchema: { changes: z.array(changeShape).min(1).max(50) },
       annotations: { readOnlyHint: true },
     },
