@@ -66,7 +66,37 @@ const KEYS_BY_EVENT: Record<ServerEventName, string[]> = {
   ],
   // Rule changes show in the Follow-ups section, the Outbox markers, and a person sheet that shows that person's rule.
   followup_updated: ['followup-rules', 'person', 'send-intents', 'mail-summary'],
+  // Filled in below: the same keys as record_updated plus the Duplicates lists.
+  record_deleted: [],
 };
+// A merge in another tab also changes the Duplicates lists.
+KEYS_BY_EVENT.record_deleted = [...KEYS_BY_EVENT.record_updated, 'duplicates'];
+
+// A deleted record's own INACTIVE detail caches are removed and the ACTIVE ones invalidated. Removing an active
+// entry would orphan the mounted observer and nothing would refetch; the split drops background copies of a dead id
+// while an open sheet's query refetches once and gets the 404 that shows the deleted state.
+function removeDeleted(queryClient: QueryClient, data: unknown) {
+  if (typeof data !== 'object' || data === null) return;
+  const { entityType, entityId } = data as { entityType?: unknown; entityId?: unknown };
+  if (typeof entityId !== 'string' || entityId === '') return;
+  const keys =
+    entityType === 'person'
+      ? [['person', entityId], ['enrichment', entityId]]
+      : entityType === 'organization'
+        ? [['organization', entityId], ['enrichment', 'organization', entityId]]
+        : [];
+  // The broad invalidation that follows covers every active entry (person, organization, and enrichment prefixes
+  // are all in the record_deleted key list), so only the inactive copies are dropped here. A second per-id
+  // invalidate would stack a second refetch on the open sheet.
+  for (const queryKey of keys) {
+    queryClient.removeQueries({ queryKey, type: 'inactive' });
+  }
+}
+
+export function handleServerEvent(queryClient: QueryClient, name: ServerEventName, data?: unknown) {
+  if (name === 'record_deleted') removeDeleted(queryClient, data);
+  invalidateFor(queryClient, name);
+}
 
 function invalidateFor(queryClient: QueryClient, name: ServerEventName) {
   for (const key of KEYS_BY_EVENT[name]) {
@@ -108,7 +138,17 @@ export function useServerEvents() {
       };
 
       for (const name of EVENT_NAMES) {
-        source.addEventListener(name, () => invalidateFor(queryClient, name));
+        source.addEventListener(name, (message) => {
+          let data: unknown;
+          if (name === 'record_deleted') {
+            try {
+              data = JSON.parse((message as MessageEvent<string>).data);
+            } catch {
+              data = undefined;
+            }
+          }
+          handleServerEvent(queryClient, name, data);
+        });
       }
 
       // Accept servers that send unnamed messages carrying a type field.
@@ -116,7 +156,7 @@ export function useServerEvents() {
         try {
           const data = JSON.parse(message.data) as { type?: string; event?: string };
           const name = (data.type ?? data.event) as ServerEventName | undefined;
-          if (name && EVENT_NAMES.includes(name)) invalidateFor(queryClient, name);
+          if (name && EVENT_NAMES.includes(name)) handleServerEvent(queryClient, name, data);
         } catch {
           // Ignore keep alive comments and malformed payloads.
         }

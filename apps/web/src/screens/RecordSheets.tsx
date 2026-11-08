@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { isVersionConflict } from '../api/client';
+import { ApiError, isVersionConflict } from '../api/client';
 import type { Claim, Lifecycle, PersonInteraction } from '../api/types';
 import { useCreateOrganization, useOrganization, usePatchOrganization, usePatchPerson, usePerson } from '../api/hooks';
 import { ErrorState, Loading, Sheet, errorMessage } from '../components/common';
@@ -326,6 +326,22 @@ function OrganizationValue({
   );
 }
 
+function isNotFound(error: unknown): boolean {
+  return error instanceof ApiError && error.code === 'not_found';
+}
+
+// The record is gone, usually merged into another one. No retry: asking again cannot bring it back.
+function DeletedRecord({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="state">
+      <p className="state__body">This record was deleted, usually because it was merged into another record.</p>
+      <button type="button" className="btn" onClick={onClose}>
+        Close
+      </button>
+    </div>
+  );
+}
+
 export function PersonSheet({
   id,
   onClose,
@@ -411,7 +427,10 @@ export function PersonSheet({
       onClose={onClose}
     >
       {query.isPending ? <Loading what="person" /> : null}
-      {query.isError ? <ErrorState what="this person" error={query.error} onRetry={() => void query.refetch()} /> : null}
+      {query.isError && isNotFound(query.error) ? <DeletedRecord onClose={onClose} /> : null}
+      {query.isError && !isNotFound(query.error) ? (
+        <ErrorState what="this person" error={query.error} onRetry={() => void query.refetch()} />
+      ) : null}
       {person ? (
         <>
           <SheetSection title="Fields" headerItems={<EnrichControl personId={id} linkedinUrl={person.linkedinUrl} />}>
@@ -605,7 +624,10 @@ export function OrganizationSheet({
       onClose={onClose}
     >
       {query.isPending ? <Loading what="organization" /> : null}
-      {query.isError ? <ErrorState what="this organization" error={query.error} onRetry={() => void query.refetch()} /> : null}
+      {query.isError && isNotFound(query.error) ? <DeletedRecord onClose={onClose} /> : null}
+      {query.isError && !isNotFound(query.error) ? (
+        <ErrorState what="this organization" error={query.error} onRetry={() => void query.refetch()} />
+      ) : null}
       {organization ? (
         <>
           <SheetSection title="Fields" headerItems={<OrganizationEnrichControl organizationId={id} />}>

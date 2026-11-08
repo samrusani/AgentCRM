@@ -420,6 +420,24 @@ describe('dismissOrganizationDuplicate', () => {
 });
 
 describe('mergeOrganizations', () => {
+  it('emits record_updated for the survivor and record_deleted for the deleted organization, after commit', () => {
+    const survivor = org({ name: 'Acme' });
+    const other = org({ name: 'Acme Inc' });
+    events.length = 0;
+    mergeOrganizations(env.ctx, survivor, body(survivor, other));
+    expect(events).toContainEqual({ type: 'record_updated', entityType: 'organization', entityId: survivor });
+    expect(events).toContainEqual({ type: 'record_deleted', entityType: 'organization', entityId: other });
+    expect(events.filter((event) => event.type === 'record_deleted')).toHaveLength(1);
+  });
+
+  it('emits nothing when the merge is refused', () => {
+    const survivor = org({ name: 'Acme' });
+    const other = org({ name: 'Acme Inc' });
+    events.length = 0;
+    rejected(() => mergeOrganizations(env.ctx, survivor, body(survivor, other, { otherExpectedVersion: 99 })));
+    expect(events).toEqual([]);
+  });
+
   it('merges the happy path: fills only empty fields, re-points every table, deletes the other', () => {
     const survivor = org({ name: 'Acme', domain: 'acme.com', location: null, linkedinUrl: null, tags: ['a'] });
     const other = org({ name: 'Acme Inc', domain: 'other.com', location: 'London', linkedinUrl: 'https://www.linkedin.com/company/acme', tags: ['b'] });
@@ -546,7 +564,7 @@ describe('mergeOrganizations', () => {
     expect(detail.displaced.attributes).toEqual([{ attributeId: 'atd_organization_aum', value: '5' }]);
   });
 
-  it('bumps the survivor version exactly once and emits a record_updated event for the survivor only', () => {
+  it('bumps the survivor version exactly once and emits record_updated for the survivor and record_deleted for the other', () => {
     const survivor = org({ domain: 'a.com' });
     const other = org({ domain: 'a.com' });
     const updatedBefore = getOrganization(env.db, env.workspaceId, survivor)!.updatedAt;
@@ -555,7 +573,10 @@ describe('mergeOrganizations', () => {
     const result = mergeOrganizations(env.ctx, survivor, body(survivor, other));
     expect(result!.version).toBe(2);
     expect(result!.updatedAt).not.toBe(updatedBefore);
-    expect(events).toEqual([{ type: 'record_updated', entityType: 'organization', entityId: survivor }]);
+    expect(events).toEqual([
+      { type: 'record_updated', entityType: 'organization', entityId: survivor },
+      { type: 'record_deleted', entityType: 'organization', entityId: other },
+    ]);
   });
 
   it('removes dismissals that name the other organization and leaves person dismissals alone', () => {

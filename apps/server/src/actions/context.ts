@@ -109,6 +109,10 @@ export function emitRecord(tx: Tx, entityType: EntityType | string, entityId: st
   tx.emit({ type: 'record_updated', entityType, entityId });
 }
 
+export function emitRecordDeleted(tx: Tx, entityType: EntityType | string, entityId: string): void {
+  tx.emit({ type: 'record_deleted', entityType, entityId });
+}
+
 export function assertEntityExists(tx: Tx, entityType: string, entityId: string): void {
   const table = entityTables[entityType];
   if (!table) throw validationError(`Entity type "${entityType}" is not supported.`);

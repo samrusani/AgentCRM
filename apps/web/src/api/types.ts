@@ -904,7 +904,7 @@ export interface AcceptOrganizationEnrichmentInput {
   expectedVersion: number;
 }
 
-export type ServerEventName = 'run_updated' | 'approval_updated' | 'record_updated' | 'followup_updated';
+export type ServerEventName = 'run_updated' | 'approval_updated' | 'record_updated' | 'record_deleted' | 'followup_updated';
 
 export interface MailInbox {
   id: string;

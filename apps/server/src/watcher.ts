@@ -3,6 +3,7 @@ import type { DomainEvent, EventBus } from './events.js';
 
 interface AuditRow {
   rowid: number;
+  action: string;
   entity_type: string;
   entity_id: string;
   detail: string;
@@ -50,7 +51,7 @@ export function startExternalWatcher(db: Db, bus: EventBus, intervalMilliseconds
     if (current === version) return;
     version = current;
     const rows = db
-      .prepare('SELECT rowid, entity_type, entity_id, detail FROM audit_event WHERE rowid > ? ORDER BY rowid')
+      .prepare('SELECT rowid, action, entity_type, entity_id, detail FROM audit_event WHERE rowid > ? ORDER BY rowid')
       .all(lastRowid) as AuditRow[];
     for (const row of rows) {
       lastRowid = row.rowid;
@@ -66,6 +67,22 @@ export function startExternalWatcher(db: Db, bus: EventBus, intervalMilliseconds
         emit({ type: 'approval_updated', approvalId: row.entity_id, runId });
       } else {
         emit({ type: 'record_updated', entityType: row.entity_type, entityId: row.entity_id });
+        // A merge row names the survivor; the deleted record's id lives in the detail. Never guess it.
+        if (row.action === 'person.merge' || row.action === 'organization.merge') {
+          let otherId: unknown;
+          try {
+            otherId = (JSON.parse(row.detail) as { otherId?: unknown } | null)?.otherId;
+          } catch {
+            otherId = undefined;
+          }
+          if (typeof otherId === 'string' && otherId !== '') {
+            emit({
+              type: 'record_deleted',
+              entityType: row.action === 'person.merge' ? 'person' : 'organization',
+              entityId: otherId,
+            });
+          }
+        }
       }
     }
   }, intervalMilliseconds);

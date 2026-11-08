@@ -417,6 +417,24 @@ describe('dismissDuplicate', () => {
 });
 
 describe('mergePeople', () => {
+  it('emits record_updated for the survivor and record_deleted for the deleted person, after commit', () => {
+    const survivor = person({ firstName: 'Ann', email: 'ann@example.com' });
+    const other = person({ firstName: 'Annie', email: 'annie@example.com' });
+    events.length = 0;
+    mergePeople(env.ctx, survivor, body(survivor, other));
+    expect(events).toContainEqual({ type: 'record_updated', entityType: 'person', entityId: survivor });
+    expect(events).toContainEqual({ type: 'record_deleted', entityType: 'person', entityId: other });
+    expect(events.filter((event) => event.type === 'record_deleted')).toHaveLength(1);
+  });
+
+  it('emits nothing when the merge is refused', () => {
+    const survivor = person({ firstName: 'Ann' });
+    const other = person({ firstName: 'Annie' });
+    events.length = 0;
+    rejected(() => mergePeople(env.ctx, survivor, body(survivor, other, { otherExpectedVersion: 99 })));
+    expect(events).toEqual([]);
+  });
+
   it('merges the happy path: fills only empty fields, unions tags and lists, re-points records, deletes the other', () => {
     const survivor = person({ firstName: 'Ann', lastName: '', email: 'ann@example.com', title: 'Partner', tags: ['a', 'b'], location: '' });
     const other = person({ firstName: 'Annie', lastName: 'Ko', email: 'ann@example.com'.replace('ann', 'annie'), title: 'Intern', location: 'London', linkedinUrl: 'https://www.linkedin.com/in/ann', xUrl: 'https://x.com/ann', birthday: '03-04', tags: ['b', 'c'] });

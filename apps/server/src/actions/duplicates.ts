@@ -4,7 +4,7 @@ import { activeFollowupStatuses } from '../queries/followupRules.js';
 import { fillableColumns, orderedPair, organizationFillableColumns, planFill, planOrganizationFill } from '../queries/duplicates.js';
 import { getOrganization } from '../queries/organizations.js';
 import { getPerson } from '../queries/people.js';
-import { emitRecord, mutate, parseInput, versionConflict, type ActionContext, type Tx } from './context.js';
+import { emitRecord, emitRecordDeleted, mutate, parseInput, versionConflict, type ActionContext, type Tx } from './context.js';
 import { promotePersonIn } from './lifecycle.js';
 import { expectedVersionSchema, idSchema } from './schemas.js';
 
@@ -151,6 +151,7 @@ export function mergePeople(ctx: ActionContext, survivorId: string, input: unkno
       promoted,
     });
     emitRecord(tx, 'person', survivor.id);
+    emitRecordDeleted(tx, 'person', other.id);
     return getPerson(tx.db, tx.workspaceId, survivor.id)!;
   });
 }
@@ -260,6 +261,7 @@ export function mergeOrganizations(ctx: ActionContext, survivorId: string, input
       displaced: { fields: displacedFields, attributes: displacedAttributes, tags: droppedTags },
     });
     emitRecord(tx, 'organization', survivor.id);
+    emitRecordDeleted(tx, 'organization', other.id);
     return getOrganization(tx.db, tx.workspaceId, survivor.id)!;
   });
 }

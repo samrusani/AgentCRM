@@ -4,7 +4,7 @@
 
 **The CRM that people and AI agents operate together.**
 
-<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-3632-15685b?style=flat" alt="3632 tests">
+<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-3689-15685b?style=flat" alt="3689 tests">
 
 [Quick start](#quick-start) · [What works](#what-works-today) · [Architecture docs](docs/architecture.md)
 
@@ -93,7 +93,7 @@ The client spawns the MCP server as a child process per session and it dies with
 
 ## What works today
 
-Every row below is backed by tests: 3,632 across the server (2,500), the web app (837), and the browser extension (295), plus 7 on the desktop shell's helpers. "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
+Every row below is backed by tests: 3,689 across the server (2,528), the web app (866), and the browser extension (295), plus 7 on the desktop shell's helpers. "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
 
 ### Core CRM
 
@@ -108,7 +108,7 @@ Every row below is backed by tests: 3,632 across the server (2,500), the web app
 | Birthdays: a birthday on each person, with or without the year, and a Today card for the next seven days | Working |
 | Automations: rules like "when a deal enters Diligence, create a task due in 2 days"; an automation only ever creates a task, never edits records or sends anything, so it cannot loop or surprise | Working |
 | Saved views: named shortcuts to the filters you keep returning to on Leads, Relationships, and Pipeline; a view stores only screen state, so it can never show rows the screen's own rules would not | Working |
-| Duplicates: a live scan finds people sharing an email, LinkedIn profile, X handle, or name at the same organization, and organizations sharing a domain, LinkedIn page, or name within the same kind; a guarded merge keeps one record, fills its gaps, moves everything else, and for people refuses while any follow-up or send is active; dismissing a pair is remembered | Working; merging is permanent, back up first |
+| Duplicates: a live scan finds people sharing an email, LinkedIn profile, X handle, or name at the same organization, and organizations sharing a domain, LinkedIn page, or name within the same kind; a guarded merge keeps one record, fills its gaps, moves everything else, and for people refuses while any follow-up or send is active; dismissing a pair is remembered, and a record open anywhere else closes honestly when a merge deletes it | Working; merging is permanent, back up first |
 | Evidence: field claims with source and verification status | Working, synthetic sources |
 | Templates: startup fundraising, fund LP fundraising, client sales, applied per pipeline with a guided switch that maps stages | Working |
 | Qualification: editable criteria, per criterion verdicts with evidence, fit sort | Working; unknown never counts as a match |

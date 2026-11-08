@@ -65,4 +65,47 @@ describe('external watcher', () => {
     const relayed = events.filter((event) => event.type === 'record_updated').map((event) => (event as { entityId: string }).entityId);
     expect(relayed).toContain(fresh.id);
   });
+
+  function writeAudit(db: Db, workspaceId: string, id: string, action: string, entityType: string, entityId: string, detail: string) {
+    db.prepare(
+      'INSERT INTO audit_event (id, created_at, workspace_id, actor, action, entity_type, entity_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(id, new Date().toISOString(), workspaceId, 'agent', action, entityType, entityId, detail);
+  }
+
+  it('relays record_updated and record_deleted for a person.merge row from another connection', async () => {
+    const { other, events, workspaceId } = setup();
+    writeAudit(other, workspaceId, 'aud_m1', 'person.merge', 'person', 'per_survivor', JSON.stringify({ survivorId: 'per_survivor', otherId: 'per_gone' }));
+    await wait(80);
+    expect(events).toEqual([
+      { type: 'record_updated', entityType: 'person', entityId: 'per_survivor' },
+      { type: 'record_deleted', entityType: 'person', entityId: 'per_gone' },
+    ]);
+  });
+
+  it('relays record_deleted for an organization.merge row', async () => {
+    const { other, events, workspaceId } = setup();
+    writeAudit(other, workspaceId, 'aud_m2', 'organization.merge', 'organization', 'org_survivor', JSON.stringify({ otherId: 'org_gone' }));
+    await wait(80);
+    expect(events).toEqual([
+      { type: 'record_updated', entityType: 'organization', entityId: 'org_survivor' },
+      { type: 'record_deleted', entityType: 'organization', entityId: 'org_gone' },
+    ]);
+  });
+
+  it('relays only record_updated when a merge row detail cannot be read', async () => {
+    const { other, events, workspaceId } = setup();
+    writeAudit(other, workspaceId, 'aud_m3', 'person.merge', 'person', 'per_a', 'not json');
+    writeAudit(other, workspaceId, 'aud_m4', 'person.merge', 'person', 'per_b', JSON.stringify({ survivorId: 'per_b' }));
+    writeAudit(other, workspaceId, 'aud_m5', 'organization.merge', 'organization', 'org_c', JSON.stringify({ otherId: 42 }));
+    writeAudit(other, workspaceId, 'aud_m6', 'person.merge', 'person', 'per_d', 'null');
+    await wait(80);
+    expect(events.map((event) => event.type)).toEqual(['record_updated', 'record_updated', 'record_updated', 'record_updated']);
+  });
+
+  it('relays a non-merge row as a lone record_updated, even when its detail names an otherId', async () => {
+    const { other, events, workspaceId } = setup();
+    writeAudit(other, workspaceId, 'aud_n1', 'person.update', 'person', 'per_x', JSON.stringify({ otherId: 'per_y' }));
+    await wait(80);
+    expect(events).toEqual([{ type: 'record_updated', entityType: 'person', entityId: 'per_x' }]);
+  });
 });
