@@ -108,10 +108,11 @@ export async function startMcpServer(): Promise<void> {
     'crm_search',
     {
       title: 'Search records',
-      description: 'Searches people, organizations, and opportunities by name, email, or domain.',
+      description:
+        'Searches people, organizations, opportunities, meetings, tasks, and notes from the user\'s own records, by name, email, domain, job title, or text. Read only.',
       inputSchema: {
         query: z.string().min(1).max(200),
-        type: z.enum(['all', 'people', 'organizations', 'opportunities']).default('all'),
+        type: z.enum(['all', 'people', 'organizations', 'opportunities', 'meetings', 'tasks', 'notes']).default('all'),
         limit: z.number().int().min(1).max(20).default(8),
       },
       annotations: { readOnlyHint: true },

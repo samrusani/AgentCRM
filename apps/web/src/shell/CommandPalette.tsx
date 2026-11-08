@@ -3,19 +3,26 @@ import { useNavigate } from 'react-router-dom';
 import { useSearch, useStartRun } from '../api/hooks';
 import { errorMessage } from '../components/common';
 import { Icon, type IconName } from '../components/Icons';
-import { formatAmount, personName } from '../lib/format';
+import { formatAmount, formatDate, personName } from '../lib/format';
 import { useUI } from '../lib/ui';
 
 interface PaletteItem {
   id: string;
-  group: 'People' | 'Organizations' | 'Opportunities' | 'Actions';
+  group: 'People' | 'Organizations' | 'Opportunities' | 'Meetings' | 'Tasks' | 'Notes' | 'Actions';
   label: string;
   detail?: string;
   icon: IconName;
   run: () => void;
 }
 
-const GROUP_ORDER: PaletteItem['group'][] = ['People', 'Organizations', 'Opportunities', 'Actions'];
+const GROUP_ORDER: PaletteItem['group'][] = ['People', 'Organizations', 'Opportunities', 'Meetings', 'Tasks', 'Notes', 'Actions'];
+
+// The sheet of a parent record, the same destinations the People, Organizations, and Opportunities rows use.
+function recordPath(entityType: 'person' | 'organization' | 'opportunity', entityId: string): string {
+  if (entityType === 'person') return `/relationships?tab=people&person=${entityId}`;
+  if (entityType === 'organization') return `/relationships?tab=organizations&org=${entityId}`;
+  return `/pipeline?opportunity=${entityId}`;
+}
 
 function useDebounced<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -91,6 +98,39 @@ function PaletteDialog() {
           .join(', '),
         icon: 'deal',
         run: go(`/pipeline?opportunity=${opportunity.id}`),
+      });
+    }
+    for (const meeting of data?.meetings ?? []) {
+      result.push({
+        id: `meeting:${meeting.id}`,
+        group: 'Meetings',
+        label: meeting.title,
+        detail: formatDate(meeting.startsAt),
+        icon: 'meeting',
+        // The same destination the Today screen links to: the Meetings screen with this meeting's sheet open.
+        run: go(`/meetings?meeting=${encodeURIComponent(meeting.id)}`),
+      });
+    }
+    for (const task of data?.tasks ?? []) {
+      result.push({
+        id: `task:${task.id}`,
+        group: 'Tasks',
+        label: task.title,
+        detail: task.entityName ?? '',
+        icon: 'today',
+        // Tasks have no sheet of their own. A linked task opens its record's sheet; a task with no linked record opens
+        // /today, the screen that lists open tasks.
+        run: go(task.entityType && task.entityId ? recordPath(task.entityType, task.entityId) : '/today'),
+      });
+    }
+    for (const note of data?.notes ?? []) {
+      result.push({
+        id: `note:${note.id}`,
+        group: 'Notes',
+        label: note.snippet,
+        detail: note.entityName,
+        icon: 'pencil',
+        run: go(recordPath(note.entityType, note.entityId)),
       });
     }
     const actions: PaletteItem[] = [
@@ -186,7 +226,7 @@ function PaletteDialog() {
             aria-expanded="true"
             aria-controls="palette-list"
             aria-activedescendant={items[activeIndex] ? `palette-option-${activeIndex}` : undefined}
-            aria-label="Search people, organizations, opportunities, and actions"
+            aria-label="Search people, organizations, deals, meetings, tasks, and notes"
             placeholder="Search or run an action"
             autoComplete="off"
             spellCheck={false}
@@ -230,10 +270,10 @@ function PaletteDialog() {
             </p>
           ) : null}
           {debounced && !searching && !search.isError && !hasSearchResults ? (
-            <p className="palette__note">No people, organizations, or opportunities match this search.</p>
+            <p className="palette__note">No people, organizations, deals, meetings, tasks, or notes match this search.</p>
           ) : null}
           {!debounced ? (
-            <p className="palette__note">Type to search people, organizations, and opportunities.</p>
+            <p className="palette__note">Search people, organizations, deals, meetings, tasks, and notes.</p>
           ) : null}
         </div>
         <div className="palette__footer" aria-hidden="true">

@@ -173,7 +173,7 @@ describe('KILLS: JS toLowerCase on the query vs the tokenizer fold', () => {
 
 describe('KILLS: NUL byte in the query', () => {
   it('searchAll answers empty without throwing', () => {
-    expect(searchAll(env.db, env.workspaceId, 'abc\u0000def', 8)).toEqual({ people: [], organizations: [], opportunities: [] });
+    expect(searchAll(env.db, env.workspaceId, 'abc\u0000def', 8)).toEqual({ people: [], organizations: [], opportunities: [], notes: [], tasks: [], meetings: [] });
     expect(() => searchScan(env.db, env.workspaceId, 'abc\u0000def', 8)).not.toThrow();
   });
   it('is a 200 over HTTP', async () => {
@@ -185,7 +185,7 @@ describe('KILLS: NUL byte in the query', () => {
       const ok = await app.inject({ method: 'GET', url: '/api/search?q=abcdef', headers: { host: '127.0.0.1:4720' } });
       expect(ok.statusCode).toBe(200);
       expect(r.statusCode).toBe(200);
-      expect(JSON.parse(r.body)).toEqual({ people: [], organizations: [], opportunities: [] });
+      expect(JSON.parse(r.body)).toEqual({ people: [], organizations: [], opportunities: [], notes: [], tasks: [], meetings: [] });
     } finally {
       await app.close();
     }
@@ -311,10 +311,10 @@ describe('very long queries', () => {
     try {
       e.db.prepare('INSERT INTO person (id, created_at, workspace_id, first_name, last_name, email, updated_at) VALUES (?,?,?,?,?,?,?)').run('per_capboundary0', 't', e.workspaceId, 'Cap', 'Boundary', null, 't');
       const under = searchAll(e.db, e.workspaceId, 'boundary' + 'z'.repeat(248), 8);
-      expect(under).toEqual({ people: [], organizations: [], opportunities: [] }); // searched, nothing matches
+      expect(under).toEqual({ people: [], organizations: [], opportunities: [], notes: [], tasks: [], meetings: [] }); // searched, nothing matches
       expect(searchAll(e.db, e.workspaceId, 'boundary', 8).people).toHaveLength(1); // the index itself works
       const over = searchAll(e.db, e.workspaceId, 'z'.repeat(257), 8);
-      expect(over).toEqual({ people: [], organizations: [], opportunities: [] });
+      expect(over).toEqual({ people: [], organizations: [], opportunities: [], notes: [], tasks: [], meetings: [] });
     } finally {
       e.cleanup();
     }

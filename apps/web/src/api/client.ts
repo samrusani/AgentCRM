@@ -87,7 +87,10 @@ import type {
   QualificationSummary,
   Run,
   RunCounts,
+  SearchMeetingHit,
+  SearchNoteHit,
   SearchResults,
+  SearchTaskHit,
   SendIntent,
   StageSendInput,
   StageSendResult,
@@ -1343,6 +1346,9 @@ export const api = {
       people: toArray<Person>(data.people),
       organizations: toArray<Organization>(data.organizations),
       opportunities: toArray<Opportunity>(data.opportunities),
+      notes: toArray<SearchNoteHit>(data.notes),
+      tasks: toArray<SearchTaskHit>(data.tasks),
+      meetings: toArray<SearchMeetingHit>(data.meetings),
     };
   },
 

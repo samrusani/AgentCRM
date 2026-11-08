@@ -464,6 +464,33 @@ export interface SearchResults {
   people: Person[];
   organizations: Organization[];
   opportunities: Opportunity[];
+  notes: SearchNoteHit[];
+  tasks: SearchTaskHit[];
+  meetings: SearchMeetingHit[];
+}
+
+export type SearchParentType = 'person' | 'organization' | 'opportunity';
+
+export interface SearchNoteHit {
+  id: string;
+  snippet: string;
+  entityType: SearchParentType;
+  entityId: string;
+  entityName: string;
+}
+
+export interface SearchTaskHit {
+  id: string;
+  title: string;
+  entityType: SearchParentType | null;
+  entityId: string | null;
+  entityName: string | null;
+}
+
+export interface SearchMeetingHit {
+  id: string;
+  title: string;
+  startsAt: string;
 }
 
 export interface AgentAction {

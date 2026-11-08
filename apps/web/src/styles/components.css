@@ -1079,6 +1079,10 @@ textarea.input {
 .palette__label {
   font-weight: 550;
   white-space: nowrap;
+  /* A long snippet or title truncates with an ellipsis instead of pushing the muted detail out of the row. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .palette__detail {
   font-variant-numeric: tabular-nums;
@@ -1087,6 +1091,9 @@ textarea.input {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--ink-muted);
+  /* The record name stays readable beside a truncating label; the label is the one that gives way. */
+  flex-shrink: 0;
+  max-width: 45%;
 }
 .palette__note {
   padding: 10px 8px;

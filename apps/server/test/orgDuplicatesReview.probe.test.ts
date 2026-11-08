@@ -269,7 +269,7 @@ describe('1. data loss sweep', () => {
       'organization_duplicate_dismissal.organization_a_id', 'organization_duplicate_dismissal.organization_b_id',
       // not re-pointed, by design: the log, imports' display links, model call subjects, the search index
       'audit_event.entity_id', 'import_row.match_entity_id', 'model_call.subject_id',
-      'person_search.entity_id', 'organization_search.entity_id', 'opportunity_search.entity_id',
+      'person_search.entity_id', 'organization_search.entity_id', 'opportunity_search.entity_id', 'activity_search.entity_id', 'task_search.entity_id', 'meeting_search.entity_id',
     ]);
     expect([...found].filter((name) => !known.has(name))).toEqual([]);
     // The tripwire itself works: a hypothetical new table naming an organization is caught.
