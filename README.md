@@ -4,7 +4,7 @@
 
 **The CRM that people and AI agents operate together.**
 
-<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-3848-15685b?style=flat" alt="3848 tests">
+<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-3893-15685b?style=flat" alt="3893 tests">
 
 [Quick start](#quick-start) · [What works](#what-works-today) · [Architecture docs](docs/architecture.md)
 
@@ -65,7 +65,7 @@ npm run dev
 
 Open http://127.0.0.1:5173 in your browser. The API listens on http://127.0.0.1:4720. Both bind to loopback only.
 
-Prefer a Mac app over a terminal? `npm install --prefix apps/desktop` once, then `npm run desktop` opens AgentCRM as its own window: the same server running in-process on a port the OS picks, with its database in `~/Library/Application Support/AgentCRM/` (set `AGENTCRM_DB` to use another file, such as this repository's `data/agentcrm.db`, or run `npm run desktop:repo`, which does exactly that). `npm run desktop:pack` builds an unsigned local `AgentCRM.app` for your own machine. A dev stack and the app can run side by side; they only share data if you point them at the same file, and after pulling new code you should relaunch the app so it never serves a database newer than itself.
+Prefer a Mac app over a terminal? `npm install --prefix apps/desktop` once, then `npm run desktop` opens AgentCRM as its own window: the same server running in-process on a port the OS picks, with its database in `~/Library/Application Support/AgentCRM/` (set `AGENTCRM_DB` to use another file, such as this repository's `data/agentcrm.db`, or run `npm run desktop:repo`, which does exactly that). `npm run desktop:pack` builds an unsigned local `AgentCRM.app` for your own machine. A dev stack and the app can run side by side; they only share data if you point them at the same file. If the schema moves under a running window (an update applied new migrations), the app refuses every request with a banner telling you to quit and reopen it, instead of serving stale code against a newer file.
 
 `npm run seed` fills the database with clearly synthetic demo data: fictional investors, funds, and companies. All demo names are invented, and any resemblance to a real person or organization is coincidental. Seeding replaces records only: your settings, connectors, and the extension's capture token survive it.
 
@@ -93,7 +93,7 @@ The client spawns the MCP server as a child process per session and it dies with
 
 ## What works today
 
-Every row below is backed by tests: 3,848 across the server (2,640), the web app (913), and the browser extension (295), plus 7 on the desktop shell's helpers. "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
+Every row below is backed by tests: 3,893 across the server (2,673), the web app (925), and the browser extension (295), plus 7 on the desktop shell's helpers. "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
 
 ### Core CRM
 

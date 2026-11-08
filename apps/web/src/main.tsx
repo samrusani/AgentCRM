@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '@fontsource-variable/geist';
-import { ApiError } from './api/client';
+import { shouldRetryQuery } from './api/client';
 import { App } from './App';
 import { UIProvider } from './lib/ui';
 import './styles/tokens.css';
@@ -16,7 +16,7 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 15_000,
       refetchOnWindowFocus: false,
-      retry: (failureCount, error) => !(error instanceof ApiError && error.status >= 400 && error.status < 500) && failureCount < 1,
+      retry: shouldRetryQuery,
     },
   },
 });

@@ -148,7 +148,7 @@ export async function startMcpServer(): Promise<void> {
     {
       title: 'Propose changes',
       description:
-        'Validates a batch of field changes and returns a preview with a proposalHash. Nothing is written. Fields use the same names as the REST API; a custom attribute is addressed as attr:<key>, with the keys listed under attributes on the record.',
+        'Validates a batch of field changes and returns a preview with a proposalHash. Nothing is written and nothing is queued for human review: this step exists for validation, not approval. Call crm_apply_changes with the same changes and the hash to apply them yourself. Fields use the same names as the REST API; a custom attribute is addressed as attr:<key>, with the keys listed under attributes on the record.',
       inputSchema: { changes: z.array(changeShape).min(1).max(50) },
       annotations: { readOnlyHint: true },
     },
@@ -160,7 +160,7 @@ export async function startMcpServer(): Promise<void> {
     {
       title: 'Apply changes',
       description:
-        'Applies a proposal returned by crm_propose_changes. Send the same changes with expectedVersion on each and the proposalHash. The batch is atomic.',
+        'Applies a proposal returned by crm_propose_changes. Send the same changes with expectedVersion on each and the proposalHash. The batch is atomic and applies immediately: field edits need no human approval, so never tell the user an approval is pending for them. Only sends, drafts, and imports wait for a person in the app.',
       inputSchema: {
         proposalHash: z.string().length(64),
         changes: z.array(changeShape.extend({ expectedVersion: z.number().int() })).min(1).max(50),

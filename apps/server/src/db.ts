@@ -58,6 +58,8 @@ export function appliedMigrations(db: Db): string[] {
 
 export interface SchemaGuard {
   check(): void;
+  // True once check() has tripped. Reads no database state, so a caller can report staleness without running a check.
+  tripped(): boolean;
 }
 
 const staleServerMessage =
@@ -65,7 +67,8 @@ const staleServerMessage =
 
 // Snapshots the applied migrations now. check() throws stale_server when they differ later or cannot be read.
 // A tripped guard stays tripped without querying again: the running code cannot reload, and the file may be gone.
-export function createSchemaGuard(db: Db): SchemaGuard {
+// The message is per surface: the MCP wording is the default, the API server passes its own. The error code is the same.
+export function createSchemaGuard(db: Db, message: string = staleServerMessage): SchemaGuard {
   const snapshot = new Set(appliedMigrations(db));
   let tripped = false;
   return {
@@ -78,8 +81,9 @@ export function createSchemaGuard(db: Db): SchemaGuard {
           tripped = true;
         }
       }
-      if (tripped) throw new AppError('stale_server', staleServerMessage);
+      if (tripped) throw new AppError('stale_server', message);
     },
+    tripped: () => tripped,
   };
 }
 

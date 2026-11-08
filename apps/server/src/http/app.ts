@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { ZodError } from 'zod';
-import type { Db } from '../db.js';
+import type { Db, SchemaGuard } from '../db.js';
 import { webDistDirectory } from '../config.js';
 import { AppError } from '../errors.js';
 import type { EventBus } from '../events.js';
@@ -16,6 +16,8 @@ export interface AppOptions {
   now?: () => string;
   // Folder holding the built web app; defaults to AGENTCRM_WEB_DIST. Null or unset serves nothing at "/".
   webDist?: string | null;
+  // When set, every /api route except GET /api/health answers stale_server once the guard trips.
+  guard?: SchemaGuard;
 }
 
 // Exact match: a loopback name, optionally followed by a colon and a port of one to five digits.
@@ -65,6 +67,36 @@ export function buildApp(options: AppOptions): FastifyInstance {
     }
     return undefined;
   });
+
+  // Static files and the SPA fallback are not guarded: the page must load so the web can show its banner.
+  // Health is exempt so a stale server stays diagnosable (it reports `stale` without running a check).
+  const guard = options.guard;
+  if (guard) {
+    // The routed pattern is what the framework actually matched, percent-decoded and normalized, so an encoded
+    // spelling such as /%61pi/... or an absolute-URI request line cannot reach a live handler past the guard.
+    // Requests that matched no route fall back to the decoded pathname and still refuse under /api.
+    const requestPath = (request: { url: string; routeOptions?: { url?: string } }): string => {
+      const routed = request.routeOptions?.url;
+      if (routed) return routed;
+      let path: string;
+      try {
+        path = new URL(request.url, 'http://local').pathname;
+      } catch {
+        path = request.url.split('?')[0] ?? '/';
+      }
+      try {
+        return decodeURIComponent(path);
+      } catch {
+        return path;
+      }
+    };
+    app.addHook('onRequest', async (request) => {
+      const urlPath = requestPath(request);
+      if (urlPath !== '/api' && !urlPath.startsWith('/api/')) return;
+      if (request.method === 'GET' && urlPath === '/api/health') return;
+      guard.check();
+    });
+  }
 
   const webDist = options.webDist === undefined ? webDistDirectory() : options.webDist;
   const serveStatic = webDist ? createStaticWeb(webDist) : null;

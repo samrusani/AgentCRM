@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from 'react';
 import { normalizeCounts } from '../lib/imports';
 import { DEFAULT_LEAD_ACTORS } from '../lib/leads';
 import { DAILY_SEND_CAP, parseExcluded } from '../lib/mail';
@@ -132,6 +133,31 @@ export class ApiError extends Error {
   }
 }
 
+// The first stale_server answer flips this for the life of the window: the running code cannot reload, so it never clears.
+let serverStale = false;
+const staleListeners = new Set<() => void>();
+
+function markServerStale() {
+  if (serverStale) return;
+  serverStale = true;
+  staleListeners.forEach((listener) => listener());
+}
+
+function subscribeStale(listener: () => void) {
+  staleListeners.add(listener);
+  return () => staleListeners.delete(listener);
+}
+
+export function useServerStale(): boolean {
+  return useSyncExternalStore(subscribeStale, () => serverStale, () => false);
+}
+
+// Client errors and stale_server do not retry: asking again cannot change the answer. Other failures retry once.
+export function shouldRetryQuery(failureCount: number, error: unknown): boolean {
+  if (error instanceof ApiError && (error.code === 'stale_server' || (error.status >= 400 && error.status < 500))) return false;
+  return failureCount < 1;
+}
+
 export function isVersionConflict(error: unknown): error is ApiError {
   return error instanceof ApiError && error.code === 'version_conflict';
 }
@@ -233,6 +259,7 @@ async function request<T>(
   if (!response.ok) {
     const envelope = (parsed as { error?: { code?: string; message?: string; current?: unknown } } | undefined)
       ?.error;
+    if (envelope?.code === 'stale_server') markServerStale();
     throw new ApiError(
       response.status,
       envelope?.code ?? (response.status === 404 ? 'not_found' : 'internal'),

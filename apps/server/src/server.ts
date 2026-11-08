@@ -1,12 +1,15 @@
 import type { FastifyInstance } from 'fastify';
 import { createContext, ensureWorkspace } from './actions/index.js';
 import { apiHost, apiPort, imapFakeEnabled } from './config.js';
-import { type Db, openDatabase } from './db.js';
+import { createSchemaGuard, type Db, openDatabase } from './db.js';
 import { EventBus } from './events.js';
 import { buildApp } from './http/app.js';
 import { startWorker } from './jobs/worker.js';
 import { displayDatabasePath, resolveDatabasePath } from './paths.js';
 import { startExternalWatcher } from './watcher.js';
+
+const staleApiMessage =
+  'The database schema changed after this server started, usually because AgentCRM was updated. Quit and reopen the app.';
 
 export interface RunningServer {
   app: FastifyInstance;
@@ -22,10 +25,16 @@ export async function startServer(options: { port?: number; databasePath?: strin
   const bus = new EventBus();
   const workspace = ensureWorkspace(db);
 
-  const app = buildApp({ db, bus, databasePath });
-  const worker = startWorker(createContext(db, workspace.id, { bus, actor: 'system' }), (error) => {
-    app.log.error(error);
-  });
+  // openDatabase applied the migrations, so the snapshot taken here is the schema this code expects.
+  const guard = createSchemaGuard(db, staleApiMessage);
+  const app = buildApp({ db, bus, databasePath, guard });
+  const worker = startWorker(
+    createContext(db, workspace.id, { bus, actor: 'system' }),
+    (error) => {
+      app.log.error(error);
+    },
+    { guard },
+  );
   const stopWatcher = startExternalWatcher(db, bus);
 
   const close = async (): Promise<void> => {

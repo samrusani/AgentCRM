@@ -777,6 +777,17 @@ textarea.input {
   font-weight: 500;
 }
 
+/* Stale app banner */
+.stale-banner {
+  flex: none;
+  padding: 10px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line));
+  background: var(--warn-tint);
+  color: var(--warn);
+  font-size: 13px;
+  font-weight: 500;
+}
+
 /* Approval card */
 .approval {
   box-sizing: border-box;

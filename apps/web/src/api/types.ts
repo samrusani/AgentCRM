@@ -31,6 +31,7 @@ export interface Health {
   ok: boolean;
   version: string;
   dbPath: string;
+  stale?: boolean;
 }
 
 export interface CaptureSettings {

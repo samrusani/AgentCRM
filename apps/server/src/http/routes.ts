@@ -220,6 +220,7 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
     ok: true,
     version: serverVersion,
     dbPath: displayDatabasePath(options.databasePath),
+    stale: options.guard?.tripped() ?? false,
   }));
 
   app.get('/api/workspace', async () => {

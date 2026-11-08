@@ -142,7 +142,7 @@ export function proposeChanges(ctx: ActionContext, input: unknown) {
     valid: changes.every((change) => change.valid),
     changes,
     proposalHash: hashChanges(normalized),
-    note: 'Nothing was written. Pass these changes and the proposalHash to apply them.',
+    note: 'Nothing was written and no human review is pending. Pass these changes and the proposalHash to crm_apply_changes to apply them; field edits need no approval.',
   };
 }
 

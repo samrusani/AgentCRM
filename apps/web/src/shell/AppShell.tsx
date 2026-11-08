@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
+import { useServerStale } from '../api/client';
 import { useWorkspace } from '../api/hooks';
 import { useServerEvents } from '../api/events';
 import { Icon, type IconName } from '../components/Icons';
@@ -141,6 +142,16 @@ function Toasts() {
   );
 }
 
+// Shown once any request answers stale_server. Not dismissable: every write would fail anyway.
+function StaleBanner() {
+  if (!useServerStale()) return null;
+  return (
+    <div className="stale-banner" role="alert">
+      AgentCRM was updated while this window was open. Quit and reopen the app to continue.
+    </div>
+  );
+}
+
 export function AppShell() {
   useServerEvents();
   return (
@@ -151,6 +162,7 @@ export function AppShell() {
       <NavRail />
       <div className="main">
         <Header />
+        <StaleBanner />
         <main id="content" className="content" tabIndex={-1}>
           <Outlet />
         </main>
