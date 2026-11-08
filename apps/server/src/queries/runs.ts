@@ -59,11 +59,16 @@ export function getRunDetail(db: Db, workspaceId: string, id: string, options: {
     for (const key of postTextScopeKeys) delete scope[key];
     run = { ...found, scope };
   }
+  if (options.forAgent && found.kind === 'transcript_capture') {
+    const scope = { ...found.scope };
+    for (const key of transcriptScopeKeys) delete scope[key];
+    run = { ...found, scope };
+  }
   // Agent reads of enrich runs also blank every step detail: a name mode detail names the scraped
   // company, and scraped text reaches no agent surface before a human accepted it. Lead capture runs do the same,
   // because a step detail can quote post content (a provider error echoing the request, a refusal explanation), and
   // their approval payload leaves out the sample rows, which are names and titles read out of the post.
-  const blankDetails = options.forAgent && (hiddenForAgent !== undefined || found.kind === 'lead_capture');
+  const blankDetails = options.forAgent && (hiddenForAgent !== undefined || found.kind === 'lead_capture' || found.kind === 'transcript_capture');
   const steps = listRunSteps(db, id);
   return {
     ...run,
@@ -77,7 +82,7 @@ export function getRunDetail(db: Db, workspaceId: string, id: string, options: {
         .all(workspaceId, id) as Row[]
     )
       .map(toApproval)
-      .map((approval) => (options.forAgent && found.kind === 'lead_capture' ? withoutSampleRows(approval) : approval)),
+      .map((approval) => (options.forAgent && (found.kind === 'lead_capture' || found.kind === 'transcript_capture') ? withoutSampleRows(approval) : approval)),
   };
 }
 
@@ -100,11 +105,14 @@ function parseStatuses(value: string): RunStatus[] {
 // Large arrays kept in a run's scope. The list leaves them out so one long draft run does not bloat every poll.
 // GET /api/runs/:id and the approval payload keep them. The lead capture extraction holds names and quotes read out
 // of a post, and a pasted capture holds the pasted text itself, so those stay out of the list too.
-const bulkyScopeKeys = ['drafts', 'failures', 'skipped', 'audienceIds', 'extraction', 'extractionResult', 'postText'] as const;
+const bulkyScopeKeys = ['drafts', 'failures', 'skipped', 'audienceIds', 'extraction', 'extractionResult', 'postText', 'transcriptText'] as const;
 
 // Scope keys of a lead capture run that hold post text. Agent facing reads leave them out, so post content reaches no
 // agent surface, not even while a pasted capture is waiting to be read.
 const postTextScopeKeys = ['postText', 'extraction', 'extractionResult'] as const;
+
+// The same for a transcript capture run: the pasted call transcript and the people read out of it.
+const transcriptScopeKeys = ['transcriptText', 'extraction', 'extractionResult'] as const;
 
 // An import review payload for a lead capture run without its sample rows (names, titles, and companies read out of
 // post text). Counts and the source stay.

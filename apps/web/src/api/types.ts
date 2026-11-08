@@ -388,7 +388,7 @@ export interface ReportMoney {
   amount: number;
 }
 
-export type ReportSource = 'mailbox' | 'linkedin' | 'csv' | 'captured' | 'manual';
+export type ReportSource = 'mailbox' | 'linkedin' | 'transcript' | 'csv' | 'captured' | 'manual';
 
 export interface ReportsData {
   pipeline: Array<{
@@ -643,6 +643,8 @@ export interface ImportBatch {
   postUrl: string | null;
   // Lead capture batches only: true when the people were read out of pasted post text.
   pasted: boolean;
+  // Transcript batches only: true when the people were read out of a pasted call transcript.
+  transcript: boolean;
   apifyRunId: string | null;
   datasetId: string | null;
   status: ImportBatchStatus;
@@ -659,6 +661,8 @@ export interface ImportRow {
   matchEntityId: string | null;
   // Lead capture rows named in a post text: the snippet of the post that names the row, as evidence.
   postQuote: string | null;
+  // Transcript rows: the verbatim line of the call that names the row, as evidence.
+  callQuote: string | null;
   // Mailbox rows: how much stored mail there is with this address, from the counts the row keeps.
   mailbox: MailboxCounts | null;
 }
@@ -688,6 +692,8 @@ export interface ImportSampleRow {
   inbound: number | null;
   outbound: number | null;
   lastSeenAt: string | null;
+  // Transcript reviews show the verbatim line of the call that names each row. Other imports leave it null.
+  quote: string | null;
 }
 
 export interface ImportReviewPayload {
@@ -697,10 +703,19 @@ export interface ImportReviewPayload {
   postUrl: string | null;
   // Lead capture reviews: true when the people were read out of pasted post text.
   pasted: boolean;
+  // True for a call transcript capture: the people were read out of a pasted transcript.
+  transcript: boolean;
   // True for a mailbox capture: the people come from mail already synced to this computer.
   mailbox: boolean;
   counts: ImportCounts;
   sample: ImportSampleRow[];
+}
+
+export interface TranscriptCaptureInput {
+  transcriptText: string;
+  // Names the run. The server defaults it to "Call transcript capture".
+  title?: string;
+  maxPeople?: number;
 }
 
 export interface MailboxCaptureInput {

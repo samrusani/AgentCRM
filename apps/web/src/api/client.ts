@@ -24,6 +24,7 @@ import type {
   CriterionField,
   CsvImportInput,
   MailboxCaptureInput,
+  TranscriptCaptureInput,
   MailboxCounts,
   PersonInteraction,
   CsvPreview,
@@ -682,6 +683,7 @@ function normalizeImportBatch(raw: Record<string, unknown>): ImportBatch {
     actorId: textOrNull(sourceRef.actorId),
     postUrl: textOrNull(sourceRef.postUrl),
     pasted: sourceRef.pasted === true,
+    transcript: sourceRef.transcript === true,
     apifyRunId: textOrNull(sourceRef.apifyRunId ?? sourceRef.runId),
     datasetId: textOrNull(sourceRef.datasetId),
     status: textOrNull(raw.status) ?? 'staging',
@@ -704,6 +706,14 @@ function postQuoteOf(raw: unknown): string | null {
   return null;
 }
 
+// A transcript row keeps its verbatim line in raw as { quote, extracted: true }.
+function callQuoteOf(raw: unknown): string | null {
+  const record = parseMaybeJson(raw);
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return null;
+  const fields = record as Record<string, unknown>;
+  return fields.extracted === true ? textOrNull(fields.quote) : null;
+}
+
 function normalizeImportRow(raw: unknown): ImportRow {
   const record = objectOrEmpty(raw);
   return {
@@ -714,6 +724,7 @@ function normalizeImportRow(raw: unknown): ImportRow {
     matchEntityType: textOrNull(record.matchEntityType),
     matchEntityId: textOrNull(record.matchEntityId),
     postQuote: postQuoteOf(record.raw),
+    callQuote: callQuoteOf(record.raw),
     mailbox: mailboxCountsOf(record.raw),
   };
 }
@@ -1252,6 +1263,8 @@ export const api = {
       ),
     csvStage: async (input: CsvImportInput) =>
       normalizeRun(await request<Run>('POST', '/imports/csv', { body: input })),
+    transcriptStage: async (input: TranscriptCaptureInput) =>
+      normalizeRun(await request<Run>('POST', '/imports/transcript', { body: input })),
     mailboxStage: async (input: MailboxCaptureInput) =>
       normalizeRun(await request<Run>('POST', '/imports/mailbox', { body: input })),
     // The rows come with their raw source so a row named in a post can show the quote that names it.

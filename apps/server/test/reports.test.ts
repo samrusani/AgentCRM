@@ -176,6 +176,8 @@ describe('reports intake', () => {
     expect(intakeSource(['captured', 'csv-import'])).toBe('csv');
     expect(intakeSource(['csv-import', 'linkedin-leads'])).toBe('linkedin');
     expect(intakeSource(['linkedin-leads', 'mailbox-import', 'captured'])).toBe('mailbox');
+    expect(intakeSource(['transcript-import', 'csv-import'])).toBe('transcript');
+    expect(intakeSource(['transcript-import', 'linkedin-leads'])).toBe('linkedin');
     expect(intakeSource(['captured', 'x'])).toBe('captured');
     expect(intakeSource(['CSV-IMPORT', 'vip'])).toBe('manual');
     expect(weekStartOf('2026-06-14T23:59:59.000Z')).toBe('2026-06-08');
@@ -190,8 +192,8 @@ describe('reports intake', () => {
     addPerson('2026-06-10T10:00:00.000Z', ['mailbox-import'], otherWorkspace);
     const weeks = getReports(env.db, env.workspaceId, 90, main.id, NOW).intake.weeks;
     expect(weeks).toEqual([
-      { weekStart: '2026-06-08', total: 3, bySource: { mailbox: 0, linkedin: 1, csv: 1, captured: 0, manual: 1 } },
-      { weekStart: '2026-06-15', total: 1, bySource: { mailbox: 1, linkedin: 0, csv: 0, captured: 0, manual: 0 } },
+      { weekStart: '2026-06-08', total: 3, bySource: { mailbox: 0, linkedin: 1, transcript: 0, csv: 1, captured: 0, manual: 1 } },
+      { weekStart: '2026-06-15', total: 1, bySource: { mailbox: 1, linkedin: 0, transcript: 0, csv: 0, captured: 0, manual: 0 } },
     ]);
     const allTime = getReports(env.db, env.workspaceId, null, main.id, NOW).intake.weeks;
     expect(allTime[0]!.weekStart).toBe('2024-12-30');

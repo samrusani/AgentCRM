@@ -19,6 +19,7 @@ const DEFAULT_PERIOD = '90';
 const SOURCES: Array<{ key: ReportSource; label: string; fill: string }> = [
   { key: 'mailbox', label: 'Mailbox', fill: '' },
   { key: 'linkedin', label: 'LinkedIn', fill: ' report-bar__fill--2' },
+  { key: 'transcript', label: 'Transcript', fill: ' report-bar__fill--6' },
   { key: 'csv', label: 'CSV', fill: ' report-bar__fill--3' },
   { key: 'captured', label: 'Extension', fill: ' report-bar__fill--4' },
   { key: 'manual', label: 'Manual', fill: ' report-bar__fill--5' },

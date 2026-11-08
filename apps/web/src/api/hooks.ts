@@ -23,6 +23,7 @@ import type {
   ApifyRunInput,
   CsvImportInput,
   MailboxCaptureInput,
+  TranscriptCaptureInput,
   DraftOutreachInput,
   GmailCredentialsInput,
   ImportSettings,
@@ -952,6 +953,18 @@ export function useStageMailbox() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: MailboxCaptureInput) => api.imports.mailboxStage(input),
+    onSuccess: (run) => {
+      queryClient.setQueryData(['run', run.id], run);
+      void queryClient.invalidateQueries({ queryKey: ['runs'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+    },
+  });
+}
+
+export function useStartTranscriptCapture() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: TranscriptCaptureInput) => api.imports.transcriptStage(input),
     onSuccess: (run) => {
       queryClient.setQueryData(['run', run.id], run);
       void queryClient.invalidateQueries({ queryKey: ['runs'] });

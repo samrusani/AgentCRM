@@ -210,6 +210,8 @@ export interface ExtractedEntry {
   company: string | null;
   location: string | null;
   linkedinUrl: string | null;
+  // Transcript entries only. A pasted post never carries an address.
+  email?: string | null | undefined;
   // Organization entries only. Left out by the model, it means company.
   orgKind?: 'fund' | 'company' | null | undefined;
   quote: string;

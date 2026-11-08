@@ -21,7 +21,7 @@ export interface PipelineStageReport {
   lostAmounts: MoneyTotal[];
 }
 
-export type IntakeSource = 'mailbox' | 'linkedin' | 'csv' | 'captured' | 'manual';
+export type IntakeSource = 'mailbox' | 'linkedin' | 'transcript' | 'csv' | 'captured' | 'manual';
 
 export interface IntakeWeek {
   // The Monday (UTC) that starts the week, as YYYY-MM-DD.
@@ -49,6 +49,7 @@ const DAY_MS = 86_400_000;
 const SOURCE_TAGS: Array<[string, IntakeSource]> = [
   ['mailbox-import', 'mailbox'],
   ['linkedin-leads', 'linkedin'],
+  ['transcript-import', 'transcript'],
   ['csv-import', 'csv'],
   ['captured', 'captured'],
 ];
@@ -194,7 +195,7 @@ export function getReports(
     if (key === null) continue;
     let week = weeks.get(key);
     if (!week) {
-      week = { weekStart: key, total: 0, bySource: { mailbox: 0, linkedin: 0, csv: 0, captured: 0, manual: 0 } };
+      week = { weekStart: key, total: 0, bySource: { mailbox: 0, linkedin: 0, transcript: 0, csv: 0, captured: 0, manual: 0 } };
       weeks.set(key, week);
     }
     week.total += 1;

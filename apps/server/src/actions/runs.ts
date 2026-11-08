@@ -13,6 +13,7 @@ import { type ActionContext, mutate, parseInput, type Tx } from './context.js';
 import { defaultTargetCount, demoStepTitles, maxTargetCount, scheduleDemoRun } from './demoResearch.js';
 import { csvImportKind, scheduleCsvImportRun } from './csvImport.js';
 import { mailboxCaptureKind, scheduleMailboxCaptureRun } from './mailboxCapture.js';
+import { scheduleTranscriptCaptureRun, transcriptCaptureKind } from './transcriptCapture.js';
 import {
   defaultEnrichLimit,
   defaultMaxPeople,
@@ -263,6 +264,7 @@ export function scheduleRunJob(tx: Tx, kind: string, runId: string, runAt: strin
   else if (kind === draftKind) scheduleDraftRun(tx, runId, runAt);
   else if (kind === csvImportKind) scheduleCsvImportRun(tx, runId, runAt);
   else if (kind === mailboxCaptureKind) scheduleMailboxCaptureRun(tx, runId, runAt);
+  else if (kind === transcriptCaptureKind) scheduleTranscriptCaptureRun(tx, runId, runAt);
   else if (kind === qualifyKind) scheduleQualifyRun(tx, runId, runAt);
   else scheduleDemoRun(tx, runId, runAt);
 }

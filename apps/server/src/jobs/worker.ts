@@ -10,6 +10,7 @@ import {
   advanceLeadCaptureRun,
   advanceMailboxCaptureRun,
   advanceQualifyRun,
+  advanceTranscriptCaptureRun,
   apifyJobKind,
   claimDueJobs,
   csvImportJobKind,
@@ -35,6 +36,7 @@ import {
   settleWorkerLease,
   type SettleWorkerLeaseOptions,
   syncMailIfDue,
+  transcriptCaptureJobKind,
   tickFollowupRulesIfDue,
   type WorkerLeaseIdentity,
   type WorkerLeaseKind,
@@ -85,7 +87,9 @@ async function runApifyJob(ctx: ActionContext, job: JobRecord): Promise<void> {
     const advance =
       job.kind === leadCaptureJobKind
         ? advanceLeadCaptureRun
-        : job.kind === enrichPersonJobKind
+        : job.kind === transcriptCaptureJobKind
+          ? advanceTranscriptCaptureRun
+          : job.kind === enrichPersonJobKind
           ? advanceEnrichPersonRun
           : job.kind === enrichOrganizationJobKind
             ? advanceEnrichOrganizationRun
@@ -130,7 +134,7 @@ async function runDraftJob(ctx: ActionContext, job: JobRecord): Promise<void> {
 
 // Processes every simulated job that is due. Single writer: this runs on the server's event loop, one job at a time.
 export function processJobs(ctx: ActionContext): number {
-  const jobs = claimDueJobs(ctx, 10, { excludeKinds: [apifyJobKind, enrichPersonJobKind, enrichOrganizationJobKind, leadCaptureJobKind, draftJobKind, mailReconcileJobKind] });
+  const jobs = claimDueJobs(ctx, 10, { excludeKinds: [apifyJobKind, enrichPersonJobKind, enrichOrganizationJobKind, leadCaptureJobKind, transcriptCaptureJobKind, draftJobKind, mailReconcileJobKind] });
   for (const job of jobs) runJob(ctx, job);
   return jobs.length;
 }
@@ -148,7 +152,7 @@ export async function processApifyJobs(ctx: ActionContext): Promise<number> {
 // resume, and cancel handling for both kinds. The tradeoff is accepted: lead captures queue behind each other, and
 // behind nothing else.
 export async function processLeadCaptureJobs(ctx: ActionContext): Promise<number> {
-  const jobs = claimDueJobs(ctx, 10, { kinds: [leadCaptureJobKind] });
+  const jobs = claimDueJobs(ctx, 10, { kinds: [leadCaptureJobKind, transcriptCaptureJobKind] });
   for (const job of jobs) await runApifyJob(ctx, job);
   return jobs.length;
 }

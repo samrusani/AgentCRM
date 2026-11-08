@@ -28,7 +28,7 @@ const stage = (over: Record<string, unknown> = {}) => ({ stageId: 's1', name: 'R
 const BASE = () => ({
   pipeline: [stage({ openCount: 3 })],
   stageFlow: [{ stageId: 's1', name: 'Research', seq: 1, entered: 2 }],
-  intake: { weeks: [{ weekStart: '2026-11-02', total: 2, bySource: { mailbox: 1, linkedin: 0, csv: 0, captured: 0, manual: 1 } }] },
+  intake: { weeks: [{ weekStart: '2026-11-02', total: 2, bySource: { mailbox: 1, linkedin: 0, transcript: 0, csv: 0, captured: 0, manual: 1 } }] },
   outreach: { sends: 1, replies: 1, bounces: 0, optOuts: 0 },
   runs: { groups: [{ kind: 'draft', status: 'succeeded', count: 1 }], estimatedUsd: 0, runsWithEstimate: 0 },
 });
@@ -142,7 +142,7 @@ describe('hostile data', () => {
   it('KILLS: a week whose total is zero and a run group whose count is zero draw no NaN widths', async () => {
     reportBody = {
       ...BASE(),
-      intake: { weeks: [{ weekStart: '2026-11-02', total: 0, bySource: { mailbox: 0, linkedin: 0, csv: 0, captured: 0, manual: 0 } }] },
+      intake: { weeks: [{ weekStart: '2026-11-02', total: 0, bySource: { mailbox: 0, linkedin: 0, transcript: 0, csv: 0, captured: 0, manual: 0 } }] },
       runs: { groups: [{ kind: 'draft', status: 'failed', count: 0 }], estimatedUsd: 0, runsWithEstimate: 0 },
     };
     const view = renderAt('/reports');
@@ -156,7 +156,7 @@ describe('hostile data', () => {
     reportBody = {
       ...BASE(),
       pipeline: [stage({ openCount: 1, openAmounts: [{ currency: 'NOT A CODE', amount: 5 }, { currency: '', amount: 7 }, { currency: '<b>', amount: 1 }] })],
-      intake: { weeks: [{ weekStart: 'garbage', total: 1, bySource: { mailbox: 0, linkedin: 0, csv: 0, captured: 0, manual: 1 } }] },
+      intake: { weeks: [{ weekStart: 'garbage', total: 1, bySource: { mailbox: 0, linkedin: 0, transcript: 0, csv: 0, captured: 0, manual: 1 } }] },
     };
     const view = renderAt('/reports');
     await screen.findByRole('heading', { name: 'Pipeline now' });

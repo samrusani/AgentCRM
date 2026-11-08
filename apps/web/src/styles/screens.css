@@ -979,6 +979,9 @@
 .report-bar__fill--5 {
   background: color-mix(in srgb, var(--ink-muted) 25%, transparent);
 }
+.report-bar__fill--6 {
+  background: color-mix(in srgb, var(--accent) 75%, transparent);
+}
 .report-row__value {
   font-size: 12px;
   color: var(--ink-muted);

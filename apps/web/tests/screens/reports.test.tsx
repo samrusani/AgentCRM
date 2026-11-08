@@ -59,8 +59,8 @@ const FULL = {
   ],
   intake: {
     weeks: [
-      { weekStart: '2026-11-02', total: 5, bySource: { mailbox: 2, linkedin: 0, csv: 3, captured: 0, manual: 0 } },
-      { weekStart: '2026-11-09', total: 1, bySource: { mailbox: 0, linkedin: 0, csv: 0, captured: 0, manual: 1 } },
+      { weekStart: '2026-11-02', total: 5, bySource: { mailbox: 2, linkedin: 0, transcript: 0, csv: 3, captured: 0, manual: 0 } },
+      { weekStart: '2026-11-09', total: 1, bySource: { mailbox: 0, linkedin: 0, transcript: 0, csv: 0, captured: 0, manual: 1 } },
     ],
   },
   outreach: { sends: 12, replies: 3, bounces: 1, optOuts: 2 },

@@ -6,6 +6,9 @@ export const MAX_POST_URL_LENGTH = 500;
 // A pasted capture reads at most this many characters. The count appears once the text is this close to the limit.
 export const MAX_POST_TEXT_LENGTH = 15000;
 export const POST_TEXT_COUNT_WINDOW = 1000;
+// A call transcript capture reads at most this many characters. The count appears once the text is this close to the limit.
+export const MAX_TRANSCRIPT_LENGTH = 60000;
+export const TRANSCRIPT_COUNT_WINDOW = 2000;
 export const DEFAULT_MAX_PEOPLE = 50;
 export const MAX_PEOPLE = 500;
 export const DEFAULT_ENRICH_LIMIT = 25;

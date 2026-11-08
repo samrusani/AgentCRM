@@ -98,6 +98,7 @@ export function parseImportReviewPayload(payload: unknown): ImportReviewPayload 
       inbound: optionalCount(row.inbound),
       outbound: optionalCount(row.outbound),
       lastSeenAt: text(row.lastSeenAt),
+      quote: text(row.quote),
     };
   });
   return {
@@ -105,6 +106,7 @@ export function parseImportReviewPayload(payload: unknown): ImportReviewPayload 
     actorId: text(record.actorId) ?? text(record.actor_id),
     postUrl: text(record.postUrl) ?? text(asRecord(record.source).postUrl),
     pasted: record.pasted === true,
+    transcript: record.transcript === true,
     // Only a mailbox capture review carries the window it scanned, even when that is all mail (null).
     mailbox: 'sinceDays' in record,
     counts: normalizeCounts(record.counts),

@@ -76,6 +76,7 @@ export function ImportReviewBody({ approval, review }: { approval: Approval; rev
           From a LinkedIn post <span className="import-review__actor">{review.postUrl}</span>
         </p>
       ) : null}
+      {review.transcript ? <p className="muted import-review__source">From a pasted call transcript</p> : null}
       {review.actorId && !review.postUrl ? (
         <p className="muted import-review__source">
           Actor <span className="import-review__actor">{review.actorId}</span>
@@ -125,6 +126,7 @@ export function ImportReviewBody({ approval, review }: { approval: Approval; rev
                 <th scope="col">Company</th>
                 {showPeople ? <th scope="col">Title</th> : null}
                 {showPeople ? <th scope="col">Profile</th> : null}
+                {review.transcript ? <th scope="col">Quote</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -143,6 +145,11 @@ export function ImportReviewBody({ approval, review }: { approval: Approval; rev
                   {showPeople ? (
                     <td className={row.linkedinUrl ? '' : 'muted'} title={row.linkedinUrl ?? undefined}>
                       {row.linkedinUrl ? profileLabel(row.linkedinUrl) : 'No profile'}
+                    </td>
+                  ) : null}
+                  {review.transcript ? (
+                    <td className={row.quote ? 'row-quote' : 'muted'} title={row.quote ?? undefined}>
+                      {row.quote ?? 'No quote'}
                     </td>
                   ) : null}
                 </tr>

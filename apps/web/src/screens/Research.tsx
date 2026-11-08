@@ -23,6 +23,7 @@ import { isLocalProvider } from '../lib/models';
 import { DraftOutreachSheet } from './DraftOutreachSheet';
 import { ImportBatchSheet, ImportSetupSheet } from './ImportSheets';
 import { LeadCaptureCard } from './LeadCaptureCard';
+import { TranscriptCaptureCard } from './TranscriptCaptureCard';
 import { useUI } from '../lib/ui';
 
 export function Research() {
@@ -131,6 +132,7 @@ export function Research() {
       <div className="research">
         <div className="run-side">
           <LeadCaptureCard onStarted={(run) => select(run.id)} />
+          <TranscriptCaptureCard onStarted={(run) => select(run.id)} />
           <nav className="run-list" aria-label="Runs">
             <ul>
               {items.map((run) => (

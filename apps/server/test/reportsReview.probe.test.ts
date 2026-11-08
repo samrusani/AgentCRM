@@ -252,10 +252,10 @@ describe('stage flow', () => {
 });
 
 describe('intake', () => {
-  it('KILLS: precedence holds for every subset of the four source tags', () => {
-    const order = [['mailbox-import', 'mailbox'], ['linkedin-leads', 'linkedin'], ['csv-import', 'csv'], ['captured', 'captured']] as const;
+  it('KILLS: precedence holds for every subset of the five source tags', () => {
+    const order = [['mailbox-import', 'mailbox'], ['linkedin-leads', 'linkedin'], ['transcript-import', 'transcript'], ['csv-import', 'csv'], ['captured', 'captured']] as const;
     // Use a far future week so nothing else shares the bucket.
-    for (let mask = 0; mask < 16; mask += 1) {
+    for (let mask = 0; mask < 32; mask += 1) {
       const tags = order.filter((_, bit) => (mask >> bit) & 1).map(([tag]) => tag);
       const expected = (order.find(([tag]) => tags.includes(tag)) ?? [null, 'manual'])[1];
       const day = new Date(NOW.getTime() - (20 + mask) * 7 * DAY).toISOString();

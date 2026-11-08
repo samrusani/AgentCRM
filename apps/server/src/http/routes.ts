@@ -84,6 +84,7 @@ import {
   startMicrosoftOAuth,
   stageCsvImport,
   startMailboxCapture,
+  startTranscriptCapture,
   startRun,
   switchTemplate,
   updateOpportunity,
@@ -617,6 +618,12 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
 
   app.post('/api/imports/mailbox', async (request, reply) => {
     const run = startMailboxCapture(context(), request.body, { origin: 'user' });
+    reply.status(201);
+    return run;
+  });
+
+  app.post('/api/imports/transcript', async (request, reply) => {
+    const run = startTranscriptCapture(context(), request.body, { origin: 'user' });
     reply.status(201);
     return run;
   });

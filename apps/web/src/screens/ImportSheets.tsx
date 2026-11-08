@@ -381,7 +381,7 @@ function MatchedRecord({ type, id }: { type: string; id: string }) {
 
 function RowReason({ row }: { row: ImportRow }) {
   const hasMatch = Boolean(row.matchEntityType && row.matchEntityId);
-  if (!row.reason && !hasMatch && !row.postQuote) return <span className="muted">None</span>;
+  if (!row.reason && !hasMatch && !row.postQuote && !row.callQuote) return <span className="muted">None</span>;
   return (
     <>
       {row.reason ? <span>{row.reason}</span> : null}
@@ -396,6 +396,11 @@ function RowReason({ row }: { row: ImportRow }) {
           From the post: {row.postQuote}
         </span>
       ) : null}
+      {row.callQuote ? (
+        <span className="muted row-quote" title={row.callQuote}>
+          From the call: {row.callQuote}
+        </span>
+      ) : null}
     </>
   );
 }
@@ -407,7 +412,7 @@ export function ImportBatchSheet({ id, onClose }: { id: string; onClose: () => v
   const rows = query.data?.pages.flatMap((page) => page.items) ?? [];
   const refreshing = query.isPlaceholderData;
   // Lead capture rows carry a title and a profile worth showing. Other imports keep their columns.
-  const showPeople = batch?.sourceKind === 'lead_capture';
+  const showPeople = batch?.sourceKind === 'lead_capture' || batch?.sourceKind === 'transcript';
   // Mailbox rows show how much mail there is with each address in place of a company.
   const showMailbox = batch?.sourceKind === 'mailbox';
 
@@ -423,7 +428,9 @@ export function ImportBatchSheet({ id, onClose }: { id: string; onClose: () => v
             : batch.postUrl
               ? `From a LinkedIn post: ${batch.postUrl}`
               : 'From a LinkedIn post'
-          : batch?.actorId
+          : batch?.sourceKind === 'transcript'
+            ? 'From a pasted call transcript'
+            : batch?.actorId
             ? `Actor ${batch.actorId}`
             : batch?.sourceKind === 'csv'
               ? 'CSV import'
@@ -501,7 +508,9 @@ export function ImportBatchSheet({ id, onClose }: { id: string; onClose: () => v
                     ? 'Rows appear here as they are staged. The run is still working.'
                     : batch.sourceKind === 'csv'
                       ? 'This batch has no rows. The file had no usable rows.'
-                      : batch.sourceKind === 'lead_capture'
+                      : batch.sourceKind === 'transcript'
+                        ? 'This batch has no rows. The transcript had no usable people.'
+                        : batch.sourceKind === 'lead_capture'
                         ? 'This batch has no rows. The post had no usable people.'
                         : showMailbox
                           ? 'This batch has no rows. The stored mail had no new correspondents.'
