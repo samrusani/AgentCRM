@@ -48,6 +48,32 @@ const profileUrlField = (canonical: (value: string) => string | null, message: s
       return url;
     });
 
+export const birthdayMessage = 'Birthday must be YYYY-MM-DD or MM-DD.';
+
+// A birthday is YYYY-MM-DD or MM-DD (the year is optional because people often share the day without it). The shape is
+// a regex; the calendar check follows. With no year, February 29 is allowed. With a year, it must be a real date, so
+// 2023-02-29 is refused. Null or an empty string clears the value.
+const birthdayField = z
+  .string()
+  .trim()
+  .max(20)
+  .nullable()
+  .transform((value, ctx) => {
+    if (value === null || value === '') return null;
+    const match = /^(?:(\d{4})-)?(\d{2})-(\d{2})$/.exec(value);
+    if (match) {
+      const year = match[1] === undefined ? 2000 : Number(match[1]); // 2000 is a leap year
+      const month = Number(match[2]);
+      const day = Number(match[3]);
+      const check = new Date(Date.UTC(year, month - 1, day));
+      if (year >= 1 && check.getUTCFullYear() === year && check.getUTCMonth() === month - 1 && check.getUTCDate() === day) {
+        return value;
+      }
+    }
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: birthdayMessage.replace(/\.$/, '') });
+    return z.NEVER;
+  });
+
 export const personFields = {
   firstName: z.string().trim().min(1).max(100),
   lastName: z.string().trim().max(100),
@@ -59,6 +85,7 @@ export const personFields = {
   xUrl: profileUrlField(canonicalXUrl, xProfileUrlMessage),
   lifecycle: z.enum(['lead', 'relationship']),
   tags: tagsSchema,
+  birthday: birthdayField,
   nextActionAt: isoTimestamp.nullable(),
 };
 
@@ -119,6 +146,7 @@ const specs: Record<UpdatableType, EntitySpec> = {
       xUrl: 'x_url',
       lifecycle: 'lifecycle',
       tags: 'tags',
+      birthday: 'birthday',
       nextActionAt: 'next_action_at',
     },
     jsonFields: ['tags'],

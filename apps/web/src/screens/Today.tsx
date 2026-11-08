@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useFollowupRules, useMailSummary, useSendIntents, useStartRun, useToday } from '../api/hooks';
 import { ApprovalCard, useSettledApprovals } from '../components/approvals';
 import { EmptyState, ErrorState, Loading, PageHeader, errorMessage } from '../components/common';
@@ -9,7 +9,8 @@ import { Outbox } from '../components/outbox';
 import { StagedBanner, type StagedNotice } from '../components/prepareSend';
 import { Replies } from '../components/replies';
 import { TaskRow } from '../components/TaskRow';
-import { describeDue } from '../lib/format';
+import { describeDue, formatBirthday } from '../lib/format';
+import { recordLink } from '../lib/links';
 import { isFollowupActive } from '../lib/mail';
 import { useUI } from '../lib/ui';
 
@@ -76,6 +77,7 @@ export function Today() {
   }
 
   const { tasksDue, approvalsPending, runsActive } = today.data;
+  const birthdays = today.data.birthdays ?? [];
   const approvals = settled.merge(approvalsPending);
   const overdue = tasksDue.filter((task) => describeDue(task.dueAt).overdue);
   const dueToday = tasksDue.filter((task) => !describeDue(task.dueAt).overdue);
@@ -176,6 +178,31 @@ export function Today() {
                   <LiveRun key={run.id} run={run} />
                 ))}
               </div>
+            )}
+          </TodayCard>
+
+          <TodayCard id="today-birthdays" title="Birthdays" count={birthdays.length}>
+            {birthdays.length === 0 ? (
+              <EmptyState message="No birthdays in the next seven days. Add birthdays on a person's sheet." />
+            ) : (
+              <ul className="task-list">
+                {birthdays.map((birthday) => (
+                  <li key={birthday.personId} className="task">
+                    <div className="task__text">
+                      <span className="task__title">
+                        <Link className="link" to={recordLink('person', birthday.personId) ?? '#'}>
+                          {birthday.name}
+                        </Link>
+                      </span>
+                      <span className="task__meta">
+                        {birthday.turns !== undefined
+                          ? `Turns ${birthday.turns} on ${formatBirthday(birthday.date.slice(5))}`
+                          : `Birthday on ${formatBirthday(birthday.date.slice(5))}`}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
             )}
           </TodayCard>
         </div>

@@ -4,7 +4,7 @@
 
 **The CRM that people and AI agents operate together.**
 
-<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-2854-15685b?style=flat" alt="2854 tests">
+<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-2930-15685b?style=flat" alt="2930 tests">
 
 [Quick start](#quick-start) · [What works](#what-works-today) · [Architecture docs](docs/architecture.md)
 
@@ -89,7 +89,7 @@ Run it from the repository root, or make the `--prefix` path absolute. Keep `--s
 
 ## What works today
 
-Every row below is backed by tests: 2,854 across the server (1,906), the web app (666), and the browser extension (282). "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
+Every row below is backed by tests: 2,930 across the server (1,962), the web app (686), and the browser extension (282). "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
 
 ### Core CRM
 
@@ -101,6 +101,7 @@ Every row below is backed by tests: 2,854 across the server (1,906), the web app
 | Field enrichment: one click runs one scrape and suggests values for empty fields, each accepted or dismissed by you; people by their LinkedIn profile, or by a name search that finds the profile when none is saved and tells you who it found; organizations by their saved page or a name lookup that tells you which company it found | Working, verified against a stubbed Apify API; bring your own Apify account |
 | Pipeline: as many pipelines as you need (say a US and a UK investor pipeline), each seeded from a template with its own stages and switchable later without losing its name; opportunities in board and table views with stage history; create deals from the Pipeline header or straight from a person or organization sheet, choosing the pipeline as you go | Working |
 | Approvals: review, approve, reject, audit trail | Working |
+| Birthdays: a birthday on each person, with or without the year, and a Today card for the next seven days | Working |
 | Evidence: field claims with source and verification status | Working, synthetic sources |
 | Templates: startup fundraising, fund LP fundraising, client sales, applied per pipeline with a guided switch that maps stages | Working |
 | Qualification: editable criteria, per criterion verdicts with evidence, fit sort | Working; unknown never counts as a match |

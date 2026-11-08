@@ -895,6 +895,7 @@ export const api = {
       tasksDue: asPage<Task>(data.tasksDue).items,
       approvalsPending: asPage<Approval>(data.approvalsPending).items.map(normalizeApproval),
       runsActive: asPage<Run>(data.runsActive).items.map(normalizeRun),
+      birthdays: Array.isArray(data.birthdays) ? data.birthdays : [],
       counts: (data.counts ?? {}) as Record<string, number>,
     };
   },

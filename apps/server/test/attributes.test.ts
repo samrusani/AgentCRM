@@ -96,7 +96,7 @@ describe('seeds', () => {
       }
       db.prepare('INSERT INTO workspace (id, created_at, name, template) VALUES (?, ?, ?, ?)').run('wsp_1', '2026-01-01', 'One', 't');
       db.prepare('INSERT INTO workspace (id, created_at, name, template) VALUES (?, ?, ?, ?)').run('wsp_2', '2026-01-01', 'Two', 't');
-      expect(applyMigrations(db)).toEqual(['025_attributes.sql']);
+      expect(applyMigrations(db)).toEqual(['025_attributes.sql', '026_birthday.sql']);
       const rows = db.prepare('SELECT workspace_id, entity_type, key, kind, seq, id FROM attribute_def ORDER BY workspace_id, seq').all() as {
         workspace_id: string; entity_type: string; key: string; kind: string; seq: number; id: string;
       }[];

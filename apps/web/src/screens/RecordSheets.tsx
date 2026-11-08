@@ -27,7 +27,7 @@ import { PersonLists } from '../components/lists';
 import { QualificationSection } from '../components/qualification';
 import { RecordPicker, type PickedRecord } from '../components/RecordPicker';
 import { NewOpportunitySheet } from './NewOpportunitySheet';
-import { describeDue, formatAgo, formatDaysAgo, humanize, personName } from '../lib/format';
+import { birthdayProximity, describeDue, formatAgo, formatBirthday, formatDaysAgo, humanize, personName } from '../lib/format';
 import { useUI, type SelectedRecord } from '../lib/ui';
 
 function useSelectedRecord(record: SelectedRecord | null) {
@@ -468,6 +468,24 @@ export function PersonSheet({
               ) : null}
               <FieldRow label="Next action" openClaim={openClaim} onToggleClaim={toggleClaim}>
                 <span className={due?.overdue ? 'is-overdue' : due ? '' : 'muted'}>{due ? due.text : 'Not set'}</span>
+              </FieldRow>
+              <FieldRow label="Birthday" openClaim={openClaim} onToggleClaim={toggleClaim}>
+                <EditableValue
+                  label="Birthday"
+                  field="birthday"
+                  value={person.birthday ?? null}
+                  save={saveField('birthday')}
+                  onReload={() => query.refetch()}
+                  renderValue={(value) => {
+                    const note = birthdayProximity(value);
+                    return (
+                      <span>
+                        {formatBirthday(value)}
+                        {note ? <span className="muted"> {note}</span> : null}
+                      </span>
+                    );
+                  }}
+                />
               </FieldRow>
               <FieldRow label="Tags" openClaim={openClaim} onToggleClaim={toggleClaim}>
                 {person.tags.length > 0 ? (

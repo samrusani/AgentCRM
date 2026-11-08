@@ -67,6 +67,8 @@ export interface Person {
   linkedinUrl?: string | null;
   xUrl?: string | null;
   tags: string[];
+  // YYYY-MM-DD, or MM-DD when the year is unknown. Null when not set.
+  birthday?: string | null;
   nextActionAt: string | null;
   // Present on list items and details. Null means the person was never qualified.
   qualification?: QualificationSummary | null;
@@ -304,10 +306,20 @@ export interface Approval {
   createdAt: string;
 }
 
+export interface TodayBirthday {
+  personId: string;
+  name: string;
+  date: string;
+  // The age reached, present only when a birth year is stored.
+  turns?: number;
+}
+
 export interface TodayData {
   tasksDue: Task[];
   approvalsPending: Approval[];
   runsActive: Run[];
+  // People with a birthday today through seven days ahead, soonest first. `date` is the next occurrence (YYYY-MM-DD).
+  birthdays: TodayBirthday[];
   counts: Record<string, number>;
 }
 

@@ -203,3 +203,42 @@ export function formatDaysAgo(iso: string | null | undefined, now = Date.now()):
   const years = Math.floor(days / 365);
   return years === 1 ? '1 year ago' : `${years} years ago`;
 }
+
+const BIRTHDAY_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// A stored birthday is YYYY-MM-DD or MM-DD. Read as text, never through Date, so no time zone can shift the day.
+function parseBirthday(value: string): { year: number | null; month: number; day: number } | null {
+  const match = /^(?:(\d{4})-)?(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return { year: match[1] ? Number(match[1]) : null, month, day };
+}
+
+// "12 Nov 1986" when the year is known, "12 Nov" when it is not. A value that does not parse is shown as stored.
+export function formatBirthday(value: string): string {
+  const parsed = parseBirthday(value);
+  if (!parsed) return value;
+  const text = `${parsed.day} ${BIRTHDAY_MONTHS[parsed.month - 1]}`;
+  return parsed.year === null ? text : `${text} ${parsed.year}`;
+}
+
+// The muted note beside a birthday: "today" on the day, "in N days" for the seven days before it, else nothing.
+// February 29 counts as February 28 in a non leap year, the same rule the server uses for Today.
+export function birthdayProximity(value: string, now = Date.now()): string | null {
+  const parsed = parseBirthday(value);
+  if (!parsed) return null;
+  const today = new Date(startOfDay(now));
+  const upcoming = (year: number) => {
+    const leap = new Date(year, 1, 29).getMonth() === 1;
+    const day = parsed.month === 2 && parsed.day === 29 && !leap ? 28 : parsed.day;
+    return new Date(year, parsed.month - 1, day);
+  };
+  let target = upcoming(today.getFullYear());
+  if (target < today) target = upcoming(today.getFullYear() + 1);
+  const days = Math.round((target.getTime() - today.getTime()) / DAY);
+  if (days === 0) return 'today';
+  if (days >= 1 && days <= 7) return days === 1 ? 'in 1 day' : `in ${days} days`;
+  return null;
+}
