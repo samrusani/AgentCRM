@@ -725,7 +725,7 @@ describe('migration 022 on existing data', () => {
       ).run();
       db.prepare("INSERT INTO stage_event (id, created_at, opportunity_id, from_stage_id, to_stage_id, at, actor) VALUES ('evt_1', '2026-01-01', 'opp_1', NULL, 'stg_a1', '2026-01-01', 'user')").run();
 
-      expect(applyMigrations(db)).toEqual(['022_pipelines.sql', '023_lists.sql', '024_mailbox.sql', '025_attributes.sql', '026_birthday.sql', '027_automations.sql', '028_sequences.sql', '029_saved_views.sql', '030_transcript.sql', '031_duplicates.sql']);
+      expect(applyMigrations(db)).toEqual(['022_pipelines.sql', '023_lists.sql', '024_mailbox.sql', '025_attributes.sql', '026_birthday.sql', '027_automations.sql', '028_sequences.sql', '029_saved_views.sql', '030_transcript.sql', '031_duplicates.sql', '032_organization_duplicates.sql']);
       const rows = db.prepare('SELECT id, version, template FROM pipeline ORDER BY id').all();
       expect(rows).toEqual([
         { id: 'pip_a1', version: 1, template: 'fund-lp' },

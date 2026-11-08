@@ -119,7 +119,7 @@ describe('migration 019', () => {
       opportunity('opp_past', 'per_past', 'stg_2');
       opportunity('opp_first', 'per_first', 'stg_1');
 
-      expect(applyMigrations(db)).toEqual(['019_lifecycle.sql', '020_lifecycle_indexes.sql', '021_worker_lease.sql', '022_pipelines.sql', '023_lists.sql', '024_mailbox.sql', '025_attributes.sql', '026_birthday.sql', '027_automations.sql', '028_sequences.sql', '029_saved_views.sql', '030_transcript.sql', '031_duplicates.sql']);
+      expect(applyMigrations(db)).toEqual(['019_lifecycle.sql', '020_lifecycle_indexes.sql', '021_worker_lease.sql', '022_pipelines.sql', '023_lists.sql', '024_mailbox.sql', '025_attributes.sql', '026_birthday.sql', '027_automations.sql', '028_sequences.sql', '029_saved_views.sql', '030_transcript.sql', '031_duplicates.sql', '032_organization_duplicates.sql']);
 
       const rows = db.prepare('SELECT id, lifecycle FROM person ORDER BY id').all();
       expect(rows).toEqual([

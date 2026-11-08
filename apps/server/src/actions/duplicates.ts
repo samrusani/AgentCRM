@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { conflict, notFound, validationError } from '../errors.js';
 import { activeFollowupStatuses } from '../queries/followupRules.js';
-import { fillableColumns, orderedPair, planFill } from '../queries/duplicates.js';
+import { fillableColumns, orderedPair, organizationFillableColumns, planFill, planOrganizationFill } from '../queries/duplicates.js';
+import { getOrganization } from '../queries/organizations.js';
 import { getPerson } from '../queries/people.js';
 import { emitRecord, mutate, parseInput, versionConflict, type ActionContext, type Tx } from './context.js';
 import { promotePersonIn } from './lifecycle.js';
@@ -151,5 +152,114 @@ export function mergePeople(ctx: ActionContext, survivorId: string, input: unkno
     });
     emitRecord(tx, 'person', survivor.id);
     return getPerson(tx.db, tx.workspaceId, survivor.id)!;
+  });
+}
+
+const dismissOrganizationSchema = z.object({ organizationIds: z.array(idSchema).length(2) }).strict();
+
+// Records that two organizations are not duplicates. The pair is stored once, ordered. Repeating the call writes nothing.
+export function dismissOrganizationDuplicate(ctx: ActionContext, input: unknown): { organizationIds: [string, string] } {
+  const data = parseInput(dismissOrganizationSchema, input);
+  const [first, second] = data.organizationIds as [string, string];
+  if (first === second) throw validationError('organizationIds: Choose two different organizations.');
+  const [a, b] = orderedPair(first, second);
+  return mutate(ctx, (tx) => {
+    for (const id of [a, b]) {
+      if (!getOrganization(tx.db, tx.workspaceId, id)) throw notFound('Organization');
+    }
+    const result = tx.db
+      .prepare(
+        'INSERT OR IGNORE INTO organization_duplicate_dismissal (workspace_id, organization_a_id, organization_b_id, created_at) VALUES (?, ?, ?, ?)',
+      )
+      .run(tx.workspaceId, a, b, tx.now());
+    if (result.changes === 1) tx.audit('duplicate.dismiss', 'organization', a, { organizationIds: [a, b] });
+    return { organizationIds: [a, b] };
+  });
+}
+
+// Merges `otherId` into `survivorId` in one transaction and deletes the other organization. See "Organization
+// duplicates" in docs/architecture.md for the contract. Unlike the person merge there is no sending gate: nothing
+// sends on behalf of an organization.
+export function mergeOrganizations(ctx: ActionContext, survivorId: string, input: unknown) {
+  const data = parseInput(mergeSchema, input);
+  const survivorKey = parseInput(idSchema, survivorId);
+  if (survivorKey === data.otherId) throw validationError('Choose two different organizations to merge.');
+  return mutate(ctx, (tx) => {
+    const survivor = getOrganization(tx.db, tx.workspaceId, survivorKey);
+    if (!survivor) throw notFound('Organization');
+    const other = getOrganization(tx.db, tx.workspaceId, data.otherId);
+    if (!other) throw notFound('Organization');
+    if (survivor.version !== data.expectedVersion) throw versionConflict(survivor);
+    if (other.version !== data.otherExpectedVersion) throw versionConflict(other);
+
+    const run = (sql: string, ...params: unknown[]): number => tx.db.prepare(sql).run(...(params as never[])).changes;
+    const now = tx.now();
+
+    // Custom attribute values: no foreign key ties them to the organization, so they are moved or removed here.
+    const attributeRows = (id: string) =>
+      new Set(
+        (tx.db.prepare('SELECT attribute_id FROM attribute_value WHERE workspace_id = ? AND entity_id = ?').all(tx.workspaceId, id) as {
+          attribute_id: string;
+        }[]).map((row) => row.attribute_id),
+      );
+    const plan = planOrganizationFill(survivor, other, attributeRows(survivor.id), attributeRows(other.id));
+    let attributesFilled = 0;
+    for (const attributeId of plan.attributeIds) {
+      attributesFilled += run(
+        'UPDATE attribute_value SET entity_id = ?, updated_at = ? WHERE workspace_id = ? AND entity_id = ? AND attribute_id = ?',
+        survivor.id,
+        now,
+        tx.workspaceId,
+        other.id,
+        attributeId,
+      );
+    }
+    // What remains after the moves is displaced: the survivor already holds those attributes, so the other's
+    // values are deleted. The audit keeps them so nothing a merge discards vanishes without trace.
+    const displacedAttributes = tx.db
+      .prepare('SELECT attribute_id AS attributeId, value FROM attribute_value WHERE workspace_id = ? AND entity_id = ?')
+      .all(tx.workspaceId, other.id) as { attributeId: string; value: string }[];
+    run('DELETE FROM attribute_value WHERE workspace_id = ? AND entity_id = ?', tx.workspaceId, other.id);
+
+    const moved = {
+      people: run('UPDATE person SET organization_id = ? WHERE workspace_id = ? AND organization_id = ?', survivor.id, tx.workspaceId, other.id),
+      opportunities: run('UPDATE opportunity SET organization_id = ? WHERE workspace_id = ? AND organization_id = ?', survivor.id, tx.workspaceId, other.id),
+      claims: run("UPDATE field_claim SET entity_id = ? WHERE workspace_id = ? AND entity_type = 'organization' AND entity_id = ?", survivor.id, tx.workspaceId, other.id),
+      activities: run("UPDATE activity SET entity_id = ? WHERE workspace_id = ? AND entity_type = 'organization' AND entity_id = ?", survivor.id, tx.workspaceId, other.id),
+      tasks: run("UPDATE task SET entity_id = ? WHERE workspace_id = ? AND entity_type = 'organization' AND entity_id = ?", survivor.id, tx.workspaceId, other.id),
+    };
+    // Dismissals naming the other organization go with the row (both foreign keys cascade).
+    run('DELETE FROM organization WHERE id = ? AND workspace_id = ?', other.id, tx.workspaceId);
+
+    // No organization tag gates any behavior, so unlike the person merge nothing is protected from the cap.
+    const union = [...new Set([...survivor.tags, ...other.tags])];
+    const tags = union.slice(0, maxTags);
+    const droppedTags = union.filter((tag) => !tags.includes(tag));
+    const assignments = ['tags = ?', 'updated_at = ?', 'version = version + 1'];
+    const values: unknown[] = [JSON.stringify(tags), now];
+    for (const [field, column] of plan.columns) {
+      assignments.push(`${column} = ?`);
+      values.push(other[field]);
+    }
+    const updated = run(`UPDATE organization SET ${assignments.join(', ')} WHERE id = ? AND workspace_id = ?`, ...values, survivor.id, tx.workspaceId);
+    if (updated !== 1) throw versionConflict(getOrganization(tx.db, tx.workspaceId, survivor.id));
+
+    const filledFields = new Set<string>(plan.columns.map(([field]) => field));
+    const displacedFields: Record<string, unknown> = {};
+    for (const [field] of organizationFillableColumns) {
+      const value = other[field];
+      // A value identical to the survivor's was not beaten, so it is not displaced.
+      if (!filledFields.has(field) && value !== null && value !== undefined && value !== '' && value !== survivor[field])
+        displacedFields[field] = value;
+    }
+    tx.audit('organization.merge', 'organization', survivor.id, {
+      survivorId: survivor.id,
+      otherId: other.id,
+      moved,
+      filled: { fields: plan.columns.map(([field]) => field), attributes: attributesFilled },
+      displaced: { fields: displacedFields, attributes: displacedAttributes, tags: droppedTags },
+    });
+    emitRecord(tx, 'organization', survivor.id);
+    return getOrganization(tx.db, tx.workspaceId, survivor.id)!;
   });
 }

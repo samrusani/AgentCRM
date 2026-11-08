@@ -60,6 +60,8 @@ import type {
   PersonList,
   DuplicatePair,
   DuplicateScan,
+  OrganizationDuplicatePair,
+  OrganizationDuplicateScan,
   MergeInput,
   AttributeDef,
   Automation,
@@ -1018,6 +1020,16 @@ export const api = {
     dismiss: (personIds: [string, string]) => request<unknown>('POST', '/duplicates/dismiss', { body: { personIds } }),
     merge: (input: MergeInput) =>
       request<Person>('POST', `/people/${encodeURIComponent(input.survivorId)}/merge`, {
+        body: { otherId: input.otherId, expectedVersion: input.expectedVersion, otherExpectedVersion: input.otherExpectedVersion },
+      }),
+    listOrganizations: async (): Promise<OrganizationDuplicateScan> => {
+      const raw = await request<Partial<OrganizationDuplicateScan>>('GET', '/duplicates/organizations');
+      return { pairs: toArray<OrganizationDuplicatePair>(raw.pairs), capped: raw.capped === true };
+    },
+    dismissOrganization: (organizationIds: [string, string]) =>
+      request<unknown>('POST', '/duplicates/organizations/dismiss', { body: { organizationIds } }),
+    mergeOrganizations: (input: MergeInput) =>
+      request<Organization>('POST', `/organizations/${encodeURIComponent(input.survivorId)}/merge`, {
         body: { otherId: input.otherId, expectedVersion: input.expectedVersion, otherExpectedVersion: input.otherExpectedVersion },
       }),
   },

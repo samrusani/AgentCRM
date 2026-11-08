@@ -77,6 +77,7 @@ const recordTables = [
   'opportunity',
   'list_member',
   'duplicate_dismissal',
+  'organization_duplicate_dismissal',
   'list',
   'attribute_value',
   'person',

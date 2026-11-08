@@ -463,6 +463,30 @@ export function useMergePeople() {
   });
 }
 
+export function useOrganizationDuplicates() {
+  return useQuery({ queryKey: ['duplicates', 'organizations'], queryFn: api.duplicates.listOrganizations });
+}
+
+export function useDismissOrganizationDuplicate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (organizationIds: [string, string]) => api.duplicates.dismissOrganization(organizationIds),
+    onSuccess: () => invalidateKeys(queryClient, ['duplicates']),
+    // A refused dismiss usually means an organization is gone, so the list reloads.
+    onError: () => invalidateKeys(queryClient, ['duplicates']),
+  });
+}
+
+// Same keys as a person merge: the organization's people, deals, tasks, and activities move to the survivor.
+export function useMergeOrganizations() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: MergeInput) => api.duplicates.mergeOrganizations(input),
+    onSuccess: () => invalidateKeys(queryClient, MERGE_KEYS),
+    onError: () => invalidateKeys(queryClient, ['duplicates']),
+  });
+}
+
 export function useLists() {
   return useQuery({ queryKey: ['lists'], queryFn: api.lists.list });
 }

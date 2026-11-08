@@ -1089,6 +1089,37 @@ export interface DuplicateScan {
   capped: boolean;
 }
 
+export type OrganizationDuplicateReason = 'domain' | 'linkedin' | 'name';
+
+export interface OrganizationDuplicateSummary {
+  id: string;
+  name: string;
+  domain: string | null;
+  linkedinUrl: string | null;
+  kind: 'fund' | 'company' | string;
+  createdAt: string;
+  version: number;
+  people: number;
+  deals: number;
+  tasks: number;
+  activities: number;
+}
+
+export interface OrganizationDuplicatePair {
+  organizationIds: [string, string];
+  reason: OrganizationDuplicateReason;
+  reasonText: string;
+  left: OrganizationDuplicateSummary;
+  right: OrganizationDuplicateSummary;
+  fillsIfKeepLeft: number;
+  fillsIfKeepRight: number;
+}
+
+export interface OrganizationDuplicateScan {
+  pairs: OrganizationDuplicatePair[];
+  capped: boolean;
+}
+
 export interface MergeInput {
   survivorId: string;
   otherId: string;

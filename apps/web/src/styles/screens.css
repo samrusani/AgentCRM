@@ -1022,6 +1022,11 @@
   font-variant-numeric: tabular-nums;
 }
 
+.duplicate-section__title {
+  margin: 28px 0 0;
+  font-size: 16px;
+  font-weight: 600;
+}
 .duplicate-list {
   display: flex;
   flex-direction: column;

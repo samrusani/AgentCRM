@@ -3,6 +3,8 @@ import { z } from 'zod';
 import {
   abortRemoteRunIfNeeded,
   dismissDuplicate,
+  dismissOrganizationDuplicate,
+  mergeOrganizations,
   mergePeople,
   acceptEnrichmentSuggestion,
   acceptOrganizationEnrichmentSuggestion,
@@ -113,7 +115,7 @@ import { listAutomations } from '../queries/automations.js';
 import { listSequences } from '../queries/sequences.js';
 import { listViews, viewScreens } from '../queries/views.js';
 import { listLists } from '../queries/lists.js';
-import { scanDuplicates } from '../queries/duplicates.js';
+import { scanDuplicates, scanOrganizationDuplicates } from '../queries/duplicates.js';
 import { listPipelines } from '../queries/pipelines.js';
 import { readQualificationConfig } from '../qualification/config.js';
 import { getRunDetail, listApprovals, listRuns, requireApproval } from '../queries/runs.js';
@@ -260,6 +262,9 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   app.patch('/api/people/:id', async (request) => updatePerson(context(), idParam(request.params), request.body));
   app.post('/api/people/:id/merge', async (request) => mergePeople(context(), idParam(request.params), request.body));
   app.get('/api/duplicates', async () => scanDuplicates(db, workspaceId()));
+  app.get('/api/duplicates/organizations', async () => scanOrganizationDuplicates(db, workspaceId()));
+  app.post('/api/duplicates/organizations/dismiss', async (request) => dismissOrganizationDuplicate(context(), request.body));
+  app.post('/api/organizations/:id/merge', async (request) => mergeOrganizations(context(), idParam(request.params), request.body));
   app.post('/api/duplicates/dismiss', async (request) => dismissDuplicate(context(), request.body));
   app.get('/api/people/:id/enrichment', async (request) =>
     getEnrichment({ db, workspaceId: workspaceId() }, idParam(request.params)),
