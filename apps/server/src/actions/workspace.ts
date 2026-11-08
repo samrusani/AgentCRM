@@ -76,6 +76,7 @@ const recordTables = [
   'stage_event',
   'opportunity',
   'list_member',
+  'duplicate_dismissal',
   'list',
   'attribute_value',
   'person',

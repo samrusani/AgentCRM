@@ -459,6 +459,9 @@ function LifecycleScreen({ framing }: { framing: Framing }) {
                 {MAILBOX_DISABLED_REASON}
               </span>
             )}
+            <button type="button" className="btn" onClick={() => navigate('/duplicates')}>
+              Find duplicates
+            </button>
             <button type="button" className="btn" onClick={() => setNewPersonOpen(true)} aria-haspopup="dialog">
               New person
             </button>

@@ -8,6 +8,7 @@ import {
 import { ApiError, api, type NewOpportunityInput, type NewPersonInput } from './client';
 import { useEventConnection } from './events';
 import type {
+  MergeInput,
   AttributeEntityType,
   AutomationFields,
   AutomationInput,
@@ -433,6 +434,32 @@ export function useDeleteAutomation() {
     mutationFn: (id: string) => api.automations.remove(id),
     onSuccess: () => invalidateKeys(queryClient, ['automations']),
     onError: () => invalidateKeys(queryClient, ['automations']),
+  });
+}
+
+export function useDuplicates() {
+  return useQuery({ queryKey: ['duplicates'], queryFn: api.duplicates.list });
+}
+
+export function useDismissDuplicate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (personIds: [string, string]) => api.duplicates.dismiss(personIds),
+    onSuccess: () => invalidateKeys(queryClient, ['duplicates']),
+    // A refused dismiss usually means a person is gone, so the list reloads.
+    onError: () => invalidateKeys(queryClient, ['duplicates']),
+  });
+}
+
+// A merge moves records between people and deletes one, so every view that shows people or their records reloads.
+const MERGE_KEYS = ['duplicates', 'people', 'person', 'organizations', 'organization', 'opportunities', 'opportunity', 'tasks', 'activities', 'lists', 'today', 'search'];
+
+export function useMergePeople() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: MergeInput) => api.duplicates.merge(input),
+    onSuccess: () => invalidateKeys(queryClient, MERGE_KEYS),
+    onError: () => invalidateKeys(queryClient, ['duplicates']),
   });
 }
 

@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { EmptyState } from './components/common';
+import { Duplicates } from './screens/Duplicates';
 import { Pipeline } from './screens/Pipeline';
 import { Leads, Relationships } from './screens/Relationships';
 import { Reports } from './screens/Reports';
@@ -20,6 +21,7 @@ export function App() {
         <Route path="/today" element={<Today />} />
         <Route path="/leads" element={<Leads />} />
         <Route path="/relationships" element={<Relationships />} />
+        <Route path="/duplicates" element={<Duplicates />} />
         <Route path="/pipeline" element={<Pipeline />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/research" element={<Research />} />

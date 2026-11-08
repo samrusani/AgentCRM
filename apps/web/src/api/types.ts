@@ -1055,3 +1055,41 @@ export interface MailSummary {
   // The server may report only a number. It is at least the number of rows in replies.
   repliesNeedingAttention: number;
 }
+
+export type DuplicateReason = 'email' | 'linkedin' | 'x' | 'name_organization';
+
+export interface DuplicateSummary {
+  id: string;
+  name: string;
+  email: string | null;
+  organizationName: string | null;
+  linkedinUrl: string | null;
+  lifecycle: Lifecycle;
+  createdAt: string;
+  version: number;
+  deals: number;
+  tasks: number;
+  activities: number;
+}
+
+export interface DuplicatePair {
+  personIds: [string, string];
+  reason: DuplicateReason;
+  reasonText: string;
+  left: DuplicateSummary;
+  right: DuplicateSummary;
+  fillsIfKeepLeft: number;
+  fillsIfKeepRight: number;
+}
+
+export interface DuplicateScan {
+  pairs: DuplicatePair[];
+  capped: boolean;
+}
+
+export interface MergeInput {
+  survivorId: string;
+  otherId: string;
+  expectedVersion: number;
+  otherExpectedVersion: number;
+}

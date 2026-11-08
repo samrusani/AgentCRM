@@ -58,6 +58,9 @@ import type {
   Person,
   PersonDetail,
   PersonList,
+  DuplicatePair,
+  DuplicateScan,
+  MergeInput,
   AttributeDef,
   Automation,
   AutomationFields,
@@ -1005,6 +1008,18 @@ export const api = {
     update: (id: string, expectedVersion: number, fields: AutomationFields) =>
       request<Automation>('PATCH', `/automations/${encodeURIComponent(id)}`, { body: { expectedVersion, fields } }),
     remove: (id: string) => request<unknown>('DELETE', `/automations/${encodeURIComponent(id)}`),
+  },
+
+  duplicates: {
+    list: async (): Promise<DuplicateScan> => {
+      const raw = await request<Partial<DuplicateScan>>('GET', '/duplicates');
+      return { pairs: toArray<DuplicatePair>(raw.pairs), capped: raw.capped === true };
+    },
+    dismiss: (personIds: [string, string]) => request<unknown>('POST', '/duplicates/dismiss', { body: { personIds } }),
+    merge: (input: MergeInput) =>
+      request<Person>('POST', `/people/${encodeURIComponent(input.survivorId)}/merge`, {
+        body: { otherId: input.otherId, expectedVersion: input.expectedVersion, otherExpectedVersion: input.otherExpectedVersion },
+      }),
   },
 
   lists: {

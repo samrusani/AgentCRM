@@ -1,7 +1,7 @@
 import { firePromotionAutomationsIn } from './automations.js';
 import { emitRecord, type Tx } from './context.js';
 
-export type PromotionReason = 'replied' | 'opportunity';
+export type PromotionReason = 'replied' | 'opportunity' | 'merged';
 
 // Moves a lead to relationship inside the transaction that carries the signal. Only a current lead is touched, so a
 // person who is already a relationship (or was set back to lead by hand and has no new signal) is never changed here.
