@@ -95,7 +95,7 @@ export function resetRecordData(db: Db): void {
 
 // Deletes every row except the migration log. A full wipe, configuration included; the seed does not use it.
 export function resetAllData(db: Db): void {
-  const tables = [...recordTables, 'attribute_def', 'connector', 'stage', 'pipeline', 'workspace'];
+  const tables = [...recordTables, 'automation', 'attribute_def', 'connector', 'stage', 'pipeline', 'workspace'];
   db.transaction(() => {
     // followup_rule.intent_id points at send_intent and send_intent.followup_rule_id points back, so the loop is broken
     // first: clear the intents' references, then the rules go before the intents.

@@ -24,6 +24,7 @@ import {
   taskFields,
   updateEntityIn,
 } from './entities.js';
+import { fireStageAutomationsIn } from './automations.js';
 import { promoteForStageIn, promotePersonIn } from './lifecycle.js';
 import { linkStoredMessagesToPerson } from './mailLinks.js';
 import { entityTypeSchema, idSchema, isoTimestamp } from './schemas.js';
@@ -209,6 +210,7 @@ export function createOpportunity(ctx: ActionContext, input: unknown) {
       .run(tx.newId('evt'), now, id, stageId, now, tx.actor);
     tx.audit('opportunity.create', 'opportunity', id, { name: data.name });
     emitRecord(tx, 'opportunity', id);
+    fireStageAutomationsIn(tx, { id, name: data.name }, stageId!);
     if (data.personId) promoteForStageIn(tx, data.personId, stageId!);
     return requireOpportunity(tx.db, tx.workspaceId, id);
   });
@@ -255,6 +257,7 @@ export function moveOpportunityStage(ctx: ActionContext, id: string, input: unkn
       );
     tx.audit('opportunity.stage', 'opportunity', id, { fromStageId: current.stageId, toStageId: target.id });
     emitRecord(tx, 'opportunity', id);
+    fireStageAutomationsIn(tx, { id, name: current.name }, target.id);
     if (current.personId && target.seq > 1) promotePersonIn(tx, current.personId, 'opportunity');
     return requireOpportunity(tx.db, tx.workspaceId, id);
   });

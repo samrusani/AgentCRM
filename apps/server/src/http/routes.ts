@@ -48,6 +48,9 @@ import {
   liftSuppression,
   listTemplates,
   createAttribute,
+  createAutomation,
+  deleteAutomation,
+  updateAutomation,
   createPipeline,
   deleteAttribute,
   updateAttribute,
@@ -97,6 +100,7 @@ import { getOpportunityDetail, listOpportunities } from '../queries/opportunitie
 import { getOrganizationDetail, listOrganizations } from '../queries/organizations.js';
 import { getPersonDetail, listPeople } from '../queries/people.js';
 import { listAttributeDefs } from '../queries/attributes.js';
+import { listAutomations } from '../queries/automations.js';
 import { listLists } from '../queries/lists.js';
 import { listPipelines } from '../queries/pipelines.js';
 import { readQualificationConfig } from '../qualification/config.js';
@@ -301,6 +305,17 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   app.patch('/api/attributes/:id', async (request) => updateAttribute(context(), idParam(request.params), request.body));
   app.delete('/api/attributes/:id', async (request, reply) => {
     deleteAttribute(context(), idParam(request.params));
+    return reply.status(204).send();
+  });
+
+  app.get('/api/automations', async () => ({ items: listAutomations(db, workspaceId()), nextCursor: null }));
+  app.post('/api/automations', async (request, reply) => {
+    reply.status(201);
+    return createAutomation(context(), request.body);
+  });
+  app.patch('/api/automations/:id', async (request) => updateAutomation(context(), idParam(request.params), request.body));
+  app.delete('/api/automations/:id', async (request, reply) => {
+    deleteAutomation(context(), idParam(request.params));
     return reply.status(204).send();
   });
 

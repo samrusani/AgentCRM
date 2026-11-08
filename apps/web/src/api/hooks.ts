@@ -9,6 +9,8 @@ import { ApiError, api, type NewOpportunityInput, type NewPersonInput } from './
 import { useEventConnection } from './events';
 import type {
   AttributeEntityType,
+  AutomationFields,
+  AutomationInput,
   AttributeKind,
   Lifecycle,
   AcceptEnrichmentInput,
@@ -333,6 +335,38 @@ export function useDeleteAttribute() {
     onSuccess: () => invalidateKeys(queryClient, ATTRIBUTE_KEYS),
     // A refused delete usually means the definition changed underneath, so the list reloads.
     onError: () => invalidateKeys(queryClient, ['attributes']),
+  });
+}
+
+export function useAutomations() {
+  return useQuery({ queryKey: ['automations'], queryFn: api.automations.list });
+}
+
+// A rule's tasks arrive through the usual task refetch on record_updated, so only the list itself reloads here.
+export function useCreateAutomation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AutomationInput) => api.automations.create(input),
+    onSuccess: () => invalidateKeys(queryClient, ['automations']),
+  });
+}
+
+export function useUpdateAutomation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string; expectedVersion: number; fields: AutomationFields }) =>
+      api.automations.update(input.id, input.expectedVersion, input.fields),
+    onSuccess: () => invalidateKeys(queryClient, ['automations']),
+    onError: () => invalidateKeys(queryClient, ['automations']),
+  });
+}
+
+export function useDeleteAutomation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.automations.remove(id),
+    onSuccess: () => invalidateKeys(queryClient, ['automations']),
+    onError: () => invalidateKeys(queryClient, ['automations']),
   });
 }
 

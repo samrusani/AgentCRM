@@ -4,6 +4,7 @@ import { configSchema, currentTemplateDefaults, readSettings } from '../qualific
 import { getPipeline } from '../queries/pipelines.js';
 import { getTemplate, templates } from '../templates.js';
 import { type ActionContext, emitRecord, mutate, parseInput, versionConflict } from './context.js';
+import { disableAutomationsForDeletionIn } from './automations.js';
 import { writeConfigIn } from './qualify.js';
 import { idSchema } from './schemas.js';
 
@@ -96,8 +97,8 @@ export function switchTemplate(ctx: ActionContext, input: unknown) {
       if (newName === undefined) continue;
       const newId = newIdByName.get(newName)!;
       const opportunities = tx.db
-        .prepare('SELECT id FROM opportunity WHERE workspace_id = ? AND pipeline_id = ? AND stage_id = ? ORDER BY id')
-        .all(tx.workspaceId, pipelineId, stage.id) as { id: string }[];
+        .prepare('SELECT id, name FROM opportunity WHERE workspace_id = ? AND pipeline_id = ? AND stage_id = ? ORDER BY id')
+        .all(tx.workspaceId, pipelineId, stage.id) as { id: string; name: string }[];
       for (const opportunity of opportunities) {
         const stamp = tx.now();
         tx.db
@@ -123,6 +124,12 @@ export function switchTemplate(ctx: ActionContext, input: unknown) {
       tx.db.prepare('UPDATE stage_event SET from_stage_id = NULL WHERE from_stage_id = ?').run(stage.id);
       stageEventsDropped += tx.db.prepare('DELETE FROM stage_event WHERE to_stage_id = ?').run(stage.id).changes;
     }
+    // Rules that name an old stage would never match again: switch them off with a note instead of leaving them silent.
+    disableAutomationsForDeletionIn(
+      tx,
+      { stageIds: oldStages.map((stage) => stage.id) },
+      `A stage this rule named was removed when the pipeline "${pipeline.name}" switched to the ${target.name} template.`,
+    );
     for (const stage of oldStages) tx.db.prepare('DELETE FROM stage WHERE id = ?').run(stage.id);
 
     // The pipeline keeps its own name (names are the user's in a multi pipeline workspace; the template's pipeline name

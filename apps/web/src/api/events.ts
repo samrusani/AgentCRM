@@ -43,6 +43,8 @@ const KEYS_BY_EVENT: Record<ServerEventName, string[]> = {
     'lists',
     // Definition changes emit record_updated with entityType attribute_def; Settings lists them and sheets show them.
     'attributes',
+    // Rule changes and deletion-driven disables emit record_updated with entityType automation; Settings lists them.
+    'automations',
     // The Delete action on the Pipeline page reads deal counts per pipeline.
     'stage-counts',
     'tasks',

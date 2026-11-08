@@ -1,3 +1,4 @@
+import { firePromotionAutomationsIn } from './automations.js';
 import { emitRecord, type Tx } from './context.js';
 
 export type PromotionReason = 'replied' | 'opportunity';
@@ -14,6 +15,7 @@ export function promotePersonIn(tx: Tx, personId: string, reason: PromotionReaso
   if (result.changes !== 1) return false;
   tx.audit('person.promote', 'person', personId, { reason });
   emitRecord(tx, 'person', personId);
+  firePromotionAutomationsIn(tx, personId);
   return true;
 }
 

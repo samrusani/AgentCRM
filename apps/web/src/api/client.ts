@@ -58,6 +58,9 @@ import type {
   PersonDetail,
   PersonList,
   AttributeDef,
+  Automation,
+  AutomationFields,
+  AutomationInput,
   AttributeEntityType,
   AttributeKind,
   AttributeReading,
@@ -964,6 +967,14 @@ export const api = {
     update: (id: string, expectedVersion: number, fields: { label?: string; description?: string | null }) =>
       request<AttributeDef>('PATCH', `/attributes/${encodeURIComponent(id)}`, { body: { expectedVersion, fields } }),
     remove: (id: string) => request<unknown>('DELETE', `/attributes/${encodeURIComponent(id)}`),
+  },
+
+  automations: {
+    list: async () => asPage<Automation>(await request<unknown>('GET', '/automations')).items,
+    create: (input: AutomationInput) => request<Automation>('POST', '/automations', { body: input }),
+    update: (id: string, expectedVersion: number, fields: AutomationFields) =>
+      request<Automation>('PATCH', `/automations/${encodeURIComponent(id)}`, { body: { expectedVersion, fields } }),
+    remove: (id: string) => request<unknown>('DELETE', `/automations/${encodeURIComponent(id)}`),
   },
 
   lists: {

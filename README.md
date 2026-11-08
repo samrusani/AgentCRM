@@ -4,7 +4,7 @@
 
 **The CRM that people and AI agents operate together.**
 
-<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-2930-15685b?style=flat" alt="2930 tests">
+<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-3001-15685b?style=flat" alt="3001 tests">
 
 [Quick start](#quick-start) · [What works](#what-works-today) · [Architecture docs](docs/architecture.md)
 
@@ -87,9 +87,11 @@ claude mcp add agentcrm -- npm run --silent mcp --prefix apps/server
 
 Run it from the repository root, or make the `--prefix` path absolute. Keep `--silent`: it stops npm from writing its own output into the stdio channel the MCP protocol uses. Other MCP clients, Codex included, can launch the same command from their config.
 
+The client spawns the MCP server as a child process per session and it dies with that session. Two consequences: a "Transport closed" error means the process ended (for example it was killed, or the machine slept), and the fix is starting a new client session, which spawns a fresh one; and after updating AgentCRM, start a new client session too, so the agent runs the new code rather than a server spawned before the update.
+
 ## What works today
 
-Every row below is backed by tests: 2,930 across the server (1,962), the web app (686), and the browser extension (282). "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
+Every row below is backed by tests: 3,001 across the server (2,015), the web app (704), and the browser extension (282). "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
 
 ### Core CRM
 
@@ -102,6 +104,7 @@ Every row below is backed by tests: 2,930 across the server (1,962), the web app
 | Pipeline: as many pipelines as you need (say a US and a UK investor pipeline), each seeded from a template with its own stages and switchable later without losing its name; opportunities in board and table views with stage history; create deals from the Pipeline header or straight from a person or organization sheet, choosing the pipeline as you go | Working |
 | Approvals: review, approve, reject, audit trail | Working |
 | Birthdays: a birthday on each person, with or without the year, and a Today card for the next seven days | Working |
+| Automations: rules like "when a deal enters Diligence, create a task due in 2 days"; an automation only ever creates a task, never edits records or sends anything, so it cannot loop or surprise | Working |
 | Evidence: field claims with source and verification status | Working, synthetic sources |
 | Templates: startup fundraising, fund LP fundraising, client sales, applied per pipeline with a guided switch that maps stages | Working |
 | Qualification: editable criteria, per criterion verdicts with evidence, fit sort | Working; unknown never counts as a match |

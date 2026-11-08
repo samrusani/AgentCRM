@@ -500,7 +500,7 @@ describe('migration 024', () => {
         lifecycle: db.prepare('SELECT id, lifecycle FROM person ORDER BY id').all(),
       };
 
-      expect(applyMigrations(db)).toEqual(['024_mailbox.sql', '025_attributes.sql', '026_birthday.sql']);
+      expect(applyMigrations(db)).toEqual(['024_mailbox.sql', '025_attributes.sql', '026_birthday.sql', '027_automations.sql']);
 
       expect(db.prepare('SELECT * FROM import_batch').all()).toEqual(before.batch);
       expect(db.prepare('SELECT * FROM import_row').all()).toEqual(before.rows);

@@ -2444,3 +2444,14 @@ fieldset.connector__form > legend {
   flex-wrap: wrap;
   gap: 4px;
 }
+
+/* Settings, automations: rule rows with a plain sentence, a toggle, and quiet actions. Rows reuse the attribute list. */
+.auto-row__sentence {
+  margin: 2px 0 0;
+}
+.auto-row__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}

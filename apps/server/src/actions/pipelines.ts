@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { conflict, validationError } from '../errors.js';
 import { requirePipeline } from '../queries/pipelines.js';
 import { getTemplate, templates } from '../templates.js';
+import { disableAutomationsForDeletionIn } from './automations.js';
 import { type ActionContext, emitRecord, mutate, parseInput, versionConflict } from './context.js';
 import { opportunityFields } from './entities.js';
 import { idSchema } from './schemas.js';
@@ -79,6 +80,7 @@ export function deletePipeline(ctx: ActionContext, rawId: string): void {
       (tx.db.prepare('SELECT COUNT(*) AS n FROM pipeline WHERE workspace_id = ?').get(tx.workspaceId) as { n: number }).n,
     );
     if (pipelineCount <= 1) throw validationError('This is the only pipeline. A workspace keeps at least one.');
+    disableAutomationsForDeletionIn(tx, { pipelineId: id }, `The pipeline "${current.name}" this rule named was deleted.`);
     tx.db.prepare('DELETE FROM stage WHERE pipeline_id = ?').run(id);
     tx.db.prepare('DELETE FROM pipeline WHERE id = ? AND workspace_id = ?').run(id, tx.workspaceId);
     tx.audit('pipeline.delete', 'pipeline', id, { name: current.name, template: current.template });

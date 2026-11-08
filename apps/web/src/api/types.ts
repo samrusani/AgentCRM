@@ -217,6 +217,36 @@ export interface AttributeDef {
   valueCount: number;
 }
 
+export type AutomationTriggerKind = 'stage_entered' | 'person_promoted';
+
+// A rule that creates a task when its trigger fires. The trigger kind never changes after creation.
+export interface Automation {
+  id: string;
+  name: string;
+  triggerKind: AutomationTriggerKind;
+  triggerConfig: { pipelineId?: string; stageId?: string };
+  actionConfig: { taskTitle: string; dueInDays: number };
+  enabled: boolean;
+  // Set when a deleted pipeline or stage switched the rule off.
+  disabledReason: string | null;
+  firedCount: number;
+  version: number;
+}
+
+export interface AutomationInput {
+  name: string;
+  triggerKind: AutomationTriggerKind;
+  triggerConfig: { pipelineId?: string; stageId?: string };
+  actionConfig: { taskTitle: string; dueInDays: number };
+}
+
+export interface AutomationFields {
+  name?: string;
+  triggerConfig?: { pipelineId?: string; stageId?: string };
+  actionConfig?: { taskTitle: string; dueInDays: number };
+  enabled?: boolean;
+}
+
 // One definition with this record's value. Money values carry their currency; other kinds carry null.
 export interface AttributeReading {
   id: string;
