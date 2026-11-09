@@ -67,6 +67,8 @@ Open http://127.0.0.1:5173 in your browser. The API listens on http://127.0.0.1:
 
 Prefer a Mac app over a terminal? `npm install --prefix apps/desktop` once, then `npm run desktop` opens AgentCRM as its own window: the same server running in-process on a port the OS picks, with its database in `~/Library/Application Support/AgentCRM/` (set `AGENTCRM_DB` to use another file, such as this repository's `data/agentcrm.db`, or run `npm run desktop:repo`, which does exactly that). `npm run desktop:pack` builds an unsigned local `AgentCRM.app` for your own machine. A dev stack and the app can run side by side; they only share data if you point them at the same file. If the schema moves under a running window (an update applied new migrations), the app refuses every request with a banner telling you to quit and reopen it, instead of serving stale code against a newer file.
 
+On a Mac you can put the whole stack behind one Desktop icon: run `scripts/install-macos-launcher.sh` once and it builds an `AgentCRM.app` on your Desktop. Double-clicking it starts the dev server when it is not already running (API on 4720, so the browser extension works too) and opens the desktop app on the repository database. The first launch may ask once for access to the folder the repository lives in. Server output goes to `data/logs/dev-server.log`.
+
 `npm run seed` fills the database with clearly synthetic demo data: fictional investors, funds, and companies. All demo names are invented, and any resemblance to a real person or organization is coincidental. Seeding replaces records only: your settings, connectors, and the extension's capture token survive it.
 
 ## Built for agents
