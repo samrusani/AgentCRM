@@ -695,8 +695,8 @@ describe('lookup endpoint', () => {
       status: 'imported',
     });
     expect(events.filter((event) => event.type === 'record_updated' && event.entityType === 'person' && event.entityId === ownerId)).toHaveLength(1);
-    // No capture specific audit event: the only new row is the standard claim.create for the claim write.
-    expect(count('SELECT COUNT(*) AS n FROM audit_event')).toBe(auditsBefore + 1);
+    // The new rows are the standard claim.create for the claim write and one capture.update naming the filled keys.
+    expect(count('SELECT COUNT(*) AS n FROM audit_event')).toBe(auditsBefore + 2);
     expect(count("SELECT COUNT(*) AS n FROM audit_event WHERE action = 'capture.person' AND entity_id = ?", ownerId)).toBe(1);
 
     // Lookup now says exists true for that profile.
@@ -710,7 +710,7 @@ describe('lookup endpoint', () => {
     const repeat = await capture({ source: 'linkedin', url: 'https://www.linkedin.com/in/lookup-mail-other', name: 'Mail Other', email: 'lookup-mail@example.com' });
     stop();
     expect(repeat.status).toBe(200);
-    expect(repeat.body).toEqual({ outcome: 'existing', person: { id: ownerId, name: 'Mail Owner' } });
+    expect(repeat.body).toEqual({ outcome: 'existing', person: { id: ownerId, name: 'Mail Owner' }, added: [] });
     expect(count('SELECT COUNT(*) AS n FROM field_claim')).toBe(claimTotal);
     expect(count('SELECT COUNT(*) AS n FROM audit_event')).toBe(auditTotal);
     expect(repeatEvents).toEqual([]);
@@ -728,7 +728,7 @@ describe('lookup endpoint', () => {
     const other = await capture({ source: 'linkedin', url: 'https://www.linkedin.com/in/ambig-different', name: 'Ambig Different', email: 'ambig@example.com' });
     unsubscribe();
     expect(other.status).toBe(200);
-    expect(other.body).toEqual({ outcome: 'existing', person: { id: ownerId, name: 'Ambig Owner' } });
+    expect(other.body).toEqual({ outcome: 'existing', person: { id: ownerId, name: 'Ambig Owner' }, added: [] });
     expect(count('SELECT COUNT(*) AS n FROM field_claim')).toBe(claimTotal);
     expect(count("SELECT COUNT(*) AS n FROM field_claim WHERE entity_type = 'person' AND entity_id = ?", ownerId)).toBe(personClaims);
     expect(count('SELECT COUNT(*) AS n FROM audit_event')).toBe(auditTotal);
@@ -878,17 +878,21 @@ describe('capture phone (third wave)', () => {
     expect(a.body!.person.id).not.toBe(b.body!.person.id);
   });
 
-  it('KILLS: an existing profile keeps its record: a repeat capture with a phone adds no claim and changes nothing', async () => {
+  it('KILLS: a repeat capture with a phone fills the missing phone claim once and never twice', async () => {
     const first = await capture({ source: 'linkedin', url: 'https://www.linkedin.com/in/phone-repeat', name: 'Phone Repeat' });
     const claimsBefore = count('SELECT COUNT(*) AS n FROM field_claim WHERE entity_id = ?', first.body!.person.id);
     const again = await capture({ source: 'linkedin', url: 'https://www.linkedin.com/in/phone-repeat', name: 'Phone Repeat', phone: '555 010 7777' });
     expect(again.status).toBe(200);
     expect(again.body!.outcome).toBe('existing');
-    expect(count('SELECT COUNT(*) AS n FROM field_claim WHERE entity_id = ?', first.body!.person.id)).toBe(claimsBefore);
-    expect(claimsOf(first.body!.person.id, 'phone')).toEqual([]);
+    expect(again.body!.added).toEqual(['phone']);
+    expect(count('SELECT COUNT(*) AS n FROM field_claim WHERE entity_id = ?', first.body!.person.id)).toBe(claimsBefore + 1);
+    expect(claimsOf(first.body!.person.id, 'phone').map((c) => c.value)).toEqual(['555 010 7777']);
+    const third = await capture({ source: 'linkedin', url: 'https://www.linkedin.com/in/phone-repeat', name: 'Phone Repeat', phone: '555 010 8888' });
+    expect(third.body!.added).toEqual([]);
+    expect(claimsOf(first.body!.person.id, 'phone')).toHaveLength(1);
   });
 
-  it('CONFIRMS: an email read from the contact info overlay is a dedupe key, so a planted overlay email binds the viewed profile url to an unrelated existing person and drops the phone', async () => {
+  it('CONFIRMS: an email read from the contact info overlay is a dedupe key, so a planted overlay email binds the viewed profile url to an unrelated existing person and fills its empty phone claim', async () => {
     const victim = await capture({ source: 'x', url: 'https://x.com/overlay_victim', name: 'Victim Person', email: 'victim.overlay@example.com' });
     expect(claimsOf(victim.body!.person.id, 'linkedinUrl')).toEqual([]);
     const planted = await capture({
@@ -905,7 +909,8 @@ describe('capture phone (third wave)', () => {
     // The viewed profile is now claimed by the victim record, and the lookup for it answers true.
     expect(claimsOf(victim.body!.person.id, 'linkedinUrl').map((c) => c.value)).toEqual(['https://www.linkedin.com/in/overlay-mallory']);
     expect((await lookup({ source: 'linkedin', url: 'https://www.linkedin.com/in/overlay-mallory' })).body).toEqual({ exists: true });
-    expect(claimsOf(victim.body!.person.id, 'phone')).toEqual([]);
+    expect(planted.body!.added).toEqual(['phone', 'profileUrl']);
+    expect(claimsOf(victim.body!.person.id, 'phone').map((c) => c.value)).toEqual(['666 666 6666']);
   });
 
   it('KILLS: lookup stays a boolean for a person with a phone claim, and a lookup body carrying a phone is rejected by the strict schema', async () => {

@@ -182,11 +182,11 @@ describe('capture and lookup match the columns', () => {
   it('matches by column for capture and lookup, and ignores a claim with no column', () => {
     const first = capturePerson(env.ctx, { source: 'linkedin', url: 'https://www.linkedin.com/in/col-dedupe', name: 'Col Dedupe' });
     const again = capturePerson(env.ctx, { source: 'linkedin', url: 'http://linkedin.com/in/col-dedupe/', name: 'Other Name' });
-    expect(again).toEqual({ outcome: 'existing', person: first.person });
+    expect(again).toEqual({ outcome: 'existing', person: first.person, added: [] });
     expect(lookupCapture(env.ctx, { source: 'linkedin', url: 'linkedin.com/in/col-dedupe?x=1' })).toEqual({ exists: true });
     // X handles compare without regard to case.
     const x = capturePerson(env.ctx, { source: 'x', url: 'https://x.com/Col_Dedupe', name: 'Col X Dedupe' });
-    expect(capturePerson(env.ctx, { source: 'x', url: 'https://mobile.twitter.com/COL_DEDUPE', name: 'Anyone' })).toEqual({ outcome: 'existing', person: x.person });
+    expect(capturePerson(env.ctx, { source: 'x', url: 'https://mobile.twitter.com/COL_DEDUPE', name: 'Anyone' })).toEqual({ outcome: 'existing', person: x.person, added: [] });
     expect(lookupCapture(env.ctx, { source: 'x', url: 'https://x.com/col_dedupe' })).toEqual({ exists: true });
 
     // Clearing the column makes the profile unknown again, though the claim is still there.
@@ -206,7 +206,7 @@ describe('capture and lookup match the columns', () => {
     const owner = createPerson(env.ctx, { firstName: 'Mail', lastName: 'Owner', email: 'col-mail@example.com' });
     const before = Number((env.db.prepare('SELECT version FROM person WHERE id = ?').get(owner.id) as { version: number }).version);
     const hit = capturePerson(env.ctx, { source: 'linkedin', url: 'https://www.linkedin.com/in/col-mail', name: 'Mail Owner', email: 'COL-MAIL@example.com' });
-    expect(hit).toEqual({ outcome: 'existing', person: { id: owner.id, name: 'Mail Owner' } });
+    expect(hit).toEqual({ outcome: 'existing', person: { id: owner.id, name: 'Mail Owner' }, added: ['profileUrl'] });
     expect(column(owner.id, 'linkedin_url')).toBe('https://www.linkedin.com/in/col-mail');
     expect(Number((env.db.prepare('SELECT version FROM person WHERE id = ?').get(owner.id) as { version: number }).version)).toBe(before + 1);
     expect(env.db.prepare("SELECT COUNT(*) AS n FROM field_claim WHERE entity_id = ? AND field = 'linkedinUrl'").get(owner.id)).toEqual({ n: 1 });

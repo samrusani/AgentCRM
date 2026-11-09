@@ -34,7 +34,7 @@ export type ExtensionRequest =
   | { kind: 'openOptions' };
 
 export type CaptureResponse =
-  | { ok: true; outcome: 'created' | 'existing'; personName: string }
+  | { ok: true; outcome: 'created' | 'existing'; personName: string; added?: string[] }
   | { ok: false; code: string; message: string };
 
 export type LookupResponse =

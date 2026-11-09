@@ -170,6 +170,8 @@ const captureSchema = z
 export interface CaptureResult {
   outcome: 'created' | 'existing';
   person: { id: string; name: string };
+  // Existing outcome only: the field keys the recapture filled in ([] when nothing was missing).
+  added?: string[];
 }
 
 // The canonical profile URL of the captured profile. It is the value the person's column and claim hold, and
@@ -216,37 +218,97 @@ function findExistingPerson(
   return null;
 }
 
-// An email hit proves the person is the captured profile, so the profile URL is saved as a claim and onto the
-// person's column, and the next lookup and capture match it. A person with any claim for that field already, or a
-// value in the column (even a different URL), is left alone: which profile is right is ambiguous and the record is
-// edited in the app.
-function saveProfileUrl(tx: Tx, personId: string, source: 'linkedin' | 'x', url: string): void {
-  const field = source === 'linkedin' ? 'linkedinUrl' : 'xUrl';
-  const has = tx.db
-    .prepare(
-      `SELECT 1 FROM field_claim WHERE workspace_id = ? AND entity_type = 'person' AND entity_id = ? AND field = ? LIMIT 1`,
-    )
-    .get(tx.workspaceId, personId, field);
-  if (has) return;
-  const column = source === 'linkedin' ? 'linkedin_url' : 'x_url';
-  // The column write is a plain update in this transaction. The claim write below carries the audit row and the
-  // record_updated frame, so the hit stays one audit row and one frame.
-  const saved = tx.db
-    .prepare(`UPDATE person SET ${column} = ?, version = version + 1, updated_at = ? WHERE id = ? AND workspace_id = ? AND ${column} IS NULL`)
-    .run(url, tx.now(), personId, tx.workspaceId);
-  if (saved.changes !== 1) return;
-  createFieldClaimIn(tx, {
-    entityType: 'person',
-    entityId: personId,
-    field,
-    value: url,
-    sourceUrl: url,
-    sourceType: 'extension',
-    observedAt: tx.now(),
-    status: 'imported',
-    extractionMethod: `extension:${source}`,
-  });
-  // createFieldClaimIn writes the claim.create audit row and emits the person's record_updated frame.
+const emptyColumn = (value: string | null | undefined): boolean => value === null || value === undefined || value.trim() === '';
+
+// The fill-in rule for an existing person: a field from the capture is written only when the person has no claim
+// for it AND, for the column backed fields, the column is empty too. Nothing the person already has is changed, and
+// name is never touched. Returns the keys actually written, [] when nothing was missing (and then nothing at all
+// was written). The claim writes carry the claim.create audit rows and the record_updated frame; the column
+// updates share one version bump.
+function fillExisting(
+  tx: Tx,
+  personId: string,
+  source: 'linkedin' | 'x',
+  canonical: string,
+  data: z.output<typeof captureSchema>,
+): string[] {
+  const row = tx.db
+    .prepare('SELECT title, location, email, linkedin_url AS linkedinUrl, x_url AS xUrl FROM person WHERE id = ? AND workspace_id = ?')
+    .get(personId, tx.workspaceId) as { title: string | null; location: string | null; email: string | null; linkedinUrl: string | null; xUrl: string | null };
+  const hasClaim = (field: string): boolean =>
+    tx.db
+      .prepare(`SELECT 1 FROM field_claim WHERE workspace_id = ? AND entity_type = 'person' AND entity_id = ? AND field = ? LIMIT 1`)
+      .get(tx.workspaceId, personId, field) !== undefined;
+
+  let email = data.email;
+  if (email) {
+    const other = tx.db
+      .prepare('SELECT 1 FROM person WHERE workspace_id = ? AND id <> ? AND lower(email) = ? LIMIT 1')
+      .get(tx.workspaceId, personId, email.toLowerCase());
+    if (other) email = undefined;
+  }
+  const urlColumn = source === 'linkedin' ? 'linkedin_url' : 'x_url';
+  const urlField = source === 'linkedin' ? 'linkedinUrl' : 'xUrl';
+
+  // key, claim field, value, column (null for claim only fields), column currently empty
+  const candidates: { key: string; field: string; value: string | undefined; column: string | null; columnEmpty: boolean }[] = [
+    { key: 'title', field: 'title', value: data.headline, column: 'title', columnEmpty: emptyColumn(row.title) },
+    { key: 'location', field: 'location', value: data.location, column: 'location', columnEmpty: emptyColumn(row.location) },
+    { key: 'email', field: 'email', value: email, column: 'email', columnEmpty: emptyColumn(row.email) },
+    { key: 'website', field: 'website', value: data.website, column: null, columnEmpty: true },
+    { key: 'company', field: 'company', value: data.company, column: null, columnEmpty: true },
+    { key: 'phone', field: 'phone', value: data.phone, column: null, columnEmpty: true },
+    {
+      key: 'profileUrl',
+      field: urlField,
+      value: canonical,
+      column: urlColumn,
+      columnEmpty: emptyColumn(source === 'linkedin' ? row.linkedinUrl : row.xUrl),
+    },
+  ];
+  const fills = candidates.filter((c) => c.value && c.columnEmpty && !hasClaim(c.field));
+  if (fills.length === 0) return [];
+
+  const columns = fills.filter((c) => c.column !== null);
+  if (columns.length > 0) {
+    const sets = columns.map((c) => `${c.column} = ?`).join(', ');
+    tx.db
+      .prepare(`UPDATE person SET ${sets}, version = version + 1, updated_at = ? WHERE id = ? AND workspace_id = ?`)
+      .run(...columns.map((c) => c.value as string), tx.now(), personId, tx.workspaceId);
+  } else {
+    tx.db
+      .prepare('UPDATE person SET version = version + 1, updated_at = ? WHERE id = ? AND workspace_id = ?')
+      .run(tx.now(), personId, tx.workspaceId);
+  }
+  const observedAt = tx.now();
+  // Each claim write emits a record_updated frame; the fill is one change to the person, so one frame leaves.
+  let framed = false;
+  const once: Tx = {
+    ...tx,
+    emit: (event) => {
+      if (event.type === 'record_updated') {
+        if (framed) return;
+        framed = true;
+      }
+      tx.emit(event);
+    },
+  };
+  for (const c of fills) {
+    createFieldClaimIn(once, {
+      entityType: 'person',
+      entityId: personId,
+      field: c.field,
+      value: c.value as string,
+      sourceUrl: canonical,
+      sourceType: 'extension',
+      observedAt,
+      status: 'imported',
+      extractionMethod: `extension:${source}`,
+    });
+  }
+  const keys = fills.map((c) => c.key);
+  tx.audit('capture.update', 'person', personId, { fields: keys });
+  return keys;
 }
 
 // One profile from the browser extension. The match runs in the same transaction as the create, so two
@@ -257,8 +319,8 @@ export function capturePerson(ctx: ActionContext, input: unknown): CaptureResult
   return mutate(ctx, (tx): CaptureResult => {
     const existing = findExistingPerson(tx, data.source, canonical, data.email);
     if (existing) {
-      if (existing.via === 'email') saveProfileUrl(tx, existing.id, data.source, canonical);
-      return { outcome: 'existing', person: summarize(tx, existing.id) };
+      const added = fillExisting(tx, existing.id, data.source, canonical, data);
+      return { outcome: 'existing', person: summarize(tx, existing.id), added };
     }
 
     const split = splitName(data.name);

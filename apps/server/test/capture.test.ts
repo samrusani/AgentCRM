@@ -325,13 +325,13 @@ describe('capture a person', () => {
       const { status, body } = await capture({ source: 'linkedin', url: 'https://www.linkedin.com/in/new-id', name: 'Email Owner', email: 'OWNER@Example.COM' });
       unsubscribe();
       expect(status).toBe(200);
-      expect(body).toEqual({ outcome: 'existing', person: { id, name: 'Email Owner' } });
+      expect(body).toEqual({ outcome: 'existing', person: { id, name: 'Email Owner' }, added: ['profileUrl'] });
       // The email hit saves the profile URL claim (the person had no linkedinUrl claim) and nothing else.
       // The claim write carries the standard claim.create audit row; there is no capture specific event.
-      expect(totals()).toEqual({ ...before, claims: before.claims + 1, audits: before.audits + 1 });
+      expect(totals()).toEqual({ ...before, claims: before.claims + 1, audits: before.audits + 2 });
       expect(
-        (env.db.prepare('SELECT action FROM audit_event ORDER BY created_at DESC, rowid DESC LIMIT 1').get() as { action: string }).action,
-      ).toBe('claim.create');
+        env.db.prepare('SELECT action FROM audit_event WHERE entity_id = ? ORDER BY rowid DESC LIMIT 2').all(id).map((r) => (r as { action: string }).action),
+      ).toEqual(['capture.update', 'claim.create']);
       const claim = env.db
         .prepare("SELECT value, source_url, source_type, extraction_method, status FROM field_claim WHERE entity_id = ? AND field = 'linkedinUrl'")
         .all(id);

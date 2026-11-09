@@ -629,6 +629,26 @@ describe('capture panel wiring', () => {
     expect(root.querySelector('dl')).toBeNull();
   });
 
+  it('an existing capture passes the added list through and lists those sent fields', async () => {
+    const h = await boot('linkedin', '/in/jane', INLINE, reply(NOT_IN_CRM, { ...EXISTING, added: ['profileUrl'] }));
+    await h.settle(0);
+    h.button()!.click();
+    await h.settle(0);
+    const root = panelRoots[panelRoots.length - 1]!;
+    expect(root.querySelector('h2')!.textContent).toBe('Already in your CRM');
+    expect(root.querySelector('.hint.added')!.textContent).toBe('Added to the record:');
+    expect(Array.from(root.querySelectorAll('dt')).map((n) => n.textContent)).toEqual(['Profile']);
+  });
+
+  it('an existing capture with added [] shows no list', async () => {
+    const h = await boot('linkedin', '/in/jane', INLINE, reply(NOT_IN_CRM, { ...EXISTING, added: [] }));
+    await h.settle(0);
+    h.button()!.click();
+    await h.settle(0);
+    const root = panelRoots[panelRoots.length - 1]!;
+    expect(root.querySelector('dl')).toBeNull();
+  });
+
   it('a capture reply for a profile the address bar left never opens the panel', async () => {
     let release!: (value: unknown) => void;
     const gate = new Promise((resolve) => (release = resolve));

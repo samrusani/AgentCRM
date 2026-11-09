@@ -64,9 +64,13 @@ export async function sendCapture(
   }
   if (res.status === 200 || res.status === 201) {
     try {
-      const body = (await res.json()) as { outcome?: unknown; person?: { name?: unknown } };
+      const body = (await res.json()) as { outcome?: unknown; person?: { name?: unknown }; added?: unknown };
       const outcome = body.outcome === 'existing' ? 'existing' : 'created';
-      return { ok: true, outcome, personName: typeof body.person?.name === 'string' ? body.person.name : '' };
+      const personName = typeof body.person?.name === 'string' ? body.person.name : '';
+      if (outcome === 'existing' && Array.isArray(body.added)) {
+        return { ok: true, outcome, personName, added: body.added.filter((key): key is string => typeof key === 'string') };
+      }
+      return { ok: true, outcome, personName };
     } catch {
       return { ok: false, code: 'http', message: 'The server sent a reply the extension could not read.' };
     }

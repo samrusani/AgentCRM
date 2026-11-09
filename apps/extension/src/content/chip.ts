@@ -144,13 +144,14 @@ export function startChip(config: ChipConfig): void {
 
   // Opens the panel for the profile the address bar shows now. Only a click or a capture reply the user started
   // gets here, never page load or navigation.
-  const showPanel = (variant: 'created' | 'existing', sent?: CapturePayload) => {
+  const showPanel = (variant: 'created' | 'existing', sent?: CapturePayload, added?: string[]) => {
     const key = currentKey();
     if (key === null) return;
     closePanel();
     const opened = openPanel({
       variant,
       ...(sent ? { sent } : {}),
+      ...(added ? { added } : {}),
       source: config.source,
       profileKey: key,
       currentKey,
@@ -300,7 +301,7 @@ export function startChip(config: ChipConfig): void {
     if (response?.ok) {
       if (response.outcome === 'existing') {
         render('inCrm');
-        showPanel('existing');
+        showPanel('existing', sent, response.added ?? []);
       } else {
         render('added');
         timer = setTimeout(() => render('inCrm'), 2500);

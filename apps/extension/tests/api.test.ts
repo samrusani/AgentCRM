@@ -27,6 +27,8 @@ describe('sendCapture', () => {
     const settings = { baseUrl: 'http://localhost:4720/', token: 'cap_abc' };
     expect(await sendCapture(settings, payload, fetchImpl)).toEqual({ ok: true, outcome: 'created', personName: 'Jane Doe' });
     expect(await sendCapture(settings, payload, fetchImpl)).toEqual({ ok: true, outcome: 'existing', personName: 'Jane Doe' });
+    const filled = vi.fn(async () => new Response(JSON.stringify({ outcome: 'existing', person: { name: 'Jane Doe' }, added: ['title', 7, 'phone'] }), { status: 200 }));
+    expect(await sendCapture(settings, payload, filled as never)).toEqual({ ok: true, outcome: 'existing', personName: 'Jane Doe', added: ['title', 'phone'] });
     const [target, init] = fetchImpl.mock.calls[0]!;
     expect(target).toBe('http://localhost:4720/api/capture');
     expect(init.method).toBe('POST');

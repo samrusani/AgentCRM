@@ -44,6 +44,7 @@ textarea::placeholder { color: var(--ink-muted); }
 .status { flex: 1; min-width: 0; min-height: 18px; margin: 0; }
 .status[data-tone="success"] { color: var(--accent); }
 .status[data-tone="error"] { color: var(--warn-ink); }
+.hint.added { margin: 0 0 8px; }
 .hint { margin: 8px 0 0; color: var(--ink-muted); font-size: 12px; }
 button:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (prefers-color-scheme: dark) {
@@ -63,14 +64,27 @@ const FIELD_LABELS: Partial<Record<keyof CapturePayload, string>> = {
   phone: 'Phone',
 };
 
+// The server's filled-field keys, mapped to the sent payload field that holds the value and the label shown.
+const ADDED_KEYS: Record<string, { field: keyof CapturePayload; label: string }> = {
+  title: { field: 'headline', label: 'Title' },
+  location: { field: 'location', label: 'Location' },
+  email: { field: 'email', label: 'Email' },
+  website: { field: 'website', label: 'Website' },
+  company: { field: 'company', label: 'Company' },
+  phone: { field: 'phone', label: 'Phone' },
+  profileUrl: { field: 'url', label: 'Profile' },
+};
+
 export const OPTIONS_MESSAGE = 'Open the extension options page to finish setup.';
 const NO_ANSWER_MESSAGE = 'No answer from the extension. Reload the page and try again.';
 
 export interface PanelOptions {
-  /** `created` lists the fields the capture sent; `existing` shows no fields. */
+  /** `created` lists the fields the capture sent; `existing` lists only the `added` fields, or none. */
   variant: 'created' | 'existing';
-  /** The payload the capture sent. Used only by the `created` variant. */
+  /** The payload the capture sent. Supplies the values for the field list. */
   sent?: CapturePayload;
+  /** Existing variant only: the field keys the server filled in. Empty or absent shows no list. */
+  added?: string[];
   source: 'linkedin' | 'x';
   /** The identity of the profile the panel was opened for. */
   profileKey: string;
@@ -135,8 +149,8 @@ export function openPanel(options: PanelOptions): PanelHandle {
   head.append(mark, title, closeButton);
   panel.append(head);
 
+  const list = el('dl', 'fields');
   if (options.variant === 'created' && options.sent) {
-    const list = el('dl', 'fields');
     for (const [key, value] of Object.entries(options.sent)) {
       const label = FIELD_LABELS[key as keyof CapturePayload];
       if (label === undefined || typeof value !== 'string' || value === '') continue;
@@ -145,6 +159,21 @@ export function openPanel(options: PanelOptions): PanelHandle {
       list.append(el('dt', undefined, label), detail);
     }
     panel.append(list);
+  } else if (options.variant === 'existing' && options.sent && options.added && options.added.length > 0) {
+    const wanted = new Map<string, string>();
+    for (const key of options.added) {
+      const entry = ADDED_KEYS[key];
+      if (entry) wanted.set(entry.field, entry.label);
+    }
+    // Sent payload order, like the created variant; a key with no sent value is skipped without a blank row.
+    for (const [key, value] of Object.entries(options.sent)) {
+      const label = wanted.get(key);
+      if (label === undefined || typeof value !== 'string' || value === '') continue;
+      const detail = el('dd', undefined, value);
+      detail.title = value;
+      list.append(el('dt', undefined, label), detail);
+    }
+    if (list.childElementCount > 0) panel.append(el('p', 'hint added', 'Added to the record:'), list);
   }
 
   const box = el('textarea');

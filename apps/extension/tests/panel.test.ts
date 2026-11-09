@@ -32,7 +32,7 @@ const sent: CapturePayload = {
   handle: 'jane',
 };
 
-function open(reply: (msg: any) => unknown = () => ({ ok: true, personName: 'Jane Doe' }), variant: 'created' | 'existing' = 'existing') {
+function open(reply: (msg: any) => unknown = () => ({ ok: true, personName: 'Jane Doe' }), variant: 'created' | 'existing' = 'existing', extra: { sent?: CapturePayload; added?: string[] } = {}) {
   const sendMessage = vi.fn(async (msg: any) => reply(msg));
   vi.stubGlobal('chrome', { runtime: { sendMessage, id: 'ext' } });
   const onClose = vi.fn();
@@ -40,6 +40,7 @@ function open(reply: (msg: any) => unknown = () => ({ ok: true, personName: 'Jan
   const handle: PanelHandle = openPanel({
     variant,
     ...(variant === 'created' ? { sent } : {}),
+    ...extra,
     source: 'linkedin',
     profileKey: 'jane',
     currentKey: () => key,
@@ -93,6 +94,44 @@ describe('capture panel', () => {
     expect(p.root.querySelector('textarea')!.placeholder).toBe('Add a note');
     expect(p.root.querySelector('textarea')!.rows).toBe(3);
     expect(p.root.querySelector('.hint')!.textContent).toBe('Notes save to this person in AgentCRM.');
+  });
+
+  it('existing variant with an added list shows exactly those fields under the muted line', () => {
+    const full: CapturePayload = { ...sent, company: 'Acme', website: 'https://acme.example', phone: '555 0100' };
+    const p = open(undefined, 'existing', { sent: full, added: ['location', 'profileUrl', 'phone'] });
+    expect(p.root.querySelector('h2')!.textContent).toBe('Already in your CRM');
+    const line = p.root.querySelector('.hint.added')!;
+    expect(line.textContent).toBe('Added to the record:');
+    expect(Array.from(p.root.querySelectorAll('dt')).map((n) => n.textContent)).toEqual(['Profile', 'Location', 'Phone']);
+    expect(Array.from(p.root.querySelectorAll('dd')).map((n) => n.textContent)).toEqual([
+      'https://www.linkedin.com/in/jane',
+      'Berlin',
+      '555 0100',
+    ]);
+    expect(p.root.textContent).not.toContain('Jane Doe');
+  });
+
+  it('existing variant maps title to the headline', () => {
+    const p = open(undefined, 'existing', { sent, added: ['title'] });
+    expect(Array.from(p.root.querySelectorAll('dt')).map((n) => n.textContent)).toEqual(['Title']);
+    expect(p.root.querySelector('dd')!.textContent).toBe('Founder at Acme');
+  });
+
+  it('existing variant with added [] or no list shows no list and no muted line', () => {
+    const empty = open(undefined, 'existing', { sent, added: [] });
+    expect(empty.root.querySelector('dl')).toBeNull();
+    expect(empty.root.querySelector('.hint.added')).toBeNull();
+    const click = open();
+    expect(click.root.querySelector('dl')).toBeNull();
+    expect(click.root.textContent).not.toContain('Added to the record');
+  });
+
+  it('skips an added key the sent payload does not carry, with no blank row', () => {
+    const p = open(undefined, 'existing', { sent, added: ['website', 'location'] });
+    expect(Array.from(p.root.querySelectorAll('dt')).map((n) => n.textContent)).toEqual(['Location']);
+    const none = open(undefined, 'existing', { sent, added: ['website', 'bogus'] });
+    expect(none.root.querySelector('dl')).toBeNull();
+    expect(none.root.querySelector('.hint.added')).toBeNull();
   });
 
   it('moves focus into the panel on open', () => {
