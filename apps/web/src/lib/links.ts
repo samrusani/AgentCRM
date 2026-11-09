@@ -42,3 +42,19 @@ export function domainHref(value: string | null | undefined): string | null {
   if (host.split('.').every((label) => /^\d+$/.test(label) || /^0x[0-9a-f]+$/i.test(label))) return null;
   return `https://${host}`;
 }
+
+// The label shown for a stored website: host plus path, with the scheme, a leading www., and a trailing slash dropped
+// (https://www.acme.com/team becomes acme.com/team). Falls back to the stored text when it does not parse.
+export function websiteLabel(value: string | null | undefined): string {
+  if (!value) return '';
+  const url = parseProfileUrl(value);
+  if (!url) return value;
+  const host = url.host.replace(/^www\./i, '');
+  const path = url.pathname.replace(/\/+$/, '');
+  return `${host}${path}`;
+}
+
+// The link target for a stored website: the stored URL, or null when it does not parse as an http or https URL.
+export function websiteHref(value: string | null | undefined): string | null {
+  return profileHref(value);
+}

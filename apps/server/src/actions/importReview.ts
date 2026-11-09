@@ -10,6 +10,7 @@ import { createFieldClaimIn, createOrganizationIn, createPersonIn } from './crud
 import { promotePersonIn } from './lifecycle.js';
 import { updateEntityIn } from './entities.js';
 import { requireOrganization } from '../queries/organizations.js';
+import { normalizePhone, normalizeWebsite } from './contactFields.js';
 import { canonicalCompanyLinkedinUrl, canonicalPersonLinkedinUrl } from './profileUrls.js';
 import { type AdvanceResult, finishStep, hashPayload, setCounts, startStep } from './demoResearch.js';
 
@@ -84,6 +85,8 @@ function parseMapped(value: unknown): MappedRow {
     title: parsed.title ?? null,
     location: parsed.location ?? null,
     linkedinUrl: parsed.linkedinUrl ?? null,
+    ...(typeof parsed.phone === 'string' ? { phone: parsed.phone } : {}),
+    ...(typeof parsed.website === 'string' ? { website: parsed.website } : {}),
     tags: Array.isArray(parsed.tags) ? parsed.tags.filter((tag): tag is string => typeof tag === 'string') : [],
     ...(parsed.kind === 'organization' ? { kind: 'organization' as const } : {}),
     ...(parsed.kind === 'organization' ? { orgKind: parsed.orgKind === 'fund' ? ('fund' as const) : ('company' as const) } : {}),
@@ -364,6 +367,9 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
 
       const fallbackFirst = mapped.email ? (mapped.email.split('@')[0] ?? 'Unknown') : 'Unknown';
       const split = mapped.name ? splitName(mapped.name) : { firstName: fallbackFirst.slice(0, 100), lastName: '' };
+      // A phone or website that fails the contact field rules is dropped, never a reason to refuse the row.
+      const phone = mapped.phone ? (normalizePhone(mapped.phone) ?? null) : null;
+      const website = mapped.website ? (normalizeWebsite(mapped.website) ?? null) : null;
       const person = createPersonIn(tx, {
         firstName: split.firstName === '' ? fallbackFirst : split.firstName,
         lastName: split.lastName,
@@ -372,6 +378,8 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
         organizationId,
         location: mapped.location,
         linkedinUrl: canonicalPersonLinkedinUrl(mapped.linkedinUrl),
+        phone,
+        website,
         tags: [...new Set([source.tag, `via-${runId}`, ...(mapped.tags ?? [])])].slice(0, 30),
         nextActionAt: null,
       });
@@ -381,6 +389,8 @@ export function acceptImportBatch(tx: Tx, runId: string, scope: Record<string, u
         ['title', mapped.title],
         ['location', mapped.location],
         ['linkedinUrl', mapped.linkedinUrl],
+        ['phone', phone],
+        ['website', website],
         ['company', mapped.company],
       ];
       for (const [field, value] of claims) {

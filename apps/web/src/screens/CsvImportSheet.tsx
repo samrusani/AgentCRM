@@ -19,6 +19,8 @@ const FIELD_OPTIONS: Array<{ value: CsvMappingTarget; label: string }> = [
   { value: 'title', label: 'Title' },
   { value: 'location', label: 'Location' },
   { value: 'linkedinUrl', label: 'LinkedIn URL' },
+  { value: 'phone', label: 'Phone' },
+  { value: 'website', label: 'Website' },
   { value: 'tags', label: 'Tags' },
 ];
 

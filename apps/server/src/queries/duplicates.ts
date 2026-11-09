@@ -75,6 +75,8 @@ export const fillableColumns = [
   ['location', 'location'],
   ['linkedinUrl', 'linkedin_url'],
   ['xUrl', 'x_url'],
+  ['phone', 'phone'],
+  ['website', 'website'],
   ['birthday', 'birthday'],
   ['nextActionAt', 'next_action_at'],
 ] as const;
@@ -331,6 +333,8 @@ export const organizationFillableColumns = [
   ['domain', 'domain'],
   ['location', 'location'],
   ['linkedinUrl', 'linkedin_url'],
+  ['phone', 'phone'],
+  ['website', 'website'],
 ] as const;
 
 // What the survivor would take from the other organization: its empty built in fields and the attributes it has no value for.

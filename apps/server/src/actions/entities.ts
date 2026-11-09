@@ -13,6 +13,7 @@ import {
   type Tx,
   versionConflict,
 } from './context.js';
+import { phoneField, websiteField } from './contactFields.js';
 import { promoteForStageIn } from './lifecycle.js';
 import { linkStoredMessagesToPerson } from './mailLinks.js';
 import {
@@ -83,6 +84,8 @@ export const personFields = {
   location: optionalText(200),
   linkedinUrl: profileUrlField(canonicalPersonLinkedinUrl, linkedinProfileUrlMessage),
   xUrl: profileUrlField(canonicalXUrl, xProfileUrlMessage),
+  phone: phoneField,
+  website: websiteField,
   lifecycle: z.enum(['lead', 'relationship']),
   tags: tagsSchema,
   birthday: birthdayField,
@@ -95,6 +98,8 @@ export const organizationFields = {
   kind: z.enum(['fund', 'company']),
   location: optionalText(200),
   linkedinUrl: profileUrlField(canonicalCompanyLinkedinUrl, companyLinkedinUrlMessage),
+  phone: phoneField,
+  website: websiteField,
   tags: tagsSchema,
 };
 
@@ -144,6 +149,8 @@ const specs: Record<UpdatableType, EntitySpec> = {
       location: 'location',
       linkedinUrl: 'linkedin_url',
       xUrl: 'x_url',
+      phone: 'phone',
+      website: 'website',
       lifecycle: 'lifecycle',
       tags: 'tags',
       birthday: 'birthday',
@@ -160,7 +167,16 @@ const specs: Record<UpdatableType, EntitySpec> = {
     table: 'organization',
     label: 'Organization',
     fields: organizationFields,
-    columns: { name: 'name', domain: 'domain', kind: 'kind', location: 'location', linkedinUrl: 'linkedin_url', tags: 'tags' },
+    columns: {
+      name: 'name',
+      domain: 'domain',
+      kind: 'kind',
+      location: 'location',
+      linkedinUrl: 'linkedin_url',
+      phone: 'phone',
+      website: 'website',
+      tags: 'tags',
+    },
     jsonFields: ['tags'],
     load: getOrganization,
     checkReferences: (tx, id, patch) => {

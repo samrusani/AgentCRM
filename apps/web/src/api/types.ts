@@ -67,6 +67,8 @@ export interface Person {
   // Canonical profile URLs, null when none is saved.
   linkedinUrl?: string | null;
   xUrl?: string | null;
+  phone?: string | null;
+  website?: string | null;
   tags: string[];
   // YYYY-MM-DD, or MM-DD when the year is unknown. Null when not set.
   birthday?: string | null;
@@ -85,6 +87,8 @@ export interface Organization {
   kind: 'fund' | 'company' | string;
   location: string | null;
   linkedinUrl?: string | null;
+  phone?: string | null;
+  website?: string | null;
   tags: string[];
   createdAt: string;
   updatedAt: string;
@@ -901,6 +905,8 @@ export type CsvField =
   | 'title'
   | 'location'
   | 'linkedinUrl'
+  | 'phone'
+  | 'website'
   | 'tags';
 
 export type CsvMappingTarget = CsvField | 'ignore';

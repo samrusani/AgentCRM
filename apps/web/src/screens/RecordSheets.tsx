@@ -18,6 +18,7 @@ import {
   EvidenceChips,
   DomainLink,
   ProfileLink,
+  WebsiteLink,
 } from '../components/record';
 import { Chip } from '../components/common';
 import { EnrichControl, EnrichmentSuggestions, OrganizationEnrichControl, OrganizationEnrichmentSuggestions } from '../components/enrichment';
@@ -452,6 +453,20 @@ export function PersonSheet({
               <FieldRow label="Location" claims={claimsForField(person.claims, 'location')} openClaim={openClaim} onToggleClaim={toggleClaim}>
                 <EditableValue label="Location" field="location" value={person.location} save={saveField('location')} onReload={() => query.refetch()} />
               </FieldRow>
+              <FieldRow label="Phone" claims={claimsForField(person.claims, 'phone')} openClaim={openClaim} onToggleClaim={toggleClaim}>
+                <EditableValue label="Phone" field="phone" value={person.phone ?? null} limit={40} save={saveField('phone')} onReload={() => query.refetch()} />
+              </FieldRow>
+              <FieldRow label="Website" claims={claimsForField(person.claims, 'website')} openClaim={openClaim} onToggleClaim={toggleClaim}>
+                <EditableValue
+                  label="Website"
+                  field="website"
+                  limit={500}
+                  value={person.website ?? null}
+                  save={saveField('website')}
+                  onReload={() => query.refetch()}
+                  renderValue={(value) => <WebsiteLink value={value} />}
+                />
+              </FieldRow>
               <FieldRow label="LinkedIn" claims={claimsForField(person.claims, 'linkedinUrl')} openClaim={openClaim} onToggleClaim={toggleClaim}>
                 <EditableValue
                   label="LinkedIn"
@@ -539,7 +554,7 @@ export function PersonSheet({
 
           <OtherEvidence
             claims={person.claims}
-            shownFields={['title', 'organizationId', 'email', 'location', 'linkedinUrl', 'xUrl']}
+            shownFields={['title', 'organizationId', 'email', 'location', 'phone', 'website', 'linkedinUrl', 'xUrl']}
             openClaim={openClaim}
             onToggle={toggleClaim}
           />
@@ -648,6 +663,20 @@ export function OrganizationSheet({
               <FieldRow label="Location" claims={claimsForField(organization.claims, 'location')} openClaim={openClaim} onToggleClaim={toggleClaim}>
                 <EditableValue label="Location" field="location" value={organization.location} save={saveField('location')} onReload={() => query.refetch()} />
               </FieldRow>
+              <FieldRow label="Phone" claims={claimsForField(organization.claims, 'phone')} openClaim={openClaim} onToggleClaim={toggleClaim}>
+                <EditableValue label="Phone" field="phone" value={organization.phone ?? null} limit={40} save={saveField('phone')} onReload={() => query.refetch()} />
+              </FieldRow>
+              <FieldRow label="Website" claims={claimsForField(organization.claims, 'website')} openClaim={openClaim} onToggleClaim={toggleClaim}>
+                <EditableValue
+                  label="Website"
+                  field="website"
+                  limit={500}
+                  value={organization.website ?? null}
+                  save={saveField('website')}
+                  onReload={() => query.refetch()}
+                  renderValue={(value) => <WebsiteLink value={value} />}
+                />
+              </FieldRow>
               <FieldRow label="LinkedIn" claims={claimsForField(organization.claims, 'linkedinUrl')} openClaim={openClaim} onToggleClaim={toggleClaim}>
                 <EditableValue
                   label="LinkedIn"
@@ -683,7 +712,7 @@ export function OrganizationSheet({
 
           <OtherEvidence
             claims={organization.claims}
-            shownFields={['domain', 'location', 'linkedinUrl']}
+            shownFields={['domain', 'location', 'phone', 'website', 'linkedinUrl']}
             openClaim={openClaim}
             onToggle={toggleClaim}
           />

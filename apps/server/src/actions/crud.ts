@@ -40,6 +40,8 @@ const createPersonSchema = z
     location: personFields.location.optional().default(null),
     linkedinUrl: personFields.linkedinUrl.optional().default(null),
     xUrl: personFields.xUrl.optional().default(null),
+    phone: personFields.phone.optional().default(null),
+    website: personFields.website.optional().default(null),
     lifecycle: personFields.lifecycle.optional().default('lead'),
     tags: personFields.tags.optional().default([]),
     nextActionAt: personFields.nextActionAt.optional().default(null),
@@ -52,7 +54,9 @@ export function createPerson(ctx: ActionContext, input: unknown) {
 }
 
 // Internal callers pass profile URLs already canonicalized (see profileUrls.ts) and may leave them out.
-type PersonInput = Omit<z.output<typeof createPersonSchema>, 'linkedinUrl' | 'xUrl' | 'lifecycle'> & {
+type PersonInput = Omit<z.output<typeof createPersonSchema>, 'linkedinUrl' | 'xUrl' | 'lifecycle' | 'phone' | 'website'> & {
+  phone?: string | null;
+  website?: string | null;
   linkedinUrl?: string | null;
   xUrl?: string | null;
   lifecycle?: 'lead' | 'relationship';
@@ -65,8 +69,8 @@ export function createPersonIn(tx: Tx, data: PersonInput) {
   const now = tx.now();
   tx.db
     .prepare(
-      `INSERT INTO person (id, created_at, workspace_id, version, first_name, last_name, email, title, organization_id, location, linkedin_url, x_url, lifecycle, tags, next_action_at, updated_at)
-       VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO person (id, created_at, workspace_id, version, first_name, last_name, email, title, organization_id, location, linkedin_url, x_url, phone, website, lifecycle, tags, next_action_at, updated_at)
+       VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -80,6 +84,8 @@ export function createPersonIn(tx: Tx, data: PersonInput) {
       data.location,
       data.linkedinUrl ?? null,
       data.xUrl ?? null,
+      data.phone ?? null,
+      data.website ?? null,
       data.lifecycle ?? 'lead',
       JSON.stringify(data.tags),
       data.nextActionAt,
@@ -104,6 +110,8 @@ const createOrganizationSchema = z
     kind: organizationFields.kind.default('company'),
     location: organizationFields.location.optional().default(null),
     linkedinUrl: organizationFields.linkedinUrl.optional().default(null),
+    phone: organizationFields.phone.optional().default(null),
+    website: organizationFields.website.optional().default(null),
     tags: organizationFields.tags.optional().default([]),
   })
   .strict();
@@ -113,7 +121,11 @@ export function createOrganization(ctx: ActionContext, input: unknown) {
   return mutate(ctx, (tx) => createOrganizationIn(tx, data));
 }
 
-type OrganizationInput = Omit<z.output<typeof createOrganizationSchema>, 'linkedinUrl'> & { linkedinUrl?: string | null };
+type OrganizationInput = Omit<z.output<typeof createOrganizationSchema>, 'linkedinUrl' | 'phone' | 'website'> & {
+  linkedinUrl?: string | null;
+  phone?: string | null;
+  website?: string | null;
+};
 
 export function createOrganizationIn(tx: Tx, data: OrganizationInput) {
   if (data.domain) assertDomainAvailable(tx, data.domain);
@@ -121,10 +133,23 @@ export function createOrganizationIn(tx: Tx, data: OrganizationInput) {
   const now = tx.now();
   tx.db
     .prepare(
-      `INSERT INTO organization (id, created_at, workspace_id, version, name, domain, kind, location, linkedin_url, tags, updated_at)
-       VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO organization (id, created_at, workspace_id, version, name, domain, kind, location, linkedin_url, phone, website, tags, updated_at)
+       VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(id, now, tx.workspaceId, data.name, data.domain, data.kind, data.location, data.linkedinUrl ?? null, JSON.stringify(data.tags), now);
+    .run(
+      id,
+      now,
+      tx.workspaceId,
+      data.name,
+      data.domain,
+      data.kind,
+      data.location,
+      data.linkedinUrl ?? null,
+      data.phone ?? null,
+      data.website ?? null,
+      JSON.stringify(data.tags),
+      now,
+    );
   tx.audit('organization.create', 'organization', id, { name: data.name });
   emitRecord(tx, 'organization', id);
   return requireOrganization(tx.db, tx.workspaceId, id);

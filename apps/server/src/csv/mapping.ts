@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { fieldAliases, mapItem, type MappedRow } from '../actions/apifyMapping.js';
+import { clean, fieldAliases, mapItem, type MappedRow } from '../actions/apifyMapping.js';
 import { validationError } from '../errors.js';
 import { parseCsv, type CsvDelimiter } from './parse.js';
 
@@ -13,6 +13,8 @@ export const csvFields = [
   'title',
   'location',
   'linkedinUrl',
+  'phone',
+  'website',
   'tags',
   'ignore',
 ] as const;
@@ -38,7 +40,9 @@ const headerHints: Record<HintedField, Set<string>> = {
   name: normalizedSet(fieldAliases.name, ['contactName', 'person', 'contact']),
   email: normalizedSet(fieldAliases.email, ['mail', 'workEmail', 'businessEmail', 'primaryEmail']),
   company: normalizedSet(fieldAliases.company, ['employer', 'firm', 'fund', 'account']),
-  domain: normalizedSet(fieldAliases.domain, fieldAliases.website, ['web', 'site']),
+  domain: normalizedSet(fieldAliases.domain, ['companyWebsite', 'company_website', 'url', 'web', 'site']),
+  phone: normalizedSet(['phone', 'phoneNumber', 'telephone', 'tel', 'mobile', 'mobilePhone', 'cell', 'cellPhone', 'workPhone']),
+  website: normalizedSet(['website', 'websiteUrl', 'personalWebsite', 'homepage', 'webAddress']),
   title: normalizedSet(fieldAliases.title, ['role', 'jobRole', 'jobPosition']),
   location: normalizedSet(fieldAliases.location, fieldAliases.city, fieldAliases.country, ['region', 'state', 'address']),
   linkedinUrl: normalizedSet(fieldAliases.linkedinUrl, ['linkedinProfile', 'linkedinProfileUrl']),
@@ -46,7 +50,7 @@ const headerHints: Record<HintedField, Set<string>> = {
 };
 
 type HintedField = Exclude<CsvField, 'ignore'>;
-const matchOrder: readonly HintedField[] = ['linkedinUrl', 'firstName', 'lastName', 'name', 'email', 'tags', 'title', 'company', 'location', 'domain'];
+const matchOrder: readonly HintedField[] = ['linkedinUrl', 'firstName', 'lastName', 'name', 'email', 'tags', 'title', 'company', 'location', 'phone', 'website', 'domain'];
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -129,13 +133,21 @@ export function mapCsvRow(row: Record<string, string>, mapping: CsvMapping): Map
       tags.push(...splitTags(value));
     } else if (field === 'location') {
       if (!locations.includes(value)) locations.push(value);
+    } else if (field === 'website') {
+      // The person's own site, under a key mapItem never reads: a personal website must not become the
+      // organization's domain, which drives org creation and dedupe. Only a Company Website header maps to domain.
+      if (item.personWebsite === undefined) item.personWebsite = value;
     } else if (item[field] === undefined) {
       item[field] = value;
     }
   }
   if (locations.length > 0) item.location = locations.join(', ');
   const mapped = mapItem(item);
-  return { ...mapped, tags: [...new Set(tags)].slice(0, maxTagsPerRow) };
+  // The person's own phone and website. They ride the staged row only when the file has them; the accept step
+  // validates them and drops a value that does not pass.
+  const phone = typeof item.phone === 'string' ? clean(item.phone, 40) : null;
+  const website = typeof item.personWebsite === 'string' ? clean(item.personWebsite, 500) : null;
+  return { ...mapped, ...(phone ? { phone } : {}), ...(website ? { website } : {}), tags: [...new Set(tags)].slice(0, maxTagsPerRow) };
 }
 
 export const sampleSize = 5;

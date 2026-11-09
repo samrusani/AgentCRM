@@ -3,12 +3,7 @@ import { createOpportunity } from '../src/actions/index.js';
 import { searchAll, searchScan } from '../src/queries/search.js';
 import { createTestEnvironment, type TestEnvironment } from './helpers.js';
 
-// Adversarial probes for the FTS5 search index. Scratch review file, not part of the suite's contract.
-import { appendFileSync } from 'node:fs';
-const LOG = '/private/tmp/claude-501/-Users-samirusani--claude-spares-spare-an9u1g/615a107a-e8d3-42e7-bad1-c269ef3acf1a/scratchpad/probe.log';
-function log(...args: unknown[]) {
-  appendFileSync(LOG, args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') + '\n');
-}
+// Adversarial probes for the FTS5 search index, kept as regressions.
 let env: TestEnvironment;
 beforeAll(() => {
   env = createTestEnvironment();
@@ -102,8 +97,6 @@ describe('probe: odd unicode and control characters, old scan vs index', () => {
       const scan = attempt(() => searchScan(env.db, env.workspaceId, trimmed, 50));
       if (indexed !== scan) misses.push(`${JSON.stringify(q)} [${Array.from(q).map((c) => c.codePointAt(0)!.toString(16)).join(' ')}]\n   idx=${indexed.slice(0, 120)}\n  scan=${scan.slice(0, 120)}`);
     }
-    log('compared', compared, 'differences', misses.length);
-    log(misses.slice(0, 40).join('\n'));
     // KILLS the two defect classes the review found: NUL bytes used to make the index path throw (they now match
     // nothing on their own rule, compared separately below), and the phrase is now built from the JS lowered query, so
     // the folds the tokenizer misses (Cherokee and friends) no longer lose rows. A NUL query is the one case whose
@@ -181,7 +174,6 @@ describe('KILLS: NUL byte in the query', () => {
     await app.ready();
     try {
       const r = await app.inject({ method: 'GET', url: '/api/search?q=abc%00def', headers: { host: '127.0.0.1:4720' } });
-      log('NUL over HTTP ->', r.statusCode, r.body.slice(0, 200));
       const ok = await app.inject({ method: 'GET', url: '/api/search?q=abcdef', headers: { host: '127.0.0.1:4720' } });
       expect(ok.statusCode).toBe(200);
       expect(r.statusCode).toBe(200);
@@ -199,7 +191,6 @@ describe('trigger drift', () => {
   it('INSERT OR REPLACE on person leaves a stale entry (delete trigger does not fire without recursive_triggers)', () => {
     const id = rawPerson('Replace', 'Original', 'replace@r.example');
     env.db.prepare("INSERT OR REPLACE INTO person (id, created_at, workspace_id, first_name, last_name, email, updated_at) VALUES (?,?,?,?,?,?,?)").run(id, '2026-01-01', env.workspaceId, 'Replace', 'Updated', 'replace2@r.example', '2026-01-01');
-    log('stray person_search rows after INSERT OR REPLACE:', stray('person_search', 'person'), 'recursive_triggers=', env.db.pragma('recursive_triggers', { simple: true }));
     // Not used by app code (grep): reported as latent only.
     expect(count('person_search')).toBeGreaterThanOrEqual(count('person'));
     const hit = searchAll(env.db, env.workspaceId, 'original', 8).people.map((p) => p.id);
@@ -211,7 +202,6 @@ describe('trigger drift', () => {
     const before = (env.db.prepare('SELECT rowid FROM person WHERE id = ?').get(id) as { rowid: number }).rowid;
     env.db.prepare('UPDATE person SET rowid = ? WHERE id = ?').run(before + 100000, id);
     const direct = env.db.prepare('SELECT COUNT(*) AS n FROM person_search WHERE entity_id = ?').get(id) as { n: number };
-    log('UPDATE rowid: entries for id =', direct.n, 'stray =', stray('person_search', 'person'));
     // Search still finds it through entity_id, so results survive; only alignment is off.
     expect(searchAll(env.db, env.workspaceId, 'rowid mover', 8).people.map((p) => p.id)).toContain(id);
   });
@@ -226,7 +216,6 @@ describe('trigger drift', () => {
     const before = rowids();
     env.db.exec('VACUUM');
     const after = rowids();
-    log('rowids before VACUUM', before, 'after', after, 'stray after', stray('person_search', 'person'));
     expect(after).toEqual(before); // KILLS if rowids are stable under VACUUM
   });
 
@@ -270,7 +259,6 @@ describe('perf: many rows matching', () => {
         const t = performance.now();
         fn();
         const ms = performance.now() - t;
-        log(label, ms.toFixed(1), 'ms');
         return ms;
       };
       for (const q of ['matchall', 'matchall.example', 'com', 'first1', 'zzzzqq']) {
@@ -298,7 +286,6 @@ describe('very long queries', () => {
       const t1 = performance.now();
       const scan = attempt(() => searchScan(e.db, e.workspaceId, q, 8));
       const t2 = performance.now();
-      log(`long ${n}: indexed ${(t1 - t0).toFixed(1)}ms scan ${(t2 - t1).toFixed(1)}ms same=${indexed === scan}`, indexed.slice(0, 80), '|', scan.slice(0, 80));
       expect(indexed).toBe(scan);
       expect(t1 - t0).toBeLessThan(50); // before the cap, 15,000 chars ran for seconds and blocked the process
     } finally {
@@ -337,7 +324,6 @@ describe('long pasted prose against a normal corpus', () => {
         const idx = attempt(() => searchAll(e.db, e.workspaceId, q, 8));
         const t1 = performance.now();
         const sc = attempt(() => searchScan(e.db, e.workspaceId, q.trim(), 8));
-        log(`${label}: indexed ${(t1 - t0).toFixed(0)}ms scan ${(performance.now() - t1).toFixed(0)}ms same=${idx === sc}`);
       }
     } finally {
       e.cleanup();

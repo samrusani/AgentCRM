@@ -5,6 +5,7 @@ import { AppError, validationError } from '../errors.js';
 import { readSettings } from '../qualification/config.js';
 import { splitName } from './apifyMapping.js';
 import { type ActionContext, emitRecord, mutate, parseInput, type Tx } from './context.js';
+import { normalizePhone, normalizeWebsite, phoneMessage } from './contactFields.js';
 import { createActivityIn, createFieldClaimIn, createPersonIn } from './crud.js';
 import {
   canonicalPersonLinkedinUrl,
@@ -157,11 +158,19 @@ const captureSchema = z
     location: scrubbedText(optionalText(200)),
     handle: scrubbedText(optionalText(30)),
     bio: z.preprocess(scrubbed(true), optionalText(2000)),
-    website: scrubbedText(optionalText(500)),
+    website: scrubbedText(
+      optionalText(500).transform((value) => {
+        if (value === undefined) return undefined;
+        // A scraped value that is not a usable URL is dropped, never a reason to fail the whole capture:
+        // the capture degrades, the way the extension itself drops a scraped non-email before sending.
+        const website = normalizeWebsite(value);
+        return website === undefined || website === null ? undefined : website;
+      }),
+    ),
     email: scrubbedText(optionalEmail),
     phone: scrubbedText(
-      optionalText(40).refine((value) => value === undefined || /\d/.test(value), {
-        message: 'A phone needs at least one digit.',
+      optionalText(40).refine((value) => value === undefined || normalizePhone(value) !== undefined, {
+        message: phoneMessage.replace(/\.$/, ''),
       }),
     ),
   })
@@ -233,8 +242,8 @@ function fillExisting(
   data: z.output<typeof captureSchema>,
 ): string[] {
   const row = tx.db
-    .prepare('SELECT title, location, email, linkedin_url AS linkedinUrl, x_url AS xUrl FROM person WHERE id = ? AND workspace_id = ?')
-    .get(personId, tx.workspaceId) as { title: string | null; location: string | null; email: string | null; linkedinUrl: string | null; xUrl: string | null };
+    .prepare('SELECT title, location, email, phone, website, linkedin_url AS linkedinUrl, x_url AS xUrl FROM person WHERE id = ? AND workspace_id = ?')
+    .get(personId, tx.workspaceId) as { title: string | null; location: string | null; email: string | null; phone: string | null; website: string | null; linkedinUrl: string | null; xUrl: string | null };
   const hasClaim = (field: string): boolean =>
     tx.db
       .prepare(`SELECT 1 FROM field_claim WHERE workspace_id = ? AND entity_type = 'person' AND entity_id = ? AND field = ? LIMIT 1`)
@@ -255,9 +264,9 @@ function fillExisting(
     { key: 'title', field: 'title', value: data.headline, column: 'title', columnEmpty: emptyColumn(row.title) },
     { key: 'location', field: 'location', value: data.location, column: 'location', columnEmpty: emptyColumn(row.location) },
     { key: 'email', field: 'email', value: email, column: 'email', columnEmpty: emptyColumn(row.email) },
-    { key: 'website', field: 'website', value: data.website, column: null, columnEmpty: true },
+    { key: 'website', field: 'website', value: data.website, column: 'website', columnEmpty: emptyColumn(row.website) },
     { key: 'company', field: 'company', value: data.company, column: null, columnEmpty: true },
-    { key: 'phone', field: 'phone', value: data.phone, column: null, columnEmpty: true },
+    { key: 'phone', field: 'phone', value: data.phone, column: 'phone', columnEmpty: emptyColumn(row.phone) },
     {
       key: 'profileUrl',
       field: urlField,
@@ -331,6 +340,8 @@ export function capturePerson(ctx: ActionContext, input: unknown): CaptureResult
       title: data.headline ?? null,
       organizationId: null,
       location: data.location ?? null,
+      phone: data.phone ?? null,
+      website: data.website ?? null,
       ...(data.source === 'linkedin' ? { linkedinUrl: canonical } : { xUrl: canonical }),
       tags: ['captured', data.source],
       nextActionAt: null,

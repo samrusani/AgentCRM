@@ -96,7 +96,7 @@ describe('seeds', () => {
       }
       db.prepare('INSERT INTO workspace (id, created_at, name, template) VALUES (?, ?, ?, ?)').run('wsp_1', '2026-01-01', 'One', 't');
       db.prepare('INSERT INTO workspace (id, created_at, name, template) VALUES (?, ?, ?, ?)').run('wsp_2', '2026-01-01', 'Two', 't');
-      expect(applyMigrations(db)).toEqual(['025_attributes.sql', '026_birthday.sql', '027_automations.sql', '028_sequences.sql', '029_saved_views.sql', '030_transcript.sql', '031_duplicates.sql', '032_organization_duplicates.sql', '033_meetings.sql', '034_search_widening.sql', '035_backblaze.sql']);
+      expect(applyMigrations(db)).toEqual(['025_attributes.sql', '026_birthday.sql', '027_automations.sql', '028_sequences.sql', '029_saved_views.sql', '030_transcript.sql', '031_duplicates.sql', '032_organization_duplicates.sql', '033_meetings.sql', '034_search_widening.sql', '035_backblaze.sql', '036_contact_fields.sql']);
       const rows = db.prepare('SELECT workspace_id, entity_type, key, kind, seq, id FROM attribute_def ORDER BY workspace_id, seq').all() as {
         workspace_id: string; entity_type: string; key: string; kind: string; seq: number; id: string;
       }[];

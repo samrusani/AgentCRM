@@ -75,7 +75,7 @@ describe('migration 023', () => {
       db.prepare('INSERT INTO workspace (id, created_at, name, template) VALUES (?, ?, ?, ?)').run('wsp_1', '2026-01-01', 'One', 't');
       db.prepare('INSERT INTO person (id, created_at, workspace_id, first_name, last_name, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run('per_1', '2026-01-01', 'wsp_1', 'Ada', 'Lovelace', '2026-01-01');
 
-      expect(applyMigrations(db)).toEqual(['023_lists.sql', '024_mailbox.sql', '025_attributes.sql', '026_birthday.sql', '027_automations.sql', '028_sequences.sql', '029_saved_views.sql', '030_transcript.sql', '031_duplicates.sql', '032_organization_duplicates.sql', '033_meetings.sql', '034_search_widening.sql', '035_backblaze.sql']);
+      expect(applyMigrations(db)).toEqual(['023_lists.sql', '024_mailbox.sql', '025_attributes.sql', '026_birthday.sql', '027_automations.sql', '028_sequences.sql', '029_saved_views.sql', '030_transcript.sql', '031_duplicates.sql', '032_organization_duplicates.sql', '033_meetings.sql', '034_search_widening.sql', '035_backblaze.sql', '036_contact_fields.sql']);
       db.prepare('INSERT INTO list (id, created_at, workspace_id, name, updated_at) VALUES (?, ?, ?, ?, ?)').run('lst_1', '2026-01-02', 'wsp_1', 'UK Angels', '2026-01-02');
       expect(db.prepare('SELECT version FROM list').get()).toEqual({ version: 1 });
       db.prepare('INSERT INTO list_member (list_id, person_id, created_at) VALUES (?, ?, ?)').run('lst_1', 'per_1', '2026-01-02');

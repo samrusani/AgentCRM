@@ -1,4 +1,4 @@
-import { domainHref, profileHref, profilePath } from '../../src/lib/links';
+import { domainHref, profileHref, profilePath, websiteHref, websiteLabel } from '../../src/lib/links';
 
 describe('profilePath', () => {
   it('shortens a LinkedIn person URL to the path form', () => {
@@ -62,5 +62,22 @@ describe('domainHref', () => {
     expect(domainHref('127.1')).toBeNull();
     expect(domainHref(null)).toBeNull();
     expect(domainHref('')).toBeNull();
+  });
+});
+
+describe('websiteLabel and websiteHref', () => {
+  it('drops the scheme, a leading www., and a trailing slash', () => {
+    expect(websiteLabel('https://www.acme.com/team')).toBe('acme.com/team');
+    expect(websiteLabel('http://acme.com/')).toBe('acme.com');
+    expect(websiteLabel('https://acme.com/team/?x=1#top')).toBe('acme.com/team');
+    expect(websiteLabel('acme.com')).toBe('acme.com');
+  });
+
+  it('links the stored URL and gives no link for a value that is not http or https', () => {
+    expect(websiteHref('https://www.acme.com/team')).toBe('https://www.acme.com/team');
+    expect(websiteHref('ftp://acme.com')).toBeNull();
+    expect(websiteHref('not a website')).toBeNull();
+    expect(websiteLabel('not a website')).toBe('not a website');
+    expect(websiteLabel(null)).toBe('');
   });
 });

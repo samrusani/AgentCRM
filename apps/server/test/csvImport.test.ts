@@ -61,7 +61,8 @@ describe('csv preview', () => {
     expect(response.body.delimiter).toBe(',');
     expect(response.body.rowCount).toBe(4);
     expect(response.body.headers).toEqual(['First Name', 'Last Name', 'Work Email', 'Company', 'Website', 'Job Title', 'City', 'Country', 'Tags', 'Notes']);
-    expect(response.body.suggestedMapping).toEqual(leadsMapping);
+    // A Website header suggests the person's website field now; the staged row still derives the organization domain from it.
+    expect(response.body.suggestedMapping).toEqual({ ...leadsMapping, Website: 'website' });
     expect(response.body.sample).toHaveLength(4);
     expect(response.body.sample[0]['Work Email']).toBe('Ada.Quill@northwind.example.com');
     expect(count('SELECT COUNT(*) AS n FROM import_batch')).toBe(before);
@@ -161,7 +162,7 @@ describe('csv staging', () => {
     expect(unknownColumn.status).toBe(400);
     expect(unknownColumn.body.error.message).toBe('mapping: column "Missing" is not in the file.');
 
-    const unknownField = await post('/api/imports/csv', { fileName: 'leads.csv', content: leadsCsv, mapping: { 'Work Email': 'phone' } });
+    const unknownField = await post('/api/imports/csv', { fileName: 'leads.csv', content: leadsCsv, mapping: { 'Work Email': 'fax' } });
     expect(unknownField.status).toBe(400);
 
     const missing = await post('/api/imports/csv', { fileName: 'leads.csv', content: leadsCsv });

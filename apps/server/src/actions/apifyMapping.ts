@@ -8,6 +8,9 @@ export interface MappedRow {
   title: string | null;
   location: string | null;
   linkedinUrl: string | null;
+  // Only CSV rows carry these two (the person's own phone and website). Older staged rows leave them out.
+  phone?: string | null;
+  website?: string | null;
   // Only CSV rows carry tags. Apify items never do.
   tags?: string[];
   // Set to 'organization' on lead capture rows that name an organization. Person rows leave it out.

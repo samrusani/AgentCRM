@@ -798,8 +798,8 @@ describe('9 migration 035', () => {
     try {
       db.exec('CREATE TABLE migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
       const files = readdirSync(migrationsDirectory).filter((name) => name.endsWith('.sql')).sort();
-      expect(files.at(-1)).toBe('035_backblaze.sql');
-      for (const file of files.slice(0, -1)) {
+      expect(files.at(-2)).toBe('035_backblaze.sql');
+      for (const file of files.slice(0, -2)) {
         db.exec(readFileSync(path.join(migrationsDirectory, file), 'utf8'));
         db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, ?)').run(file, '2026-01-01T00:00:00.000Z');
       }
@@ -811,7 +811,7 @@ describe('9 migration 035', () => {
           .run(`con_${index}`, `2026-01-0${(index % 9) + 1}T00:00:00.000Z`, 'wsp_1', kind, `{"i":${index}}`, `secret-${index}`, index % 2 ? 'error' : 'connected', '2026-02-01T00:00:00.000Z'),
       );
       const before = db.prepare('SELECT * FROM connector ORDER BY id').all();
-      expect(applyMigrations(db)).toEqual(['035_backblaze.sql']);
+      expect(applyMigrations(db)).toEqual(['035_backblaze.sql', '036_contact_fields.sql']);
       expect(db.prepare('SELECT * FROM connector ORDER BY id').all()).toEqual(before);
       expect((db.pragma('index_info(idx_connector_workspace)') as { name: string }[]).map((c) => c.name)).toEqual(['workspace_id', 'kind']);
       expect(db.pragma('foreign_key_check')).toEqual([]);

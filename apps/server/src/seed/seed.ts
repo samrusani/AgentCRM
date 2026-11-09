@@ -102,6 +102,9 @@ export function seedDatabase(db: Db, options: SeedOptions = {}) {
       domain,
       kind: seed.kind,
       location: seed.location,
+      // Fictional contact fields for a few organizations, so the sheets and the table show them.
+      ...(index % 2 === 0 ? { website: `https://www.${domain}` } : {}),
+      ...(index % 3 === 0 ? { phone: `+1 555 01${String(index).padStart(2, '0')} 0100` } : {}),
       tags: seed.kind === 'fund' ? ['investor'] : ['company'],
     });
     return { ...record, seed, domain };
@@ -127,6 +130,8 @@ export function seedDatabase(db: Db, options: SeedOptions = {}) {
       title: org ? pick(org.kind === 'fund' ? fundTitles : companyTitles) : 'Independent angel',
       organizationId: org ? org.id : null,
       location: org ? org.location : pick(['Remote', 'Austin', 'Dublin']),
+      ...(index % 4 === 0 ? { phone: `+1 555 02${String(index).padStart(2, '0')} 0199` } : {}),
+      ...(index % 6 === 0 ? { website: `https://${slugify(firstName)}${slugify(lastName)}.example.com` } : {}),
       tags,
       nextActionAt: index % 5 === 0 ? new Date(base.getTime() + (index % 9) * dayMilliseconds + 9 * 3_600_000).toISOString() : null,
     });

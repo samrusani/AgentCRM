@@ -18,7 +18,7 @@ import { createdButNotAdded, ListMenu, useCreateOnce } from '../components/lists
 import { FitCell } from '../components/qualification';
 import { VirtualTable, type Column } from '../components/VirtualTable';
 import { describeDue, humanize, personName } from '../lib/format';
-import { profileHref, profilePath } from '../lib/links';
+import { profileHref, profilePath, websiteHref, websiteLabel } from '../lib/links';
 import { addedBeforeFailure, addedMessage, removedMessage, withNextStep } from '../lib/lists';
 import { useUI } from '../lib/ui';
 import { CsvImportSheet } from './CsvImportSheet';
@@ -754,11 +754,30 @@ function OrganizationsTable({
           const label = profilePath(row.linkedinUrl);
           if (!label) return <span className="cell-text" />;
           return href ? (
-            <a className="link cell-text" href={href} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+            <a className="link cell-text" href={href} title={row.linkedinUrl ?? undefined} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
               {label}
             </a>
           ) : (
-            <span className="cell-text">{label}</span>
+            <span className="cell-text" title={row.linkedinUrl ?? undefined}>{label}</span>
+          );
+        },
+      },
+      {
+        key: 'website',
+        header: 'Website',
+        width: 'minmax(140px, 1.2fr)',
+        // Host plus path as a link to the stored URL; a click opens the page, never the row's sheet. A value that
+        // does not parse as an http or https URL renders as plain text.
+        render: (row) => {
+          const label = websiteLabel(row.website);
+          if (!label) return <span className="cell-text" />;
+          const href = websiteHref(row.website);
+          return href ? (
+            <a className="link cell-text" href={href} title={row.website ?? undefined} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+              {label}
+            </a>
+          ) : (
+            <span className="cell-text" title={row.website ?? undefined}>{label}</span>
           );
         },
       },

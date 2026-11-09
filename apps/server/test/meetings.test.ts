@@ -86,7 +86,7 @@ describe('migration 033', () => {
       }
       db.prepare('INSERT INTO workspace (id, created_at, name, template) VALUES (?, ?, ?, ?)').run('wsp_1', '2026-01-01', 'One', 't');
       db.prepare('INSERT INTO person (id, created_at, workspace_id, first_name, last_name, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run('per_1', '2026-01-01', 'wsp_1', 'Ada', 'Lovelace', '2026-01-01');
-      expect(applyMigrations(db)).toEqual(['033_meetings.sql', '034_search_widening.sql', '035_backblaze.sql']);
+      expect(applyMigrations(db)).toEqual(['033_meetings.sql', '034_search_widening.sql', '035_backblaze.sql', '036_contact_fields.sql']);
       db.prepare('INSERT INTO meeting (id, created_at, workspace_id, title, starts_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run('mtg_1', '2026-01-02', 'wsp_1', 'Call', '2026-02-01T00:00:00.000Z', '2026-01-02');
       expect(db.prepare('SELECT version, ends_at, notes, organization_id FROM meeting').get()).toEqual({ version: 1, ends_at: null, notes: null, organization_id: null });
       db.prepare('INSERT INTO meeting_attendee (meeting_id, person_id, created_at) VALUES (?, ?, ?)').run('mtg_1', 'per_1', '2026-01-02');
