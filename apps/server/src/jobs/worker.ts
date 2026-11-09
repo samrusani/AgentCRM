@@ -33,6 +33,7 @@ import {
   recoverSubmittingIntents,
   releaseWorkerLease,
   rescheduleJob,
+  runBackupIfDue,
   settleWorkerLease,
   type SettleWorkerLeaseOptions,
   syncMailIfDue,
@@ -210,6 +211,7 @@ export function createWorkerTick(
   let draftBusy = false;
   let mailBusy = false;
   let syncBusy = false;
+  let backupBusy = false;
   return () => {
     try {
       if (!settleWorkerLease(ctx, identity, options.lease)) return;
@@ -270,6 +272,15 @@ export function createWorkerTick(
         .catch(onError)
         .finally(() => {
           syncBusy = false;
+        });
+    }
+    // The daily offsite backup. Gated like mail, so an MCP process never uploads.
+    if (mail && !backupBusy) {
+      backupBusy = true;
+      runBackupIfDue({ ...ctx, actor: 'system' })
+        .catch(onError)
+        .finally(() => {
+          backupBusy = false;
         });
     }
   };

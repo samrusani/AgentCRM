@@ -12,6 +12,7 @@ export * from './agentmailConnector.js';
 export * from './gmailConnector.js';
 export * from './microsoftConnector.js';
 export * from './imapConnector.js';
+export * from './backblazeConnector.js';
 export * from './approvals.js';
 export {
   bearerToken,

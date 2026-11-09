@@ -13,6 +13,9 @@ import {
   capturePerson,
   lookupCapture,
   configureAgentmailConnector,
+  configureBackblazeConnector,
+  disconnectBackblazeConnector,
+  requestBackup,
   configureAnthropicConnector,
   completeGmailOAuth,
   completeMicrosoftOAuth,
@@ -534,6 +537,19 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   app.delete('/api/connectors/agentmail', async (_request, reply) => {
     disconnectAgentmailConnector(context());
     return reply.status(204).send();
+  });
+  app.put('/api/connectors/backblaze', async (request, reply) => {
+    const { connector, created } = await configureBackblazeConnector(context(), request.body);
+    reply.status(created ? 201 : 200);
+    return connector;
+  });
+  app.delete('/api/connectors/backblaze', async (_request, reply) => {
+    disconnectBackblazeConnector(context());
+    return reply.status(204).send();
+  });
+  app.post('/api/backups/run', async (_request, reply) => {
+    requestBackup(context());
+    return reply.status(202).send({ ok: true });
   });
   app.get('/api/connectors/agentmail/inboxes', async () => listAgentmailInboxes(context()));
   app.post('/api/connectors/agentmail/inboxes', async (request, reply) => {

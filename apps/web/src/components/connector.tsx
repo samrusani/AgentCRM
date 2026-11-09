@@ -21,6 +21,7 @@ export const CONNECTOR_MARKS: Record<string, string> = {
   gmail: 'Gm',
   microsoft: 'Ms',
   imap: 'Im',
+  backblaze: 'Bz',
   extension: 'Bx',
 };
 

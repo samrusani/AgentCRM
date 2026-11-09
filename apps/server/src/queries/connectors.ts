@@ -6,7 +6,7 @@ import { type Row } from '../records.js';
 
 export type ModelConnectorKind = ModelProviderKind;
 export type KeyedModelKind = 'anthropic' | 'openai' | 'deepseek' | 'zai';
-export type ConnectorKind = 'apify' | 'agentmail' | 'gmail' | 'microsoft' | 'imap' | ModelConnectorKind;
+export type ConnectorKind = 'apify' | 'agentmail' | 'gmail' | 'microsoft' | 'imap' | 'backblaze' | ModelConnectorKind;
 
 // Actor ids for the LinkedIn lead capture run. Settings hold only the ids a person changed; reads fill in the defaults.
 export interface LeadCaptureActors {
@@ -88,6 +88,30 @@ export interface GmailConnectorSettings {
   lastSyncError: string | null;
 }
 
+export interface BackblazeLastResult {
+  at: string;
+  ok: boolean;
+  fileName?: string;
+  bytes?: number;
+  error?: string;
+}
+
+// Safe to send to the browser. The application key is not here, and neither is any B2 URL or token.
+export interface BackblazeConnectorSettings {
+  keyId: string | null;
+  bucketId: string | null;
+  bucketName: string | null;
+  // How many uploads stay in the bucket and in data/backups/auto.
+  keep: number;
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  lastResult: BackblazeLastResult | null;
+  // Set by "Back up now". The next worker tick runs a backup and clears it.
+  runRequestedAt: string | null;
+}
+
+export const defaultBackblazeKeep = 14;
+
 export type ImapPreset = 'icloud' | 'fastmail' | 'custom';
 
 export function isImapPreset(value: unknown): value is ImapPreset {
@@ -149,6 +173,7 @@ const errorMessages: Record<ConnectorKind, string> = {
   gmail: 'Google no longer accepts the saved sign in.',
   microsoft: 'Microsoft no longer accepts the saved sign in.',
   imap: 'The mail server no longer accepts the saved app password.',
+  backblaze: 'Backblaze rejected the saved application key.',
 };
 
 interface ConnectorBase {
@@ -179,6 +204,8 @@ export type MicrosoftConnector = ConnectorBase & { kind: 'microsoft'; settings: 
 // The IMAP and SMTP connector keeps the app password as its secret. It is never part of a response.
 export type ImapConnector = ConnectorBase & { kind: 'imap'; settings: ImapConnectorSettings };
 
+export type BackblazeConnector = WithToken & { kind: 'backblaze'; settings: BackblazeConnectorSettings };
+
 export interface ConnectorByKind {
   apify: ApifyConnector;
   anthropic: AnthropicConnector;
@@ -190,6 +217,7 @@ export interface ConnectorByKind {
   gmail: GmailConnector;
   microsoft: MicrosoftConnector;
   imap: ImapConnector;
+  backblaze: BackblazeConnector;
 }
 
 export type Connector = ConnectorByKind[ConnectorKind];
@@ -403,6 +431,37 @@ export function toConnector(row: Row): Connector {
       // A note about a possible sync gap is shown on a connected account too, so the message is not limited to errors.
       statusMessage: message ?? (status === 'error' ? errorMessages.imap : null),
       settings: imapSettingsOf(stored, row.secret),
+    };
+  }
+  if (kind === 'backblaze') {
+    const field = (key: string): string | null => (typeof stored[key] === 'string' && stored[key] !== '' ? (stored[key] as string) : null);
+    const keep = typeof stored.keep === 'number' && Number.isInteger(stored.keep) && stored.keep >= 1 && stored.keep <= 365 ? stored.keep : defaultBackblazeKeep;
+    const raw = typeof stored.lastResult === 'object' && stored.lastResult !== null && !Array.isArray(stored.lastResult) ? (stored.lastResult as Record<string, unknown>) : null;
+    let lastResult: BackblazeLastResult | null = null;
+    if (raw && typeof raw.at === 'string' && typeof raw.ok === 'boolean') {
+      lastResult = {
+        at: raw.at,
+        ok: raw.ok,
+        ...(typeof raw.fileName === 'string' ? { fileName: raw.fileName } : {}),
+        ...(typeof raw.bytes === 'number' ? { bytes: raw.bytes } : {}),
+        ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+      };
+    }
+    const message = field('statusMessage');
+    return {
+      ...withToken,
+      kind,
+      statusMessage: status === 'error' ? (message ?? errorMessages.backblaze) : null,
+      settings: {
+        keyId: field('keyId'),
+        bucketId: field('bucketId'),
+        bucketName: field('bucketName'),
+        keep,
+        lastAttemptAt: field('lastAttemptAt'),
+        lastSuccessAt: field('lastSuccessAt'),
+        lastResult,
+        runRequestedAt: field('runRequestedAt'),
+      },
     };
   }
   if (kind === 'agentmail') {

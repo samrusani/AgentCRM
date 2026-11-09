@@ -12,6 +12,7 @@ import { Icon } from '../components/Icons';
 import { normalizeActorId } from '../lib/imports';
 import { DEFAULT_LEAD_ACTORS } from '../lib/leads';
 import { AgentMailConnectorCard } from './AgentMailConnectorCard';
+import { BackblazeCard } from './BackblazeCard';
 import { BrowserExtensionCard } from './BrowserExtensionCard';
 import { GmailConnectorCard } from './GmailConnectorCard';
 import { ImapConnectorCard } from './ImapConnectorCard';
@@ -321,6 +322,7 @@ function ApifyCard({ connector }: { connector: Connector | null }) {
 export function ConnectorSettings() {
   const { query, connector } = useApifyConnector();
   const agentmail = query.data?.find((entry) => entry.kind === 'agentmail') ?? null;
+  const backblaze = query.data?.find((entry) => entry.kind === 'backblaze') ?? null;
   // Google's and Microsoft's callbacks send the browser back here, with gmail_error=<code> or microsoft_error=<code> when sign in did not finish.
   const [params, setParams] = useSearchParams();
   const gmailError = params.get('gmail_error');
@@ -354,6 +356,7 @@ export function ConnectorSettings() {
           <MicrosoftConnectorCard oauthError={microsoftError} onDismissOauthError={dismissMicrosoftError} />
           <ImapConnectorCard />
           <BrowserExtensionCard />
+          <BackblazeCard connector={backblaze} />
         </div>
       ) : null}
     </section>

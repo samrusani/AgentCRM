@@ -40,6 +40,8 @@ import type {
   LeadCaptureSettings,
   GmailCredentialsInput,
   MicrosoftCredentialsInput,
+  BackblazeConnectorInput,
+  BackblazeSettings,
   ImapConnectorInput,
   ImapPreset,
   ImapSettings,
@@ -424,6 +426,25 @@ function normalizeImap(kind: unknown, settings: Record<string, unknown>): ImapSe
   };
 }
 
+// Only the Backblaze connector carries these.
+function normalizeBackblaze(kind: unknown, settings: Record<string, unknown>): BackblazeSettings | null {
+  if (kind !== 'backblaze') return null;
+  const result = objectOrEmpty(settings.lastResult);
+  const at = textOrNull(result.at);
+  const keep = numberOrNull(settings.keep);
+  return {
+    keyId: textOrNull(settings.keyId),
+    bucketName: textOrNull(settings.bucketName),
+    keep: keep !== null && Number.isInteger(keep) && keep >= 1 ? keep : 14,
+    lastAttemptAt: textOrNull(settings.lastAttemptAt),
+    lastSuccessAt: textOrNull(settings.lastSuccessAt),
+    lastResult: at
+      ? { at, ok: result.ok === true, fileName: textOrNull(result.fileName), bytes: numberOrNull(result.bytes), error: textOrNull(result.error) }
+      : null,
+    runRequestedAt: textOrNull(settings.runRequestedAt),
+  };
+}
+
 function normalizeConnector(raw: unknown): Connector {
   const record = objectOrEmpty(raw);
   const settings = objectOrEmpty(record.settings);
@@ -454,6 +475,7 @@ function normalizeConnector(raw: unknown): Connector {
     tokenMasked: textOrNull(record.tokenMasked ?? settings.tokenMasked),
     updatedAt: textOrNull(record.updatedAt),
     imap: normalizeImap(textOrNull(record.kind), settings),
+    backblaze: normalizeBackblaze(textOrNull(record.kind), settings),
   };
 }
 
@@ -1231,6 +1253,12 @@ export const api = {
     saveAgentMail: async (input: { token?: string; inboxId?: string; inboxEmail?: string }) =>
       normalizeConnector(await request<unknown>('PUT', '/connectors/agentmail', { body: input })),
     removeAgentMail: () => request<unknown>('DELETE', '/connectors/agentmail'),
+    // A key ID with an application key connects or reconnects. A keep count alone edits an existing connector.
+    saveBackblaze: async (input: BackblazeConnectorInput) =>
+      normalizeConnector(await request<unknown>('PUT', '/connectors/backblaze', { body: input })),
+    removeBackblaze: () => request<unknown>('DELETE', '/connectors/backblaze'),
+    // Queues a backup. The server runs it within a worker tick.
+    runBackup: () => request<unknown>('POST', '/backups/run'),
     // Saving credentials does no network check. Signing in is a separate step.
     saveGmail: async (input: GmailCredentialsInput) =>
       normalizeConnector(await request<unknown>('PUT', '/connectors/gmail', { body: input })),

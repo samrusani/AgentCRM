@@ -8,6 +8,7 @@ import {
 import { ApiError, api, type NewOpportunityInput, type NewPersonInput } from './client';
 import { useEventConnection } from './events';
 import type {
+  BackblazeConnectorInput,
   MergeInput,
   AttributeEntityType,
   AutomationFields,
@@ -1164,6 +1165,30 @@ export function useSaveAgentMailConnector() {
       void queryClient.invalidateQueries({ queryKey: ['mail-summary'] });
       void queryClient.invalidateQueries({ queryKey: ['mail-provider'] });
     },
+  });
+}
+
+export function useSaveBackblazeConnector() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BackblazeConnectorInput) => api.connectors.saveBackblaze(input),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: ['connectors'] }),
+  });
+}
+
+export function useRemoveBackblazeConnector() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.connectors.removeBackblaze(),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: ['connectors'] }),
+  });
+}
+
+export function useRunBackup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.connectors.runBackup(),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: ['connectors'] }),
   });
 }
 

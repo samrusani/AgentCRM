@@ -674,6 +674,34 @@ export interface Connector {
   updatedAt: string | null;
   // IMAP and SMTP only: the preset, the servers, the Sent mailbox, and what the last connect verified. Never the password.
   imap: ImapSettings | null;
+  // Backblaze backups only: the bucket, the keep count, and the state of the last run. Never the application key.
+  backblaze: BackblazeSettings | null;
+}
+
+export interface BackblazeLastResult {
+  at: string;
+  ok: boolean;
+  fileName: string | null;
+  bytes: number | null;
+  error: string | null;
+}
+
+export interface BackblazeSettings {
+  keyId: string | null;
+  bucketName: string | null;
+  keep: number;
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  lastResult: BackblazeLastResult | null;
+  runRequestedAt: string | null;
+}
+
+// The PUT body. Fields that are sent change; fields that are left out stay as they are.
+export interface BackblazeConnectorInput {
+  keyId?: string;
+  applicationKey?: string;
+  bucketName?: string;
+  keep?: number;
 }
 
 export interface ImapSettings {
