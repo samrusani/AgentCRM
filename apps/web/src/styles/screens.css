@@ -538,6 +538,67 @@
   background: transparent;
   border: 1.5px solid color-mix(in srgb, var(--ink-muted) 70%, transparent);
 }
+/* Color scheme picker */
+.scheme-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-bottom: 8px;
+}
+.scheme-option {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  cursor: pointer;
+}
+.scheme-option input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  margin: 0;
+  cursor: pointer;
+}
+.scheme-option__swatch {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 50%;
+}
+.scheme-option input:checked + .scheme-option__swatch {
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 4px var(--accent);
+}
+.scheme-option input:focus-visible + .scheme-option__swatch {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+.scheme-option__name {
+  font-size: 13px;
+}
+.scheme-option__swatch--viridian {
+  background: var(--swatch-viridian);
+}
+.scheme-option__swatch--ocean {
+  background: var(--swatch-ocean);
+}
+.scheme-option__swatch--indigo {
+  background: var(--swatch-indigo);
+}
+.scheme-option__swatch--orchid {
+  background: var(--swatch-orchid);
+}
+.scheme-option__swatch--rose {
+  background: var(--swatch-rose);
+}
+.scheme-option__swatch--ember {
+  background: var(--swatch-ember);
+}
+.scheme-option__swatch--graphite {
+  background: var(--swatch-graphite);
+}
 /* Appearance control */
 .segmented {
   display: inline-flex;

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Link } from 'react-router-dom';
 import { useCreateNote } from '../api/hooks';
 import { ApiError, isVersionConflict } from '../api/client';
@@ -495,6 +495,42 @@ const KIND_LABELS: Record<string, string> = {
   agent: 'Agent',
 };
 
+// True when the element's content is taller than its box. Re-checks on window resize. While paused
+// (the body is expanded and unclamped) the last clamped measurement holds, so the toggle stays the
+// same element across expand and collapse and focus never drops.
+export function useClampOverflow(ref: RefObject<HTMLElement>, deps: unknown, paused = false): boolean {
+  const [overflows, setOverflows] = useState(false);
+  useEffect(() => {
+    if (paused) return;
+    const check = () => {
+      const el = ref.current;
+      if (el) setOverflows(el.scrollHeight > el.clientHeight);
+    };
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, [ref, deps, paused]);
+  return overflows;
+}
+
+function TimelineBody({ body }: { body: string }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const overflows = useClampOverflow(ref, body, expanded);
+  return (
+    <>
+      <p ref={ref} className={`timeline__body${expanded ? '' : ' timeline__body--clamped'}`}>
+        {body}
+      </p>
+      {overflows || expanded ? (
+        <button type="button" className="timeline__toggle" aria-expanded={expanded} onClick={() => setExpanded((open) => !open)}>
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
 // Drafts can be prepared for sending only on a person, where the send review names the recipient.
 export function Timeline({ activities, prepareSend = false }: { activities: Activity[]; prepareSend?: boolean }) {
   if (activities.length === 0) {
@@ -514,7 +550,7 @@ export function Timeline({ activities, prepareSend = false }: { activities: Acti
               {formatAge(activity.createdAt)}
             </span>
           </div>
-          <p className="timeline__body">{activity.body}</p>
+          <TimelineBody body={activity.body} />
           <span className="muted">{activity.actor}</span>
           {activity.kind === 'email_draft' && prepareSend && !/^demo draft/i.test(activity.body) ? (
             <PrepareToSend label="Prepare to send" input={{ draftActivityIds: [activity.id] }} />

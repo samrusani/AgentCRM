@@ -12,6 +12,10 @@
         if (stored === 'light' || stored === 'dark') {
           document.documentElement.setAttribute('data-theme', stored);
         }
+        var scheme = localStorage.getItem('agentcrm.scheme');
+        if (['ocean', 'indigo', 'orchid', 'rose', 'ember', 'graphite'].indexOf(scheme) !== -1) {
+          document.documentElement.setAttribute('data-scheme', scheme);
+        }
       } catch (error) {}
     </script>
   </head>

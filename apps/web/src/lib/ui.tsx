@@ -11,6 +11,9 @@ import { readBoolean, readNumber, readStorage, writeStorage } from './storage';
 
 export type ThemeSetting = 'system' | 'light' | 'dark';
 
+export const SCHEMES = ['viridian', 'ocean', 'indigo', 'orchid', 'rose', 'ember', 'graphite'] as const;
+export type SchemeSetting = (typeof SCHEMES)[number];
+
 export interface SelectedRecord {
   kind: 'person' | 'organization' | 'opportunity';
   id: string;
@@ -33,6 +36,8 @@ interface UIState {
   theme: ThemeSetting;
   setTheme: (theme: ThemeSetting) => void;
   toggleAppearance: () => void;
+  scheme: SchemeSetting;
+  setScheme: (scheme: SchemeSetting) => void;
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
   // Effective state: below the breakpoint the rail is always collapsed until opened, and then it overlays.
@@ -59,6 +64,11 @@ function readTheme(): ThemeSetting {
   return stored === 'light' || stored === 'dark' ? stored : 'system';
 }
 
+export function readScheme(): SchemeSetting {
+  const stored = readStorage('agentcrm.scheme');
+  return SCHEMES.find((id) => id === stored) ?? 'viridian';
+}
+
 function systemPrefersDark(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
@@ -67,6 +77,7 @@ let toastCounter = 0;
 
 export function UIProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeSetting>(readTheme);
+  const [scheme, setSchemeState] = useState<SchemeSetting>(readScheme);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const navNarrow = useMediaQuery(NARROW_QUERY);
   // The stored choice only applies at 900px and wider. Below that the rail starts collapsed on every visit.
@@ -86,6 +97,19 @@ export function UIProvider({ children }: { children: ReactNode }) {
     if (theme === 'system') root.removeAttribute('data-theme');
     else root.setAttribute('data-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (scheme === 'viridian') root.removeAttribute('data-scheme');
+    else root.setAttribute('data-scheme', scheme);
+  }, [scheme]);
+
+  const setScheme = useCallback((next: SchemeSetting) => {
+    // The attribute reaches the DOM, so only the seven ids may pass, whatever a caller sends.
+    if (!SCHEMES.includes(next)) return;
+    setSchemeState(next);
+    writeStorage('agentcrm.scheme', next);
+  }, []);
 
   const setTheme = useCallback((next: ThemeSetting) => {
     setThemeState(next);
@@ -154,6 +178,8 @@ export function UIProvider({ children }: { children: ReactNode }) {
       theme,
       setTheme,
       toggleAppearance,
+      scheme,
+      setScheme,
       paletteOpen,
       setPaletteOpen,
       navCollapsed,
@@ -175,6 +201,8 @@ export function UIProvider({ children }: { children: ReactNode }) {
       theme,
       setTheme,
       toggleAppearance,
+      scheme,
+      setScheme,
       paletteOpen,
       navCollapsed,
       setNavCollapsed,

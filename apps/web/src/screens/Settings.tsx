@@ -9,7 +9,7 @@ import {
 } from '../api/hooks';
 import { ErrorState, Loading, PageHeader, errorMessage } from '../components/common';
 import { isLocalProvider, modelName, providerAttention, providerName } from '../lib/models';
-import { useUI, type ThemeSetting } from '../lib/ui';
+import { useUI, type SchemeSetting, type ThemeSetting } from '../lib/ui';
 import { AttributesSection } from './AttributeSettings';
 import { AutomationsSection } from './AutomationSettings';
 import { SequencesSection } from './SequenceSettings';
@@ -18,6 +18,16 @@ const THEMES: Array<{ value: ThemeSetting; label: string; hint: string }> = [
   { value: 'system', label: 'System', hint: 'Follow the operating system setting' },
   { value: 'light', label: 'Light', hint: 'Always use the light appearance' },
   { value: 'dark', label: 'Dark', hint: 'Always use the dark appearance' },
+];
+
+const SCHEME_OPTIONS: Array<{ value: SchemeSetting; label: string }> = [
+  { value: 'viridian', label: 'Viridian' },
+  { value: 'ocean', label: 'Ocean' },
+  { value: 'indigo', label: 'Indigo' },
+  { value: 'orchid', label: 'Orchid' },
+  { value: 'rose', label: 'Rose' },
+  { value: 'ember', label: 'Ember' },
+  { value: 'graphite', label: 'Graphite' },
 ];
 
 const SECTIONS: Array<{ to: string; label: string }> = [
@@ -109,7 +119,7 @@ function ImportsSection() {
 }
 
 export function GeneralSettings() {
-  const { theme, setTheme } = useUI();
+  const { theme, setTheme, scheme, setScheme } = useUI();
   const health = useHealth();
   const workspace = useWorkspace();
   const modelProvider = useModelProvider();
@@ -132,6 +142,20 @@ export function GeneralSettings() {
                 onChange={() => setTheme(option.value)}
               />
               <span>{option.label}</span>
+            </label>
+          ))}
+        </div>
+        <div className="scheme-group" role="radiogroup" aria-label="Color">
+          {SCHEME_OPTIONS.map((option) => (
+            <label key={option.value} className="scheme-option">
+              <input
+                type="radio"
+                name="color-scheme"
+                checked={scheme === option.value}
+                onChange={() => setScheme(option.value)}
+              />
+              <span className={`scheme-option__swatch scheme-option__swatch--${option.value}`} aria-hidden="true" />
+              <span className="scheme-option__name">{option.label}</span>
             </label>
           ))}
         </div>

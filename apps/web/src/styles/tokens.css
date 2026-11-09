@@ -15,6 +15,14 @@
   --danger: #b42318;
   --danger-tint: #fbeae8;
   --on-accent: #ffffff;
+  /* Swatch fills for the Settings color picker. */
+  --swatch-viridian: #15685b;
+  --swatch-ocean: #155da8;
+  --swatch-indigo: #4f46b5;
+  --swatch-orchid: #79309f;
+  --swatch-rose: #a62860;
+  --swatch-ember: #9c4a10;
+  --swatch-graphite: #3d4654;
 
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
   --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.1);
@@ -54,6 +62,13 @@
     --danger: #f0756a;
     --danger-tint: #33201e;
     --on-accent: #15211e;
+    --swatch-viridian: #43b39c;
+    --swatch-ocean: #64a9ea;
+    --swatch-indigo: #9a97ed;
+    --swatch-orchid: #c48ae0;
+    --swatch-rose: #e487ae;
+    --swatch-ember: #e09560;
+    --swatch-graphite: #c3ccda;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
     --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.5);
     --shadow-lg: 0 20px 48px rgba(0, 0, 0, 0.6);
@@ -76,7 +91,136 @@
   --danger: #f0756a;
   --danger-tint: #33201e;
   --on-accent: #15211e;
+  --swatch-viridian: #43b39c;
+  --swatch-ocean: #64a9ea;
+  --swatch-indigo: #9a97ed;
+  --swatch-orchid: #c48ae0;
+  --swatch-rose: #e487ae;
+  --swatch-ember: #e09560;
+  --swatch-graphite: #c3ccda;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
   --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 20px 48px rgba(0, 0, 0, 0.6);
+}
+
+/* Color schemes: only the three accent tokens change. Viridian is the default and has no block. */
+
+:root[data-scheme='ocean'] {
+  --accent: #155da8;
+  --on-accent: #ffffff;
+  --accent-tint: #e7eef8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-scheme='ocean']:not([data-theme='light']) {
+    --accent: #64a9ea;
+    --on-accent: #0e1a28;
+    --accent-tint: #16222f;
+  }
+}
+
+:root[data-scheme='ocean'][data-theme='dark'] {
+  --accent: #64a9ea;
+  --on-accent: #0e1a28;
+  --accent-tint: #16222f;
+}
+
+:root[data-scheme='indigo'] {
+  --accent: #4f46b5;
+  --on-accent: #ffffff;
+  --accent-tint: #ebebf9;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-scheme='indigo']:not([data-theme='light']) {
+    --accent: #9a97ed;
+    --on-accent: #14142b;
+    --accent-tint: #1b1b31;
+  }
+}
+
+:root[data-scheme='indigo'][data-theme='dark'] {
+  --accent: #9a97ed;
+  --on-accent: #14142b;
+  --accent-tint: #1b1b31;
+}
+
+:root[data-scheme='orchid'] {
+  --accent: #79309f;
+  --on-accent: #ffffff;
+  --accent-tint: #f2e9f8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-scheme='orchid']:not([data-theme='light']) {
+    --accent: #c48ae0;
+    --on-accent: #220e2e;
+    --accent-tint: #251831;
+  }
+}
+
+:root[data-scheme='orchid'][data-theme='dark'] {
+  --accent: #c48ae0;
+  --on-accent: #220e2e;
+  --accent-tint: #251831;
+}
+
+:root[data-scheme='rose'] {
+  --accent: #a62860;
+  --on-accent: #ffffff;
+  --accent-tint: #f8e8ef;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-scheme='rose']:not([data-theme='light']) {
+    --accent: #e487ae;
+    --on-accent: #2b0f1c;
+    --accent-tint: #2b1620;
+  }
+}
+
+:root[data-scheme='rose'][data-theme='dark'] {
+  --accent: #e487ae;
+  --on-accent: #2b0f1c;
+  --accent-tint: #2b1620;
+}
+
+:root[data-scheme='ember'] {
+  --accent: #9c4a10;
+  --on-accent: #ffffff;
+  --accent-tint: #f7ece2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-scheme='ember']:not([data-theme='light']) {
+    --accent: #e09560;
+    --on-accent: #27160a;
+    --accent-tint: #2a1d12;
+  }
+}
+
+:root[data-scheme='ember'][data-theme='dark'] {
+  --accent: #e09560;
+  --on-accent: #27160a;
+  --accent-tint: #2a1d12;
+}
+
+:root[data-scheme='graphite'] {
+  --accent: #3d4654;
+  --on-accent: #ffffff;
+  --accent-tint: #e9ecf1;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-scheme='graphite']:not([data-theme='light']) {
+    --accent: #c3ccda;
+    --on-accent: #161a20;
+    --accent-tint: #232935;
+  }
+}
+
+:root[data-scheme='graphite'][data-theme='dark'] {
+  --accent: #c3ccda;
+  --on-accent: #161a20;
+  --accent-tint: #232935;
 }
