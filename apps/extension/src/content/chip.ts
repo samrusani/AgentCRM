@@ -1,4 +1,6 @@
 import { CONFIG_MESSAGE } from '../messages';
+import { buildIcon } from './icon';
+import { openPanel, type PanelHandle } from './panel';
 import type { CapturePayload, CaptureResponse, ExtensionRequest, LookupResponse } from '../messages';
 
 // The chip lives in a shadow root on a host div so site styles never leak in. Tokens follow docs/design.md.
@@ -19,7 +21,7 @@ const STYLE = `
 .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .chip[data-state="sending"] { background: var(--surface); color: var(--ink-muted); box-shadow: inset 0 0 0 1px var(--line); cursor: progress; }
 .chip[data-state="error"] { background: var(--danger); }
-.chip[data-state="inCrm"] { background: transparent; color: var(--ink-muted); border-color: var(--line); box-shadow: none; cursor: default; }
+.chip[data-state="inCrm"] { background: transparent; color: var(--ink-muted); border-color: var(--line); box-shadow: none; cursor: pointer; }
 .chip[data-state="inCrm"][data-placement="floating"] { background: var(--surface); }
 /* The inline presentation is a compact icon button: one 22px square in every state, the capture mark drawn as SVG. */
 .chip[data-placement="inline"] {
@@ -42,8 +44,13 @@ const STYLE = `
 }
 `;
 
+export { buildIcon };
+
 export type ChipState = 'idle' | 'sending' | 'added' | 'inCrm' | 'error';
 export type ChipPlacement = 'inline' | 'floating';
+
+// The persistent In CRM state opens the capture panel, so its tooltip and accessible name say so.
+const IN_CRM_HINT = 'In CRM. Add a note';
 
 const LABELS: Record<Exclude<ChipState, 'error'>, string> = {
   idle: 'Add to AgentCRM',
@@ -51,47 +58,6 @@ const LABELS: Record<Exclude<ChipState, 'error'>, string> = {
   added: 'Added',
   inCrm: 'In CRM',
 };
-
-const SVG_NS = 'http://www.w3.org/2000/svg';
-
-/** One filled rect in the 100 unit icon box. */
-function rect(x: number, y: number, w: number, h: number): SVGRectElement {
-  const el = document.createElementNS(SVG_NS, 'rect');
-  for (const [name, value] of [['x', x], ['y', y], ['width', w], ['height', h]] as const) el.setAttribute(name, String(value));
-  return el;
-}
-
-/**
- * The extension's capture mark (see scripts/icons.mjs): four corner brackets at 20% and 80% with arm 22% and
- * thickness 9%, and a centered 20% square dot. The field behind it is the button's own background. The `added`
- * state swaps the brackets for a check so the confirmation reads at a glance, in the same box.
- */
-export function buildIcon(kind: 'mark' | 'check'): SVGSVGElement {
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 100 100');
-  svg.setAttribute('aria-hidden', 'true');
-  svg.setAttribute('focusable', 'false');
-  svg.setAttribute('fill', 'currentColor');
-  if (kind === 'check') {
-    const path = document.createElementNS(SVG_NS, 'path');
-    path.setAttribute('d', 'M24 52 L43 70 L77 31');
-    path.setAttribute('fill', 'none');
-    path.setAttribute('stroke', 'currentColor');
-    path.setAttribute('stroke-width', '11');
-    path.setAttribute('stroke-linecap', 'square');
-    svg.append(path);
-    return svg;
-  }
-  const lo = 20, hi = 80, arm = 22, t = 9;
-  for (const [cx, sx] of [[lo, 1], [hi, -1]] as const) {
-    for (const [cy, sy] of [[lo, 1], [hi, -1]] as const) {
-      svg.append(rect(sx > 0 ? cx : cx - arm, sy > 0 ? cy : cy - t, arm, t));
-      svg.append(rect(sx > 0 ? cx : cx - t, sy > 0 ? cy : cy - arm, t, arm));
-    }
-  }
-  svg.append(rect(40, 40, 20, 20));
-  return svg;
-}
 
 // The host carries inline styles only, set with !important so a site reset or a broad selector cannot zero it out.
 const HOST_STYLES: Record<ChipPlacement, Array<[string, string]>> = {
@@ -168,6 +134,32 @@ export function startChip(config: ChipConfig): void {
   let lastKey: string | null = null;
   let generation = 0;
   let lookedUp = -1;
+  let panel: PanelHandle | null = null;
+
+  const closePanel = () => {
+    const open = panel;
+    panel = null;
+    open?.close();
+  };
+
+  // Opens the panel for the profile the address bar shows now. Only a click or a capture reply the user started
+  // gets here, never page load or navigation.
+  const showPanel = (variant: 'created' | 'existing', sent?: CapturePayload) => {
+    const key = currentKey();
+    if (key === null) return;
+    closePanel();
+    const opened = openPanel({
+      variant,
+      ...(sent ? { sent } : {}),
+      source: config.source,
+      profileKey: key,
+      currentKey,
+      onClose: () => {
+        if (panel === opened) panel = null;
+      },
+    });
+    panel = opened;
+  };
 
   // The identity of the profile the address bar shows right now, or null off a profile page.
   const currentKey = (): string | null => {
@@ -187,8 +179,13 @@ export function startChip(config: ChipConfig): void {
     if (placement === 'floating') {
       // The floating chip is the full labeled chip: its text is its name.
       button.textContent = label;
-      button.removeAttribute('aria-label');
-      button.removeAttribute('title');
+      if (next === 'inCrm') {
+        button.setAttribute('aria-label', IN_CRM_HINT);
+        button.title = IN_CRM_HINT;
+      } else {
+        button.removeAttribute('aria-label');
+        button.removeAttribute('title');
+      }
     } else {
       // The inline chip is an icon: the state lives in its accessible name, native tooltip, and a visually hidden
       // text node (so the live region announces a change), never in its size.
@@ -196,11 +193,10 @@ export function startChip(config: ChipConfig): void {
       hidden.className = 'sr';
       hidden.textContent = label;
       button.replaceChildren(buildIcon(next === 'added' ? 'check' : 'mark'), hidden);
-      button.setAttribute('aria-label', label);
-      button.title = label;
+      const name = next === 'inCrm' ? IN_CRM_HINT : label;
+      button.setAttribute('aria-label', name);
+      button.title = name;
     }
-    if (next === 'inCrm') button.setAttribute('aria-disabled', 'true');
-    else button.removeAttribute('aria-disabled');
   };
 
   const reset = () => {
@@ -269,7 +265,21 @@ export function startChip(config: ChipConfig): void {
   };
 
   const onClick = async () => {
-    if (state === 'sending' || state === 'added' || state === 'inCrm') return;
+    if (state === 'inCrm') {
+      // The state belongs to lastKey. After a fast SPA navigation the chip can still show the previous profile's
+      // state for up to one poll tick, so a stale chip re-checks instead of opening "Already in your CRM" for a
+      // profile that was never looked up.
+      const key = currentKey();
+      if (key !== lastKey) {
+        lastKey = key;
+        closePanel();
+        reset();
+        return;
+      }
+      showPanel('existing');
+      return;
+    }
+    if (state === 'sending' || state === 'added') return;
     if (state === 'error') {
       await send({ kind: 'openOptions' });
       return;
@@ -278,9 +288,11 @@ export function startChip(config: ChipConfig): void {
     const key = currentKey();
     render('sending');
     let response: CaptureResponse | undefined;
+    let sent: CapturePayload | undefined;
     try {
       const url = new URL(location.href);
-      response = await send<CaptureResponse>({ kind: 'capture', payload: config.build(document, url) });
+      sent = config.build(document, url);
+      response = await send<CaptureResponse>({ kind: 'capture', payload: sent });
     } catch {
       response = undefined;
     }
@@ -288,9 +300,11 @@ export function startChip(config: ChipConfig): void {
     if (response?.ok) {
       if (response.outcome === 'existing') {
         render('inCrm');
+        showPanel('existing');
       } else {
         render('added');
         timer = setTimeout(() => render('inCrm'), 2500);
+        showPanel('created', sent);
       }
       return;
     }
@@ -323,10 +337,14 @@ export function startChip(config: ChipConfig): void {
     }
   };
 
-  // Removes every capture host in the page that is not this instance's own, such as one an orphaned script left behind.
+  // Removes every capture and panel host in the page that is not this instance's own, such as one an orphaned or
+  // superseded script left behind, so two instances can never show two buttons or two panels together.
   const sweepForeignHosts = () => {
     for (const el of Array.from(document.querySelectorAll('#agentcrm-capture-host'))) {
       if (el !== host) el.remove();
+    }
+    for (const el of Array.from(document.querySelectorAll('#agentcrm-panel-host'))) {
+      if (el !== panel?.host) el.remove();
     }
   };
 
@@ -340,6 +358,7 @@ export function startChip(config: ChipConfig): void {
       if (interval !== undefined) clearInterval(interval);
       if (timer !== undefined) clearTimeout(timer);
       timer = undefined;
+      closePanel();
       unmount();
       return;
     }
@@ -347,6 +366,7 @@ export function startChip(config: ChipConfig): void {
     const key = currentKey();
     if (key !== lastKey) {
       lastKey = key;
+      closePanel();
       reset();
     }
     if (key === null) {

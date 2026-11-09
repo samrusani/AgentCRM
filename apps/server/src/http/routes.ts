@@ -10,6 +10,7 @@ import {
   acceptOrganizationEnrichmentSuggestion,
   addSuppression,
   bearerToken,
+  captureNote,
   capturePerson,
   lookupCapture,
   configureAgentmailConnector,
@@ -234,7 +235,7 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   app.get('/api/templates', async () => ({ items: listTemplates(), nextCursor: null }));
   app.post('/api/workspace/template', async (request) => switchTemplate(context(), request.body));
 
-  // The capture routes (verify, lookup, capture) are the only ones that need a token. The guard runs before the body is parsed.
+  // The capture routes (verify, lookup, capture, note) are the only ones that need a token. The guard runs before the body is parsed.
   const captureGuard = async (request: FastifyRequest): Promise<void> => {
     verifyCaptureToken(db, workspaceId(), bearerToken(request.headers.authorization));
   };
@@ -251,6 +252,11 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   app.post('/api/capture/lookup', { onRequest: captureGuard }, async (request) =>
     lookupCapture({ db, workspaceId: workspaceId() }, request.body),
   );
+  app.post('/api/capture/note', { onRequest: captureGuard }, async (request, reply) => {
+    const result = captureNote(context(), request.body);
+    reply.status(201);
+    return result;
+  });
   app.post('/api/capture', { onRequest: captureGuard }, async (request, reply) => {
     const result = capturePerson(context(), request.body);
     reply.status(result.outcome === 'created' ? 201 : 200);

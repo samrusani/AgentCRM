@@ -16,6 +16,7 @@ export * from './backblazeConnector.js';
 export * from './approvals.js';
 export {
   bearerToken,
+  captureNote,
   capturePerson,
   generateCaptureToken,
   getCaptureSettings,

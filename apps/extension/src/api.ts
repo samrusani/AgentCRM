@@ -1,5 +1,5 @@
 import { CONFIG_MESSAGE, DEFAULT_BASE_URL } from './messages';
-import type { CapturePayload, CaptureResponse, LookupPayload, LookupResponse } from './messages';
+import type { CapturePayload, CaptureResponse, LookupPayload, LookupResponse, NotePayload, NoteResponse } from './messages';
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -98,6 +98,33 @@ export async function sendLookup(
       // The reply is { exists } and nothing else; anything beyond a literal true counts as not found.
       const body = (await res.json()) as { exists?: unknown };
       return { ok: true, exists: body.exists === true };
+    } catch {
+      return { ok: false, code: 'http', message: 'The server sent a reply the extension could not read.' };
+    }
+  }
+  return readError(res);
+}
+
+/** One note save from the capture panel. Never throws: every outcome comes back as a NoteResponse. */
+export async function sendNote(
+  settings: { baseUrl?: unknown; token?: unknown },
+  payload: NotePayload,
+  fetchImpl: FetchLike = fetch,
+): Promise<NoteResponse> {
+  const token = typeof settings.token === 'string' ? settings.token.trim() : '';
+  if (token === '') return { ok: false, code: 'unconfigured', message: CONFIG_MESSAGE };
+  let res: Response;
+  try {
+    // Only the three fields the endpoint accepts are sent, whatever the caller passed in.
+    const body = { source: payload.source, url: payload.url, note: payload.note };
+    res = await postJson(normalizeBaseUrl(settings.baseUrl), '/api/capture/note', token, body, fetchImpl);
+  } catch {
+    return { ok: false, code: 'network', message: NETWORK_MESSAGE };
+  }
+  if (res.status === 200 || res.status === 201) {
+    try {
+      const body = (await res.json()) as { person?: { name?: unknown } };
+      return { ok: true, personName: typeof body.person?.name === 'string' ? body.person.name : '' };
     } catch {
       return { ok: false, code: 'http', message: 'The server sent a reply the extension could not read.' };
     }

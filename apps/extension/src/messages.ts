@@ -20,9 +20,17 @@ export interface LookupPayload {
   url: string;
 }
 
+/** A note the user typed in the capture panel. The profile identity travels as source and url, never a person id. */
+export interface NotePayload {
+  source: 'linkedin' | 'x';
+  url: string;
+  note: string;
+}
+
 export type ExtensionRequest =
   | { kind: 'capture'; payload: CapturePayload }
   | { kind: 'lookup'; payload: LookupPayload }
+  | { kind: 'note'; payload: NotePayload }
   | { kind: 'openOptions' };
 
 export type CaptureResponse =
@@ -31,6 +39,10 @@ export type CaptureResponse =
 
 export type LookupResponse =
   | { ok: true; exists: boolean }
+  | { ok: false; code: string; message: string };
+
+export type NoteResponse =
+  | { ok: true; personName: string }
   | { ok: false; code: string; message: string };
 
 export interface ExtensionSettings {

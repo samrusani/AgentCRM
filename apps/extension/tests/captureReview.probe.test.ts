@@ -30,12 +30,14 @@ interface Harness {
 }
 
 const roots: ShadowRoot[] = [];
+const panelRoots: ShadowRoot[] = [];
 const realAttach = Element.prototype.attachShadow;
 
 async function boot(script: 'linkedin' | 'x', initialPath: string, html: string, reply: (msg: any) => unknown): Promise<Harness> {
   vi.resetModules();
   vi.useFakeTimers();
   roots.length = 0;
+  panelRoots.length = 0;
   document.documentElement.innerHTML = html;
   history.pushState({}, '', initialPath);
   const sendMessage = vi.fn(async (msg: any) => reply(msg));
@@ -62,7 +64,9 @@ const sentOfKind = (h: Harness, kind: string) => h.sendMessage.mock.calls.map((c
 beforeEach(() => {
   Element.prototype.attachShadow = function (init: ShadowRootInit) {
     const shadow = realAttach.call(this, init);
-    roots.push(shadow);
+    // The capture panel has its own host; only the button's root counts as the live chip.
+    if (this.id === 'agentcrm-panel-host') panelRoots.push(shadow);
+    else roots.push(shadow);
     return shadow;
   };
 });
@@ -513,7 +517,7 @@ describe('lookup and inline chip (second wave)', () => {
     expect(text(h)).toBe('Add to AgentCRM');
     resolve({ ok: true, exists: true, person: { id: 'per_1', name: '<img src=x onerror=alert(1)>Jane Secret' } });
     await h.settle(0);
-    expect(text(h)).toBe('In CRM');
+    expect(text(h)).toBe('In CRM. Add a note');
     expect(host.shadowRoot).toBeNull();
     expect(host.outerHTML).toBe(before);
     expect(host.textContent).toBe('');
@@ -625,14 +629,14 @@ describe('lookup and inline chip (second wave)', () => {
   it('KILLS: an anchor that flips between present and absent every poll tick never leaves two hosts, never repeats the lookup, and keeps In CRM', async () => {
     const h = await boot('linkedin', '/in/flap', '<body><div id="row"><h1>Flap Person</h1></div></body>', (msg) => (msg.kind === 'lookup' ? { ok: true, exists: true } : created));
     await h.settle(0);
-    expect(text(h)).toBe('In CRM');
+    expect(text(h)).toBe('In CRM. Add a note');
     for (let i = 0; i < 12; i += 1) {
       const heading = document.querySelector('h1');
       if (heading) heading.remove();
       else document.getElementById('row')!.append(document.createElement('h1'));
       await h.settle(800);
       expect(hosts(), `tick ${i}`).toHaveLength(1);
-      expect(text(h), `tick ${i}`).toBe('In CRM');
+      expect(text(h), `tick ${i}`).toBe('In CRM. Add a note');
     }
     expect(lookups(h)).toHaveLength(1);
   });
@@ -656,11 +660,11 @@ describe('lookup and inline chip (second wave)', () => {
     );
     pending[0]!({ ok: true, exists: true });
     await h.settle(0);
-    expect(text(h)).toBe('In CRM');
+    expect(text(h)).toBe('In CRM. Add a note');
     for (const next of ['/in/jane?trk=abc#section', '/in/jane/details/experience/', '/in/jane/', '/in/jane#top']) {
       await h.navigate(next);
       await h.settle(900);
-      expect(text(h), next).toBe('In CRM');
+      expect(text(h), next).toBe('In CRM. Add a note');
       expect(lookups(h), next).toHaveLength(1);
     }
     await h.navigate('/in/other');
@@ -673,11 +677,11 @@ describe('lookup and inline chip (second wave)', () => {
   it('KILLS: x keys on the lowercased handle, so a case change or a profile tab is the same profile; linkedin keeps id case', async () => {
     const x = await boot('x', '/Jack', '<body></body>', (msg) => (msg.kind === 'lookup' ? { ok: true, exists: true } : created));
     await x.settle(0);
-    expect(text(x)).toBe('In CRM');
+    expect(text(x)).toBe('In CRM. Add a note');
     for (const next of ['/jack', '/JACK/with_replies', '/jack?s=20']) {
       await x.navigate(next);
       await x.settle(900);
-      expect(text(x), next).toBe('In CRM');
+      expect(text(x), next).toBe('In CRM. Add a note');
     }
     expect(lookups(x)).toHaveLength(1);
     const l = await boot('linkedin', '/in/Jane', '<body><h1>Jane</h1></body>', (msg) => (msg.kind === 'lookup' ? { ok: true, exists: true } : created));
@@ -704,7 +708,7 @@ describe('lookup and inline chip (second wave)', () => {
     expect(lookups(h)[1]!.payload.url).toBe('http://localhost:3000/in/bbb');
     pending[1]!({ ok: true, exists: true });
     await h.settle(0);
-    expect(text(h)).toBe('In CRM');
+    expect(text(h)).toBe('In CRM. Add a note');
   });
 
   it('KILLS: after the correcting tick, a late reply for A can never mark B, and B gets exactly its own answer', async () => {
@@ -717,7 +721,7 @@ describe('lookup and inline chip (second wave)', () => {
     expect(text(h)).toBe('Add to AgentCRM');
     pending[1]!({ ok: true, exists: true });
     await h.settle(0);
-    expect(text(h)).toBe('In CRM');
+    expect(text(h)).toBe('In CRM. Add a note');
     await h.navigate('/carol');
     await h.settle(900);
     expect(text(h)).toBe('Add to AgentCRM');
@@ -1055,7 +1059,7 @@ describe('icon chip (third wave)', () => {
     expect(h.button()!.dataset.placement).toBe('floating');
     expect(labelOf(h.button()!)).toBe('Added');
     await h.settle(2600);
-    expect(labelOf(h.button()!)).toBe('In CRM');
+    expect(labelOf(h.button()!)).toBe('In CRM. Add a note');
     expect(h.button()!.dataset.state).toBe('inCrm');
     expect(h.host() && document.querySelectorAll('#agentcrm-capture-host').length).toBe(1);
   });

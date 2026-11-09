@@ -105,7 +105,7 @@ describe('hook coverage honesty', () => {
     expect(routes.length).toBeGreaterThan(100);
     expect(routes.filter((route) => !route.url.startsWith('/api/'))).toEqual([]);
     const urls = new Set(routes.map((route) => route.url));
-    for (const needed of ['/api/events', '/api/capture', '/api/capture/verify', '/api/capture/lookup', '/api/health']) {
+    for (const needed of ['/api/events', '/api/capture', '/api/capture/verify', '/api/capture/lookup', '/api/capture/note', '/api/health']) {
       expect(urls.has(needed), needed).toBe(true);
     }
   });
@@ -134,7 +134,7 @@ describe('hook coverage honesty', () => {
     const ok = await app.inject({ method: 'POST', url: '/api/capture/verify', headers: { ...headers, authorization: `Bearer ${token}` } });
     expect(ok.statusCode).toBe(200);
     trip();
-    for (const url of ['/api/capture/verify', '/api/capture/lookup', '/api/capture']) {
+    for (const url of ['/api/capture/verify', '/api/capture/lookup', '/api/capture/note', '/api/capture']) {
       const withToken = await app.inject({ method: 'POST', url, headers: { ...headers, authorization: `Bearer ${token}`, 'content-type': 'application/json' }, payload: '{}' });
       expect(withToken.statusCode, url).toBe(503);
       expect(withToken.json().error.code).toBe('stale_server');

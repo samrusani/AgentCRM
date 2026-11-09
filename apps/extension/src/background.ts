@@ -1,6 +1,6 @@
 import { DEFAULT_BASE_URL } from './messages';
-import type { CaptureResponse, ExtensionRequest, LookupResponse } from './messages';
-import { NETWORK_MESSAGE, isLoopbackAddress, normalizeBaseUrl, sendCapture, sendLookup } from './api';
+import type { CaptureResponse, ExtensionRequest, LookupResponse, NoteResponse } from './messages';
+import { NETWORK_MESSAGE, isLoopbackAddress, normalizeBaseUrl, sendCapture, sendLookup, sendNote } from './api';
 
 async function capture(request: Extract<ExtensionRequest, { kind: 'capture' }>): Promise<CaptureResponse> {
   const stored = await chrome.storage.local.get({ baseUrl: DEFAULT_BASE_URL, token: '' });
@@ -17,9 +17,15 @@ async function lookup(request: Extract<ExtensionRequest, { kind: 'lookup' }>): P
   return sendLookup(stored, request.payload);
 }
 
+// A note save follows a click on Save, so it is allowed against any configured address, like capture.
+async function note(request: Extract<ExtensionRequest, { kind: 'note' }>): Promise<NoteResponse> {
+  const stored = await chrome.storage.local.get({ baseUrl: DEFAULT_BASE_URL, token: '' });
+  return sendNote(stored, request.payload);
+}
+
 function isRequest(value: unknown): value is ExtensionRequest {
   const kind = (value as { kind?: unknown } | null)?.kind;
-  return kind === 'capture' || kind === 'lookup' || kind === 'openOptions';
+  return kind === 'capture' || kind === 'lookup' || kind === 'note' || kind === 'openOptions';
 }
 
 // The toolbar button has no popup, so clicking it opens the options page.
@@ -35,7 +41,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     return false;
   }
   // Returning true keeps the message channel open until the async fetch settles.
-  const work = message.kind === 'lookup' ? lookup(message) : capture(message);
+  const work = message.kind === 'lookup' ? lookup(message) : message.kind === 'note' ? note(message) : capture(message);
   work.then(sendResponse, () => sendResponse({ ok: false, code: 'network', message: NETWORK_MESSAGE }));
   return true;
 });

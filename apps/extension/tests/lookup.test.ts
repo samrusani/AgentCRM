@@ -132,4 +132,28 @@ describe('background lookup', () => {
     expect(respond).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+
+  it('a note message POSTs to the note path with the stored token, also against a non loopback address', async () => {
+    const notePayload = { source: 'linkedin' as const, url: 'https://www.linkedin.com/in/jane', note: 'Hello' };
+    for (const baseUrl of ['http://127.0.0.1:5000/', 'https://crm.example.com']) {
+      const fetchImpl = vi.fn(async () => json({ ok: true, person: { name: 'Jane' } }, 201));
+      const { listener } = await bootBackground({ token: ' cap_secret ', baseUrl }, fetchImpl);
+      const response = await ask(listener, { kind: 'note', payload: notePayload });
+      expect(response).toEqual({ ok: true, personName: 'Jane' });
+      const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+      expect(url).toBe(`${baseUrl.replace(/\/+$/, '')}/api/capture/note`);
+      expect(init.headers).toMatchObject({ Authorization: 'Bearer cap_secret' });
+      expect(JSON.parse(init.body as string)).toEqual(notePayload);
+      expect(JSON.stringify(response)).not.toContain('cap_secret');
+    }
+  });
+
+  it('a note message without a token answers unconfigured with no fetch, and other senders are ignored', async () => {
+    const fetchImpl = vi.fn();
+    const { listener } = await bootBackground({}, fetchImpl);
+    const message = { kind: 'note', payload: { source: 'x', url: 'https://x.com/jack', note: 'Hi' } };
+    expect(await ask(listener, message)).toMatchObject({ ok: false, code: 'unconfigured' });
+    expect(listener(message, { id: 'other' }, vi.fn())).toBe(false);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
 });

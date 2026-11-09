@@ -61,6 +61,7 @@ describe('anchor finders', () => {
 interface Harness {
   button(): HTMLButtonElement | null;
   hosts(): HTMLElement[];
+  panelHosts(): HTMLElement[];
   host(): HTMLElement | null;
   sendMessage: ReturnType<typeof vi.fn>;
   navigate(pathAndQuery: string): void;
@@ -69,12 +70,14 @@ interface Harness {
 }
 
 const roots: ShadowRoot[] = [];
+const panelRoots: ShadowRoot[] = [];
 const realAttach = Element.prototype.attachShadow;
 
 async function boot(script: 'linkedin' | 'x', initialPath: string, html: string, reply: (msg: any) => unknown): Promise<Harness> {
   vi.resetModules();
   vi.useFakeTimers();
   roots.length = 0;
+  panelRoots.length = 0;
   document.documentElement.innerHTML = html;
   history.pushState({}, '', initialPath);
   const sendMessage = vi.fn(async (msg: any) => reply(msg));
@@ -84,6 +87,7 @@ async function boot(script: 'linkedin' | 'x', initialPath: string, html: string,
   return {
     sendMessage,
     hosts,
+    panelHosts: () => Array.from(document.querySelectorAll<HTMLElement>('#agentcrm-panel-host')),
     host: () => hosts()[0] ?? null,
     button: () => (roots.length > 0 ? (roots[roots.length - 1]!.querySelector('button') as HTMLButtonElement | null) : null),
     navigate: (p) => history.pushState({}, '', p),
@@ -97,7 +101,9 @@ async function boot(script: 'linkedin' | 'x', initialPath: string, html: string,
 beforeEach(() => {
   Element.prototype.attachShadow = function (init: ShadowRootInit) {
     const shadow = realAttach.call(this, init);
-    roots.push(shadow);
+    // The capture panel has its own host; only the button's root counts as the live chip.
+    if (this.id === 'agentcrm-panel-host') panelRoots.push(shadow);
+    else roots.push(shadow);
     return shadow;
   };
 });
@@ -188,11 +194,11 @@ describe('placement', () => {
   it('keeps the state across a re-mount and does not send a second lookup', async () => {
     const h = await boot('linkedin', '/in/jane', '<body><h1>Jane Doe</h1></body>', reply({ ok: true, exists: true }));
     await h.settle(0);
-    expect(labelOf(h.button()!)).toBe('In CRM');
+    expect(labelOf(h.button()!)).toBe('In CRM. Add a note');
     h.host()!.remove();
     await h.settle(900);
     expect(h.hosts()).toHaveLength(1);
-    expect(labelOf(h.button()!)).toBe('In CRM');
+    expect(labelOf(h.button()!)).toBe('In CRM. Add a note');
     expect(h.sent('lookup')).toHaveLength(1);
   });
 
@@ -220,13 +226,13 @@ describe('lookup flow', () => {
   it('exists true shows an inert In CRM state and a click sends no capture', async () => {
     const h = await boot('linkedin', '/in/jane', '<body><h1>Jane Doe</h1></body>', reply({ ok: true, exists: true }));
     await h.settle(0);
-    expect(labelOf(h.button()!)).toBe('In CRM');
+    expect(labelOf(h.button()!)).toBe('In CRM. Add a note');
     expect(h.button()!.dataset.state).toBe('inCrm');
     h.button()!.click();
     await h.settle(100);
     expect(h.sent('capture')).toHaveLength(0);
     expect(h.sent('openOptions')).toHaveLength(0);
-    expect(labelOf(h.button()!)).toBe('In CRM');
+    expect(labelOf(h.button()!)).toBe('In CRM. Add a note');
   });
 
   it('exists false leaves the chip idle', async () => {
@@ -274,7 +280,7 @@ describe('lookup flow', () => {
       msg.kind === 'lookup' ? { ok: true, exists: msg.payload.url.endsWith('/in/aaa') } : CREATED,
     );
     await h.settle(0);
-    expect(labelOf(h.button()!)).toBe('In CRM');
+    expect(labelOf(h.button()!)).toBe('In CRM. Add a note');
     h.navigate('/in/bbb');
     await h.settle(900);
     expect(labelOf(h.button()!)).toBe('Add to AgentCRM');
@@ -305,9 +311,9 @@ describe('capture settle', () => {
     await h.settle(2000);
     expect(labelOf(h.button()!)).toBe('Added');
     await h.settle(600);
-    expect(labelOf(h.button()!)).toBe('In CRM');
+    expect(labelOf(h.button()!)).toBe('In CRM. Add a note');
     await h.settle(60_000);
-    expect(labelOf(h.button()!)).toBe('In CRM');
+    expect(labelOf(h.button()!)).toBe('In CRM. Add a note');
     h.button()!.click();
     await h.settle(0);
     expect(h.sent('capture')).toHaveLength(1);
@@ -318,7 +324,7 @@ describe('capture settle', () => {
     await h.settle(0);
     h.button()!.click();
     await h.settle(0);
-    expect(labelOf(h.button()!)).toBe('In CRM');
+    expect(labelOf(h.button()!)).toBe('In CRM. Add a note');
     expect(h.button()!.dataset.state).toBe('inCrm');
   });
 
@@ -392,25 +398,30 @@ describe('icon chip (inline)', () => {
       ['idle', 'Add to AgentCRM', 'Add to AgentCRM'],
       ['sending', 'Adding', 'Adding'],
       ['added', 'Added', 'Added'],
-      ['inCrm', 'In CRM', 'In CRM'],
+      ['inCrm', 'In CRM. Add a note', 'In CRM. Add a note'],
     ]);
     expect(h.button()!.textContent).toBe('In CRM');
     expect(rects(h)).toHaveLength(9);
     expect(h.hosts()).toHaveLength(1);
   });
 
-  it('In CRM is aria-disabled and inert, and a click sends nothing', async () => {
+  it('In CRM is clickable with the tooltip "In CRM. Add a note"; a click sends no capture and opens the existing panel', async () => {
     const h = await boot('linkedin', '/in/jane', INLINE, reply({ ok: true, exists: true }));
     await h.settle(0);
     const button = h.button()!;
     expect(button.dataset.state).toBe('inCrm');
-    expect(button.getAttribute('aria-disabled')).toBe('true');
-    expect(button.title).toBe('In CRM');
+    expect(button.getAttribute('aria-disabled')).toBeNull();
+    expect(button.title).toBe('In CRM. Add a note');
+    expect(button.getAttribute('aria-label')).toBe('In CRM. Add a note');
+    expect(h.panelHosts()).toHaveLength(0);
     button.click();
     await h.settle(100);
     expect(h.sent('capture')).toHaveLength(0);
     expect(h.sent('openOptions')).toHaveLength(0);
     expect(button.dataset.state).toBe('inCrm');
+    expect(h.panelHosts()).toHaveLength(1);
+    expect(panelRoots[0]!.querySelector('h2')!.textContent).toBe('Already in your CRM');
+    expect(panelRoots[0]!.querySelector('dl')).toBeNull();
   });
 
   it('error: the tooltip and label are the error message, and a click opens the options page', async () => {
@@ -464,7 +475,8 @@ describe('labeled chip (floating)', () => {
     expect(button.textContent).toBe('Added');
     await h.settle(2600);
     expect(button.textContent).toBe('In CRM');
-    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(button.getAttribute('aria-disabled')).toBeNull();
+    expect(button.title).toBe('In CRM. Add a note');
     const css = roots[roots.length - 1]!.querySelector('style')!.textContent!;
     expect(css).toMatch(/\.chip\s*\{[^}]*min-width:\s*11em/);
   });
@@ -588,5 +600,72 @@ describe('orphaned content script and exclusive mount', () => {
     const hosts = document.querySelectorAll('#agentcrm-capture-host');
     expect(hosts).toHaveLength(1);
     expect(hosts[0]).not.toBe(stale);
+  });
+});
+
+
+describe('capture panel wiring', () => {
+  const INLINE = '<body><div id="row"><h1>Jane Doe</h1></div></body>';
+
+  it('a created capture opens the created panel listing what was sent; it never opens on page load', async () => {
+    const h = await boot('linkedin', '/in/jane', INLINE, reply(NOT_IN_CRM, CREATED));
+    await h.settle(0);
+    expect(h.panelHosts()).toHaveLength(0);
+    h.button()!.click();
+    await h.settle(0);
+    expect(h.panelHosts()).toHaveLength(1);
+    const root = panelRoots[panelRoots.length - 1]!;
+    expect(root.querySelector('h2')!.textContent).toBe('Added to AgentCRM');
+    expect(Array.from(root.querySelectorAll('dt')).map((n) => n.textContent)).toContain('Name');
+  });
+
+  it('an existing capture opens the existing panel with no field list', async () => {
+    const h = await boot('linkedin', '/in/jane', INLINE, reply(NOT_IN_CRM, EXISTING));
+    await h.settle(0);
+    h.button()!.click();
+    await h.settle(0);
+    const root = panelRoots[panelRoots.length - 1]!;
+    expect(root.querySelector('h2')!.textContent).toBe('Already in your CRM');
+    expect(root.querySelector('dl')).toBeNull();
+  });
+
+  it('a capture reply for a profile the address bar left never opens the panel', async () => {
+    let release!: (value: unknown) => void;
+    const gate = new Promise((resolve) => (release = resolve));
+    const h = await boot('linkedin', '/in/jane', INLINE, (msg: any) => (msg.kind === 'lookup' ? NOT_IN_CRM : gate));
+    await h.settle(0);
+    h.button()!.click();
+    await h.settle(0);
+    h.navigate('/in/someone-else');
+    release(CREATED);
+    await h.settle(0);
+    expect(h.panelHosts()).toHaveLength(0);
+    await h.settle(1000);
+    expect(h.panelHosts()).toHaveLength(0);
+  });
+
+  it('navigating to a different profile tears the panel down; the same profile with a new query keeps it', async () => {
+    const h = await boot('linkedin', '/in/jane', INLINE, reply({ ok: true, exists: true }));
+    await h.settle(0);
+    h.button()!.click();
+    await h.settle(0);
+    expect(h.panelHosts()).toHaveLength(1);
+    h.navigate('/in/jane/?utm=1');
+    await h.settle(1000);
+    expect(h.panelHosts()).toHaveLength(1);
+    h.navigate('/in/other');
+    await h.settle(1000);
+    expect(h.panelHosts()).toHaveLength(0);
+  });
+
+  it('a dead extension context removes the panel', async () => {
+    const h = await boot('linkedin', '/in/jane', INLINE, reply({ ok: true, exists: true }));
+    await h.settle(0);
+    h.button()!.click();
+    await h.settle(0);
+    expect(h.panelHosts()).toHaveLength(1);
+    vi.stubGlobal('chrome', { runtime: { sendMessage: h.sendMessage } });
+    await h.settle(1000);
+    expect(h.panelHosts()).toHaveLength(0);
   });
 });

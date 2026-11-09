@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { isLoopbackAddress, normalizeBaseUrl, sendCapture, verifyConnection } from '../src/api';
+import { isLoopbackAddress, normalizeBaseUrl, sendCapture, sendNote, verifyConnection } from '../src/api';
 import type { CapturePayload } from '../src/messages';
 
 const payload: CapturePayload = { source: 'linkedin', url: 'https://www.linkedin.com/in/jane-doe', name: 'Jane Doe' };
@@ -116,5 +116,42 @@ describe('isLoopbackAddress', () => {
   it('does not warn on text that is not an address yet', () => {
     expect(isLoopbackAddress('')).toBe(true);
     expect(isLoopbackAddress('htt')).toBe(true);
+  });
+});
+
+describe('sendNote', () => {
+  const note = { source: 'x' as const, url: 'https://x.com/jack', note: 'Met at the summit' };
+
+  it('is unconfigured without a token and never calls fetch', async () => {
+    const fetchImpl = vi.fn();
+    expect(await sendNote({ baseUrl: '', token: ' ' }, note, fetchImpl)).toMatchObject({ ok: false, code: 'unconfigured' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('posts source, url, and note only, with the bearer token, and returns the name', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(json(201, { ok: true, person: { name: 'Jack' } }));
+    const extra = { ...note, personId: 'per_1' } as typeof note;
+    const result = await sendNote({ baseUrl: 'http://localhost:4720/', token: ' cap_abc ' }, extra, fetchImpl);
+    expect(result).toEqual({ ok: true, personName: 'Jack' });
+    const [target, init] = fetchImpl.mock.calls[0]!;
+    expect(target).toBe('http://localhost:4720/api/capture/note');
+    expect(init.method).toBe('POST');
+    expect(init.headers.Authorization).toBe('Bearer cap_abc');
+    expect(JSON.parse(init.body)).toEqual(note);
+  });
+
+  it('maps the error envelope, a bare 401, a network failure, and an unreadable success', async () => {
+    const envelope = vi.fn().mockResolvedValue(json(404, { error: { code: 'not_found', message: 'No one in the CRM matches this profile. Capture it first.' } }));
+    expect(await sendNote({ token: 'cap_x' }, note, envelope)).toEqual({
+      ok: false,
+      code: 'not_found',
+      message: 'No one in the CRM matches this profile. Capture it first.',
+    });
+    const bare = vi.fn().mockResolvedValue(new Response('', { status: 401 }));
+    expect(await sendNote({ token: 'cap_x' }, note, bare)).toMatchObject({ ok: false, code: 'unauthorized' });
+    const down = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    expect(await sendNote({ token: 'cap_secret' }, note, down)).toMatchObject({ ok: false, code: 'network' });
+    const garbled = vi.fn().mockResolvedValue(new Response('nope', { status: 201 }));
+    expect(await sendNote({ token: 'cap_x' }, note, garbled)).toMatchObject({ ok: false, code: 'http' });
   });
 });

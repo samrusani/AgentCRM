@@ -325,3 +325,35 @@ export function lookupCapture(ctx: Pick<ActionContext, 'db' | 'workspaceId'>, in
   const canonical = canonicalize(data.source, data.url);
   return { exists: findExistingPerson(ctx, data.source, canonical, undefined) !== null };
 }
+
+// A note typed in the extension's capture panel. Same URL rules as capture; the note is scrubbed like every captured
+// field but keeps its line breaks. A note that is empty once invisible characters are gone fails min(1).
+const noteSchema = z
+  .object({
+    source: z.enum(['linkedin', 'x']),
+    url: scrubbedText(z.string().trim().min(1).max(500)),
+    note: z.preprocess(
+      scrubbed(true),
+      z.string().trim().min(1, 'The note is empty once invisible characters are removed.').max(2000, 'A note can be at most 2,000 characters.'),
+    ),
+  })
+  .strict();
+
+export interface CaptureNoteResult {
+  ok: true;
+  person: { name: string };
+}
+
+// Appends one note to the person the profile resolves to (profile columns only, no email). The reply carries the
+// name and nothing else, so the token still reads no record fields. The audit row holds the length, never the text.
+export function captureNote(ctx: ActionContext, input: unknown): CaptureNoteResult {
+  const data = parseInput(noteSchema, input);
+  const canonical = canonicalize(data.source, data.url);
+  return mutate(ctx, (tx): CaptureNoteResult => {
+    const existing = findExistingPerson(tx, data.source, canonical, undefined);
+    if (!existing) throw new AppError('not_found', 'No one in the CRM matches this profile. Capture it first.');
+    createActivityIn(tx, { entityType: 'person', entityId: existing.id, kind: 'note', body: data.note });
+    tx.audit('capture.note', 'person', existing.id, { length: data.note.length });
+    return { ok: true, person: { name: summarize(tx, existing.id).name } };
+  });
+}

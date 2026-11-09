@@ -4,7 +4,7 @@
 
 **The CRM that people and AI agents operate together.**
 
-<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-4000-15685b?style=flat" alt="4000 tests">
+<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-4101-15685b?style=flat" alt="4101 tests">
 
 [Quick start](#quick-start) · [What works](#what-works-today) · [Architecture docs](docs/architecture.md)
 
@@ -93,7 +93,7 @@ The client spawns the MCP server as a child process per session and it dies with
 
 ## What works today
 
-Every row below is backed by tests: 4,000 across the server (2,755), the web app (950), and the browser extension (295), plus 7 on the desktop shell's helpers. "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
+Every row below is backed by tests: 4,101 across the server (2,792), the web app (950), and the browser extension (359), plus 7 on the desktop shell's helpers. "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
 
 ### Core CRM
 
@@ -140,6 +140,7 @@ Every row below is backed by tests: 4,000 across the server (2,755), the web app
 | Call transcript capture: paste a call transcript and a model reads out the people and organizations it names, each with the verbatim line it was read from; every row waits for your review, nothing unverifiable is ever staged, and the transcript itself never reaches any agent surface | Working, verified against a stubbed model API; needs a connected model provider |
 | Mailbox scan: stage the people you already correspond with from mail synced to this computer, with message counts for judging each row; nothing is fetched or billed, every scan waits for your review whatever the auto accept setting, correspondents who wrote to you arrive as relationships (with a review hint saying how many tasks your promotion automations would create), and every person with linked mail shows when you last heard from them and last wrote to them | Working, verified against stored mail fixtures; needs a connected mail provider |
 | Browser extension: one click capture of the LinkedIn or X profile you are viewing, with the button sitting next to the profile name and showing In CRM when the person is already saved; token guarded, nothing leaves your machine | Working; load unpacked from apps/extension, generate the token in Settings |
+| Capture panel: after a capture, or a click on In CRM, a small panel on the profile page shows what was saved and takes notes straight into the CRM, so you never leave the tab | Working |
 
 ### Email and follow-ups
 
