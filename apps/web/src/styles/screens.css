@@ -852,6 +852,45 @@
 .run-list__item:focus-visible {
   outline-offset: -2px;
 }
+.run-list__older,
+.run-list__more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 16px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  font-size: 12px;
+  color: var(--ink-muted);
+  text-align: left;
+}
+.run-list__more {
+  justify-content: center;
+}
+.run-list__older:hover,
+.run-list__more:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-tint) 55%, var(--surface));
+}
+.run-list__older:focus-visible,
+.run-list__more:focus-visible {
+  outline-offset: -2px;
+}
+.run-list__more:disabled {
+  cursor: default;
+}
+.run-list__chevron {
+  flex: none;
+  transition: transform var(--duration) var(--ease);
+}
+.run-list__chevron.is-open {
+  transform: rotate(90deg);
+}
+.run-list__history {
+  border-top: 1px solid var(--line);
+}
 .run-list__title {
   font-weight: 550;
 }

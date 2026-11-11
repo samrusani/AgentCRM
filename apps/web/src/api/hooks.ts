@@ -651,9 +651,11 @@ export function useActivities(entityType: string, entityId: string | null) {
 
 export function useRuns() {
   const connection = useEventConnection();
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: ['runs', ''],
-    queryFn: () => api.runs.list(),
+    queryFn: ({ pageParam }) => api.runs.list({ cursor: pageParam }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
     refetchInterval: connection === 'open' ? false : 5000,
   });
 }

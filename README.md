@@ -4,7 +4,7 @@
 
 **The CRM that people and AI agents operate together.**
 
-<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-4392-15685b?style=flat" alt="4392 tests">
+<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-4429-15685b?style=flat" alt="4429 tests">
 
 [Quick start](#quick-start) · [What works](#what-works-today) · [Architecture docs](docs/architecture.md)
 
@@ -95,7 +95,7 @@ The client spawns the MCP server as a child process per session and it dies with
 
 ## What works today
 
-Every row below is backed by tests: 4,392 across the server (2,887), the web app (1,131), and the browser extension (374), plus 7 on the desktop shell's helpers. "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
+Every row below is backed by tests: 4,429 across the server (2,887), the web app (1,168), and the browser extension (374), plus 7 on the desktop shell's helpers. "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
 
 ### Core CRM
 
@@ -128,7 +128,7 @@ Every row below is backed by tests: 4,392 across the server (2,887), the web app
 | Agent panel: chat, run progress, approvals | Working; model backed with your own key for Anthropic, OpenAI, DeepSeek, or Z.ai, or a local Ollama server; honest deterministic replies with none |
 | Draft outreach: model written drafts with budgets, review before saving | Working, verified against stubbed provider APIs; drafts are never sent |
 | Model costs: per call usage rows, per run estimates from list prices | Working, always labelled estimates |
-| Research: runs with live steps, counts, and partial results | Simulated demo run only |
+| Research: runs with live steps, counts, and partial results; the run list stays short, with open runs and the newest finished ones up front and everything older behind a collapsed history that pages from the server | Simulated demo run only |
 | MCP server over stdio | Working, read and propose tools; can start qualify runs, allowlisted Apify runs, allowlisted lead captures, and budgeted draft runs; a database wide worker lease keeps exactly one job worker active, with the API server preferred, so a long lived MCP process never runs steps while the server is up |
 | CLI: doctor, seed, serve, search, runs | Working |
 

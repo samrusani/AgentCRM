@@ -1188,8 +1188,14 @@ export const api = {
   },
 
   runs: {
-    list: async (status?: string) =>
-      asPage<Run>(await request<unknown>('GET', '/runs', { query: { status } })).items.map(normalizeRun),
+    list: async (params: { status?: string; cursor?: string | null; limit?: number } = {}): Promise<Page<Run>> => {
+      const page = asPage<Run>(
+        await request<unknown>('GET', '/runs', {
+          query: { status: params.status, cursor: params.cursor ?? undefined, limit: params.limit },
+        }),
+      );
+      return { items: page.items.map(normalizeRun), nextCursor: page.nextCursor };
+    },
     start: async (title?: string) =>
       normalizeRun(await request<Run>('POST', '/runs', { body: { kind: 'demo_research', title } })),
     startApify: async (input: ApifyRunInput) =>

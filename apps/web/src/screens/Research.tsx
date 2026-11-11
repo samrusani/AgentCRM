@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useControlRun, useRun, useRuns, useStartRun } from '../api/hooks';
 import type { Run } from '../api/types';
@@ -26,12 +26,53 @@ import { LeadCaptureCard } from './LeadCaptureCard';
 import { TranscriptCaptureCard } from './TranscriptCaptureCard';
 import { useUI } from '../lib/ui';
 
+// The list stays short: every open run, then the newest finished runs, up to this many rows in all.
+const RECENT_ROWS = 8;
+// A paused run needs the user, so it counts as open and never folds into the history.
+const OPEN_STATUSES: ReadonlySet<string> = new Set(['queued', 'running', 'paused', 'waiting_approval']);
+
+function partitionRuns(items: Run[]): { recent: Run[]; older: Run[] } {
+  const openCount = items.filter((run) => OPEN_STATUSES.has(run.status)).length;
+  let finishedSlots = Math.max(0, RECENT_ROWS - openCount);
+  const recent: Run[] = [];
+  const older: Run[] = [];
+  for (const run of items) {
+    if (OPEN_STATUSES.has(run.status)) recent.push(run);
+    else if (finishedSlots > 0) {
+      finishedSlots -= 1;
+      recent.push(run);
+    } else older.push(run);
+  }
+  return { recent, older };
+}
+
 export function Research() {
   const runs = useRuns();
   const [params, setParams] = useSearchParams();
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const autoOpened = useRef<string | null>(null);
   const startRun = useStartRun();
   const { pushToast } = useUI();
   const requested = params.get('run');
+  const items = useMemo(() => {
+    // Paging refetches can shift pages so a run shows up twice; each run renders once, first occurrence wins.
+    const seen = new Set<string>();
+    return (runs.data?.pages.flatMap((page) => page.items) ?? []).filter((run) =>
+      seen.has(run.id) ? false : (seen.add(run.id), true),
+    );
+  }, [runs.data]);
+  const { recent, older } = useMemo(() => partitionRuns(items), [items]);
+  const requestedIsOlder = requested !== null && older.some((run) => run.id === requested);
+
+  // A deep link to a hidden run opens the history; collapsing it afterwards sticks while the requested
+  // run is unchanged, and leaving the hidden run resets the latch so returning to it expands again.
+  useEffect(() => {
+    if (requestedIsOlder && autoOpened.current !== requested) {
+      autoOpened.current = requested;
+      setHistoryOpen(true);
+    }
+    if (!requestedIsOlder) autoOpened.current = null;
+  }, [requestedIsOlder, requested]);
 
   const select = (id: string) => {
     const copy = new URLSearchParams(params);
@@ -114,7 +155,9 @@ export function Research() {
       </div>
     );
   }
-  if (runs.isError) {
+  // Only a load with nothing to show replaces the screen; a failed older page or background refresh
+  // leaves the runs already on screen in place.
+  if (runs.isError && !runs.data) {
     return (
       <div className="screen">
         <PageHeader title="Research" />
@@ -123,8 +166,8 @@ export function Research() {
     );
   }
 
-  const items = runs.data;
-  const selectedId = requested ?? items[0]?.id ?? null;
+  // The newest visible run, so the auto selected row is always on screen.
+  const selectedId = requested ?? recent[0]?.id ?? items[0]?.id ?? null;
 
   return (
     <div className="screen screen--split">
@@ -135,12 +178,63 @@ export function Research() {
           <TranscriptCaptureCard onStarted={(run) => select(run.id)} />
           <nav className="run-list" aria-label="Runs">
             <ul>
-              {items.map((run) => (
+              {recent.map((run) => (
                 <li key={run.id}>
                   <RunListItem run={run} selected={run.id === selectedId} onSelect={() => select(run.id)} />
                 </li>
               ))}
             </ul>
+            {older.length > 0 || runs.hasNextPage ? (
+              <>
+                <button
+                  type="button"
+                  className="run-list__older"
+                  aria-expanded={historyOpen}
+                  onClick={() => setHistoryOpen((open) => !open)}
+                >
+                  <span>Older runs</span>
+                  <Icon name="chevronRight" className={`run-list__chevron${historyOpen ? ' is-open' : ''}`} />
+                </button>
+                {historyOpen ? (
+                  <>
+                    {older.length > 0 ? (
+                      <ul className="run-list__history">
+                        {older.map((run) => (
+                          <li key={run.id}>
+                            <RunListItem
+                              run={run}
+                              selected={run.id === selectedId}
+                              onSelect={() => select(run.id)}
+                            />
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {runs.hasNextPage ? (
+                      <>
+                        {runs.isFetchNextPageError && !runs.isFetchingNextPage ? (
+                          <p className="inline-error" role="alert">
+                            Older runs did not load.
+                          </p>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="run-list__more"
+                          disabled={runs.isFetchingNextPage}
+                          onClick={() => void runs.fetchNextPage()}
+                        >
+                          {runs.isFetchingNextPage
+                            ? 'Loading...'
+                            : runs.isFetchNextPageError
+                              ? 'Try again'
+                              : 'Show older runs'}
+                        </button>
+                      </>
+                    ) : null}
+                  </>
+                ) : null}
+              </>
+            ) : null}
           </nav>
         </div>
         <div className="run-detail">
