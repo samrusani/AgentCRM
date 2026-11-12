@@ -53,7 +53,7 @@ describe('migration 034 backfill', () => {
       insertActivity.run('act_2', at, 'wsp_1', 'person', 'per_1', 'email_draft', 'Draft about zeppelin budget', 'agent');
       db.prepare('INSERT INTO task (id, created_at, workspace_id, title, updated_at) VALUES (?, ?, ?, ?, ?)').run('tsk_1', at, 'wsp_1', 'Send the quokka deck', at);
       db.prepare('INSERT INTO meeting (id, created_at, workspace_id, title, starts_at, location, notes, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run('mtg_1', at, 'wsp_1', 'Board sync', start, 'Lisbon office', 'Talk about narwhals', at);
-      expect(applyMigrations(db)).toEqual(['034_search_widening.sql', '035_backblaze.sql', '036_contact_fields.sql']);
+      expect(applyMigrations(db)).toEqual(['034_search_widening.sql', '035_backblaze.sql', '036_contact_fields.sql', '037_crunchbase.sql']);
 
       const ids = (table: string, column: string, phrase: string) =>
         (db.prepare(`SELECT entity_id FROM ${table} WHERE ${table} MATCH ?`).all(`${column} : "${phrase}"`) as { entity_id: string }[]).map((row) => row.entity_id);

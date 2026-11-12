@@ -93,6 +93,7 @@ export function toOrganization(row: Row) {
     kind: String(row.kind) as 'fund' | 'company',
     location: text(row.location),
     linkedinUrl: text(row.linkedin_url),
+    crunchbaseUrl: text(row.crunchbase_url),
     phone: text(row.phone),
     website: text(row.website),
     tags: parseJson<string[]>(row.tags, []),

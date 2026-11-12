@@ -156,7 +156,7 @@ describe('backfill and migration safety', () => {
       // Sanity: the same signals inside their own workspace do promote.
       insertOpportunity(db, 'opp_real', 'wsp_2', 'pip_2', 'stg_2b', 'per_ws2_real');
 
-      expect(applyMigrations(db)).toEqual(['019_lifecycle.sql', '020_lifecycle_indexes.sql', '021_worker_lease.sql', '022_pipelines.sql', '023_lists.sql', '024_mailbox.sql', '025_attributes.sql', '026_birthday.sql', '027_automations.sql', '028_sequences.sql', '029_saved_views.sql', '030_transcript.sql', '031_duplicates.sql', '032_organization_duplicates.sql', '033_meetings.sql', '034_search_widening.sql', '035_backblaze.sql', '036_contact_fields.sql']);
+      expect(applyMigrations(db)).toEqual(['019_lifecycle.sql', '020_lifecycle_indexes.sql', '021_worker_lease.sql', '022_pipelines.sql', '023_lists.sql', '024_mailbox.sql', '025_attributes.sql', '026_birthday.sql', '027_automations.sql', '028_sequences.sql', '029_saved_views.sql', '030_transcript.sql', '031_duplicates.sql', '032_organization_duplicates.sql', '033_meetings.sql', '034_search_widening.sql', '035_backblaze.sql', '036_contact_fields.sql', '037_crunchbase.sql']);
       const rows = db.prepare('SELECT id, lifecycle FROM person ORDER BY id').all();
       expect(rows).toEqual([
         { id: 'per_msg_other_ws', lifecycle: 'lead' },

@@ -333,6 +333,7 @@ export const organizationFillableColumns = [
   ['domain', 'domain'],
   ['location', 'location'],
   ['linkedinUrl', 'linkedin_url'],
+  ['crunchbaseUrl', 'crunchbase_url'],
   ['phone', 'phone'],
   ['website', 'website'],
 ] as const;

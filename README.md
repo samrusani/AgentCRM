@@ -4,7 +4,7 @@
 
 **The CRM that people and AI agents operate together.**
 
-<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-4429-15685b?style=flat" alt="4429 tests">
+<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-4474-15685b?style=flat" alt="4474 tests">
 
 [Quick start](#quick-start) · [What works](#what-works-today) · [Architecture docs](docs/architecture.md)
 
@@ -95,7 +95,7 @@ The client spawns the MCP server as a child process per session and it dies with
 
 ## What works today
 
-Every row below is backed by tests: 4,429 across the server (2,887), the web app (1,168), and the browser extension (374), plus 7 on the desktop shell's helpers. "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
+Every row below is backed by tests: 4,474 across the server (2,924), the web app (1,176), and the browser extension (374), plus 7 on the desktop shell's helpers. "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
 
 ### Core CRM
 
@@ -145,7 +145,7 @@ Every row below is backed by tests: 4,429 across the server (2,887), the web app
 | Browser extension: one click capture of the LinkedIn or X profile you are viewing, with the button sitting next to the profile name and showing In CRM when the person is already saved; token guarded, nothing leaves your machine | Working; load unpacked from apps/extension, generate the token in Settings |
 | Capture panel: after a capture, or a click on In CRM, a small panel on the profile page shows what was saved and takes notes straight into the CRM, so you never leave the tab | Working |
 | Recapture fill-in: capturing someone already saved fills the fields their record is missing (open Contact info first for email and phone) and never changes a field that has anything | Working |
-| Contact fields: phone and website on people and organizations, backfilled from earlier captures, editable everywhere fields are, with a Website column in the organizations table | Working |
+| Contact fields: phone and website on people and organizations, backfilled from earlier captures, editable everywhere fields are, with a Website column in the organizations table; organizations also take a Crunchbase page link, stored in its canonical form and shown as a link on the sheet | Working |
 
 ### Email and follow-ups
 

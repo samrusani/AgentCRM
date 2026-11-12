@@ -11,6 +11,9 @@ export const xProfileUrlMessage =
 export const companyLinkedinUrlMessage =
   'The LinkedIn link must be a company page such as https://www.linkedin.com/company/example.';
 
+export const crunchbaseUrlMessage =
+  'The Crunchbase link must be an organization page such as https://www.crunchbase.com/organization/example.';
+
 export function linkedinHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
   return host === 'linkedin.com' || host.endsWith('.linkedin.com');
@@ -96,6 +99,22 @@ export function canonicalCompanyLinkedinUrl(value: unknown): string | null {
   const match = /^\/company\/([^/]+)/.exec(url.pathname);
   if (!match || !match[1]) return null;
   const canonicalUrl = `https://www.linkedin.com/company/${match[1]}`;
+  return canonicalUrl.length > maxCompanyLinkedinUrlLength ? null : canonicalUrl;
+}
+
+// https://www.crunchbase.com/organization/<slug> for an organization's Crunchbase page, or null for any other link.
+// Same rules as the company LinkedIn form: the slug keeps its case and percent encoding; query, fragment, trailing
+// slash, and deeper path are dropped; a canonical form past 500 characters is refused.
+export function canonicalCrunchbaseUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const url = parseUrl(value);
+  if (!url) return null;
+  if (!plainWebUrl(url)) return null;
+  const host = url.hostname.toLowerCase();
+  if (host !== 'crunchbase.com' && !host.endsWith('.crunchbase.com')) return null;
+  const match = /^\/organization\/([^/]+)/.exec(url.pathname);
+  if (!match || !match[1]) return null;
+  const canonicalUrl = `https://www.crunchbase.com/organization/${match[1]}`;
   return canonicalUrl.length > maxCompanyLinkedinUrlLength ? null : canonicalUrl;
 }
 

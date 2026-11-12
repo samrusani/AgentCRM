@@ -87,6 +87,7 @@ export interface Organization {
   kind: 'fund' | 'company' | string;
   location: string | null;
   linkedinUrl?: string | null;
+  crunchbaseUrl?: string | null;
   phone?: string | null;
   website?: string | null;
   tags: string[];

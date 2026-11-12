@@ -258,7 +258,7 @@ describe('5. rebuild correctness', () => {
     ip.run('per_2', at, 'wsp_1', 'Grace', 'Hopper', 'grace@navy.example', null, null, at);
     const queries = ['ada', 'love', 'lace', 'analytical', 'grace@', 'hopper', 'ada love', 'a.b', 'navy.example'];
     const before = queries.map((q) => searchOldPeople(old, q));
-    expect(applyMigrations(old)).toEqual(['034_search_widening.sql', '035_backblaze.sql', '036_contact_fields.sql']);
+    expect(applyMigrations(old)).toEqual(['034_search_widening.sql', '035_backblaze.sql', '036_contact_fields.sql', '037_crunchbase.sql']);
     for (const [i, q] of queries.entries()) {
       const after = searchAll(old as never, 'wsp_1', q).people.map((x) => x.id);
       expect([q, after]).toEqual([q, before[i]]);

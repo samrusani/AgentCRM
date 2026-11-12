@@ -18,9 +18,11 @@ import { promoteForStageIn } from './lifecycle.js';
 import { linkStoredMessagesToPerson } from './mailLinks.js';
 import {
   canonicalCompanyLinkedinUrl,
+  canonicalCrunchbaseUrl,
   canonicalPersonLinkedinUrl,
   canonicalXUrl,
   companyLinkedinUrlMessage,
+  crunchbaseUrlMessage,
   linkedinProfileUrlMessage,
   xProfileUrlMessage,
 } from './profileUrls.js';
@@ -98,6 +100,7 @@ export const organizationFields = {
   kind: z.enum(['fund', 'company']),
   location: optionalText(200),
   linkedinUrl: profileUrlField(canonicalCompanyLinkedinUrl, companyLinkedinUrlMessage),
+  crunchbaseUrl: profileUrlField(canonicalCrunchbaseUrl, crunchbaseUrlMessage),
   phone: phoneField,
   website: websiteField,
   tags: tagsSchema,
@@ -173,6 +176,7 @@ const specs: Record<UpdatableType, EntitySpec> = {
       kind: 'kind',
       location: 'location',
       linkedinUrl: 'linkedin_url',
+      crunchbaseUrl: 'crunchbase_url',
       phone: 'phone',
       website: 'website',
       tags: 'tags',

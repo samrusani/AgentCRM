@@ -27,7 +27,7 @@ IDs are prefixed strings, for example `per_a1b2c3`, generated from random bytes.
 | --- | --- |
 | workspace | name, template, settings (JSON: qualification config) |
 | person | workspace_id, version, first_name, last_name, email, title, organization_id, location, linkedin_url, x_url, phone, website, lifecycle (lead, relationship), tags (JSON array), next_action_at, updated_at |
-| organization | workspace_id, version, name, domain, kind (fund, company), location, linkedin_url, phone, website, tags (JSON array), updated_at |
+| organization | workspace_id, version, name, domain, kind (fund, company), location, linkedin_url, crunchbase_url, phone, website, tags (JSON array), updated_at |
 | pipeline | workspace_id, version, name, template |
 | stage | pipeline_id, name, seq |
 | opportunity | workspace_id, version, name, pipeline_id, stage_id, organization_id, person_id, amount_target, currency, owner, status (open, passed, lost, nurture), reason, next_action_at, stage_changed_at, updated_at |
@@ -413,7 +413,7 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 | DELETE `/api/organizations/:id/enrichment?runId=` | Dismisses the run's remaining pending suggestions |
 | GET `/api/organizations?q=&cursor=&limit=` | Search by name, domain |
 | GET `/api/organizations/:id` | Organization plus `people`, `claims`, `activities`, `opportunities` |
-| PATCH `/api/organizations/:id` | `{ expectedVersion, fields }`; `linkedinUrl` is editable and canonicalized to a `linkedin.com/company/` URL |
+| PATCH `/api/organizations/:id` | `{ expectedVersion, fields }`; `linkedinUrl` is editable and canonicalized to a `linkedin.com/company/` URL, `crunchbaseUrl` to a `crunchbase.com/organization/` URL |
 | GET `/api/views?screen=` | Saved views for a screen, oldest first |
 | POST `/api/views` | `{ name, screen, config }`, config keys whitelisted per screen |
 | PATCH `/api/views/:id` | `{ expectedVersion, fields: { name?, config? } }` |
@@ -654,6 +654,8 @@ Endpoints, all human surfaces behind the same guards as other settings: `GET /ap
 Validation, the same on every write path (PATCH, proposals, capture): phone is trimmed, at most 40 characters, must contain a digit, and an empty string is null; website is trimmed, at most 500 characters counted on the stored value, scheme included, gets `https://` prepended when schemeless (leading slashes are dropped first, so `//example.com` never becomes `https:////...`), must then parse as an http or https URL whose host is a dotted domain name (letters, digits and hyphens between dots, at least two labels; the URL parser alone is too lenient and would accept hosts like `ht!tp`), must carry no userinfo (anything before an @, a pasted email address included, is refused) and no control, zero width, or bidirectional characters, and an empty string is null. The value is otherwise stored as typed (case, port, trailing dot kept; a unicode host stays raw while labels render its punycode form). Neither is ever a dedupe key, and neither joins a search index; the palette finds people by name and organizations by name and domain, as before.
 
 The fields ride the standard entity registry, so they flow everywhere fields already flow: `PATCH /api/people/:id` and `PATCH /api/organizations/:id` with the version envelope, `crm_propose_changes` and `crm_apply_changes` (an agent can fill them like any field edit, no approval), CSV import person mapping (suggested headers phone and website; a person's website is never reused as an organization's domain, only a Company Website style header maps to domain), and the capture paths per the capture section (columns on create, and under the fill-in rule). Manual edits write no claim, like every built in field.
+
+`organization.crunchbase_url` (migration 037) is a canonical profile URL column in the mold of `organization.linkedin_url`: it stores `https://www.crunchbase.com/organization/<slug>`, built by a dedicated helper beside the LinkedIn and X ones. The helper accepts crunchbase.com or any subdomain (host compared lowercased), takes the first path segment after `/organization/`, keeps the slug's case and percent encoding, drops query, fragment, trailing slash, and deeper path, prepends https to a schemeless paste, allows http or https only with no userinfo and no port, and refuses a canonical form over 500 characters. The raw paste is also bounded at 500 characters before canonicalization, the same bound every profile URL field shares on edit. Any other link is a validation error on edit; null or an empty string clears the field. The field rides the entity registry like phone and website (PATCH, create, proposals, `crm_propose_changes` and `crm_apply_changes`), and the organization merge fill list includes it. It is never a dedupe key, joins no search index, is not read by capture, CSV import, lead capture extraction, or enrichment, and the migration backfills nothing because no claim has ever carried this field. Manual edits write no claim.
 
 ## Custom attributes
 

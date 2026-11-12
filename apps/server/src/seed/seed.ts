@@ -105,6 +105,7 @@ export function seedDatabase(db: Db, options: SeedOptions = {}) {
       // Fictional contact fields for a few organizations, so the sheets and the table show them.
       ...(index % 2 === 0 ? { website: `https://www.${domain}` } : {}),
       ...(index % 3 === 0 ? { phone: `+1 555 01${String(index).padStart(2, '0')} 0100` } : {}),
+      ...(seed.kind === 'fund' && index % 2 === 0 ? { crunchbaseUrl: `https://www.crunchbase.com/organization/${seed.slug}` } : {}),
       tags: seed.kind === 'fund' ? ['investor'] : ['company'],
     });
     return { ...record, seed, domain };

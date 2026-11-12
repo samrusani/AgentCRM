@@ -291,7 +291,7 @@ describe('organization duplicate scan', () => {
   });
 
   it('counts fills in each direction over the fillable columns and organization attributes', () => {
-    expect(organizationFillableColumns.map(([field]) => field)).toEqual(['domain', 'location', 'linkedinUrl', 'phone', 'website']);
+    expect(organizationFillableColumns.map(([field]) => field)).toEqual(['domain', 'location', 'linkedinUrl', 'crunchbaseUrl', 'phone', 'website']);
     const a = org({ name: 'Acme', domain: 'acme.com', location: null, linkedinUrl: null });
     const b = org({ name: 'Acme', domain: 'acme.com', location: 'London', linkedinUrl: 'https://www.linkedin.com/company/acme' });
     attribute(b, 'aum', '5');

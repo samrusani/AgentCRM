@@ -110,6 +110,7 @@ const createOrganizationSchema = z
     kind: organizationFields.kind.default('company'),
     location: organizationFields.location.optional().default(null),
     linkedinUrl: organizationFields.linkedinUrl.optional().default(null),
+    crunchbaseUrl: organizationFields.crunchbaseUrl.optional().default(null),
     phone: organizationFields.phone.optional().default(null),
     website: organizationFields.website.optional().default(null),
     tags: organizationFields.tags.optional().default([]),
@@ -121,8 +122,9 @@ export function createOrganization(ctx: ActionContext, input: unknown) {
   return mutate(ctx, (tx) => createOrganizationIn(tx, data));
 }
 
-type OrganizationInput = Omit<z.output<typeof createOrganizationSchema>, 'linkedinUrl' | 'phone' | 'website'> & {
+type OrganizationInput = Omit<z.output<typeof createOrganizationSchema>, 'linkedinUrl' | 'crunchbaseUrl' | 'phone' | 'website'> & {
   linkedinUrl?: string | null;
+  crunchbaseUrl?: string | null;
   phone?: string | null;
   website?: string | null;
 };
@@ -133,8 +135,8 @@ export function createOrganizationIn(tx: Tx, data: OrganizationInput) {
   const now = tx.now();
   tx.db
     .prepare(
-      `INSERT INTO organization (id, created_at, workspace_id, version, name, domain, kind, location, linkedin_url, phone, website, tags, updated_at)
-       VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO organization (id, created_at, workspace_id, version, name, domain, kind, location, linkedin_url, crunchbase_url, phone, website, tags, updated_at)
+       VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -145,6 +147,7 @@ export function createOrganizationIn(tx: Tx, data: OrganizationInput) {
       data.kind,
       data.location,
       data.linkedinUrl ?? null,
+      data.crunchbaseUrl ?? null,
       data.phone ?? null,
       data.website ?? null,
       JSON.stringify(data.tags),

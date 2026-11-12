@@ -83,7 +83,7 @@ describe('migration 036', () => {
       claim.run('clm_4', '2026-01-02T00:00:00.000Z', 'person', 'per_2', 'phone', '555 0200');
       claim.run('clm_5', '2026-01-02T00:00:00.000Z', 'organization', 'org_1', 'website', 'https://acme.example.com');
       claim.run('clm_6', '2026-01-02T00:00:00.000Z', 'organization', 'org_1', 'location', 'Nowhere');
-      expect(applyMigrations(db)).toEqual(['036_contact_fields.sql']);
+      expect(applyMigrations(db)).toEqual(['036_contact_fields.sql', '037_crunchbase.sql']);
       expect(db.prepare('SELECT id, phone, website FROM person ORDER BY id').all()).toEqual([
         { id: 'per_1', phone: '555 0199', website: 'https://ada.example.com' },
         { id: 'per_2', phone: '555 0200', website: null },

@@ -638,7 +638,7 @@ describe('6. migration 030', () => {
       const rowsBefore = snap('import_row');
       expect(batchesBefore).toHaveLength(4);
       expect(rowsBefore).toHaveLength(12);
-      expect(applyMigrations(db)).toEqual(['030_transcript.sql', '031_duplicates.sql', '032_organization_duplicates.sql', '033_meetings.sql', '034_search_widening.sql', '035_backblaze.sql', '036_contact_fields.sql']);
+      expect(applyMigrations(db)).toEqual(['030_transcript.sql', '031_duplicates.sql', '032_organization_duplicates.sql', '033_meetings.sql', '034_search_widening.sql', '035_backblaze.sql', '036_contact_fields.sql', '037_crunchbase.sql']);
       expect(snap('import_batch')).toEqual(batchesBefore);
       expect(snap('import_row')).toEqual(rowsBefore);
       expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -668,7 +668,7 @@ describe('6. migration 030', () => {
 
   it('KILLS: the migration list in the shipped folder ends at 033 with no gaps', () => {
     const files = readdirSync(migrationsDirectory).filter((file) => file.endsWith('.sql')).sort();
-    expect(files.at(-1)).toBe('036_contact_fields.sql');
+    expect(files.at(-1)).toBe('037_crunchbase.sql');
     files.forEach((file, index) => expect(file.startsWith(String(index + 1).padStart(3, '0'))).toBe(true));
   });
 });

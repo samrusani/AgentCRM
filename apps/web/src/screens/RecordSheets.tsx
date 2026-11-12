@@ -687,6 +687,16 @@ export function OrganizationSheet({
                   renderValue={(value) => <ProfileLink value={value} />}
                 />
               </FieldRow>
+              <FieldRow label="Crunchbase" claims={claimsForField(organization.claims, 'crunchbaseUrl')} openClaim={openClaim} onToggleClaim={toggleClaim}>
+                <EditableValue
+                  label="Crunchbase"
+                  field="crunchbaseUrl"
+                  value={organization.crunchbaseUrl ?? null}
+                  save={saveField('crunchbaseUrl')}
+                  onReload={() => query.refetch()}
+                  renderValue={(value) => <ProfileLink value={value} />}
+                />
+              </FieldRow>
               <FieldRow label="Tags" openClaim={openClaim} onToggleClaim={toggleClaim}>
                 {organization.tags.length > 0 ? (
                   <span className="tag-row">
@@ -712,7 +722,7 @@ export function OrganizationSheet({
 
           <OtherEvidence
             claims={organization.claims}
-            shownFields={['domain', 'location', 'phone', 'website', 'linkedinUrl']}
+            shownFields={['domain', 'location', 'phone', 'website', 'linkedinUrl', 'crunchbaseUrl']}
             openClaim={openClaim}
             onToggle={toggleClaim}
           />
