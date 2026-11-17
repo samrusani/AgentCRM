@@ -246,13 +246,20 @@ export async function startRun(
   token: string,
   actorId: string,
   input: Record<string, unknown>,
-  caps: { maxItems: number; timeoutSeconds: number },
+  caps: { maxItems?: number; timeoutSeconds: number; maxTotalChargeUsd?: number },
   options: ApifyRequestOptions = {},
 ): Promise<ApifyRunInfo> {
   const data = dataOf(
     await request(token, 'POST', `/v2/acts/${actorPathId(actorId)}/runs`, {
       ...options,
-      query: { maxItems: caps.maxItems, timeout: caps.timeoutSeconds },
+      query: {
+        timeout: caps.timeoutSeconds,
+        // Pay per event actors take their charge cap from maxTotalChargeUsd and declare a minimum for it. An item
+        // cap sent alongside still lowers the cost ceiling Apify computes, back under that minimum, so a call that
+        // sends the dollar cap sends no item cap.
+        ...(caps.maxItems !== undefined ? { maxItems: caps.maxItems } : {}),
+        ...(caps.maxTotalChargeUsd !== undefined ? { maxTotalChargeUsd: caps.maxTotalChargeUsd } : {}),
+      },
       body: input,
     }),
   );

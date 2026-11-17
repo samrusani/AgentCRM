@@ -69,6 +69,11 @@ export function webSearchInput(scope: { query?: string }): Record<string, unknow
   return { queries: scope.query ?? '', maxPagesPerQuery: 1, resultsPerPage: 10 };
 }
 
+// The default actor is pay per event and declares minimalMaxTotalChargeUsd 0.50, which the platform enforces on the
+// start: real runs proved that an item cap sent alongside still made Apify compute a maximum cost under $0.50 and
+// refuse with HTTP 400, so the web start sends the dollar cap alone and the one page input bounds the actual work.
+export const webSearchCapUsd = 0.5;
+
 export interface WebScope extends EnrichScopeBase {
   personId: string;
   fullName?: string;

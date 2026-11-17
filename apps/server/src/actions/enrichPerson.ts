@@ -37,7 +37,7 @@ import { scrubCapturedLine } from './capture.js';
 import { canonicalPersonLinkedinUrl, encodeIdentifier, normalizeProfileUrl } from './profileUrls.js';
 import { clean, fieldAliases, pick, pickLocation } from './apifyMapping.js';
 import { isActiveModelReady } from '../queries/modelProvider.js';
-import { personHoldingX, type WebScope, webModeFields, webNeedsProviderMessage, webReadStep, webSearchInput, webSearchQuery } from './enrichWeb.js';
+import { personHoldingX, type WebScope, webModeFields, webNeedsProviderMessage, webReadStep, webSearchCapUsd, webSearchInput, webSearchQuery } from './enrichWeb.js';
 
 // Person enrichment: one Apify call, suggestions a person accepts one by one. The mode is decided at start by the
 // saved LinkedIn link and frozen into the run scope. Profile mode scrapes that profile and checks the item against
@@ -167,6 +167,10 @@ export function enrichPersonStartScope(tx: Tx, personId: string, requested?: 'we
 export const enrichPersonFlavor: EnrichFlavor<EnrichScope> = {
   kind: enrichPersonKind,
   actor: enrichPersonActor,
+  // Web mode sends the $0.50 dollar cap alone (an item cap beside it kept the start refused); the other modes
+  // keep the usual small item floor and send no dollar cap, exactly as before.
+  capItems: (scope) => (modeOf(scope) === 'web' ? null : minimumCapItems),
+  capUsd: (scope) => (modeOf(scope) === 'web' ? webSearchCapUsd : null),
   startInput: (scope) =>
     modeOf(scope) === 'web'
       ? webSearchInput(scope)

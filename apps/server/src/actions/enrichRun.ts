@@ -57,6 +57,13 @@ export interface EnrichFlavor<S extends EnrichScopeBase = EnrichScopeBase> {
   actor: string;
   // What the actor is sent for this run's frozen target.
   startInput(scope: S): Record<string, unknown>;
+  // The charge cap (in items) sent with this run's actor start. Undefined method: the usual small floor. Null from
+  // the method: no item cap is sent at all, for a pay per event start whose dollar cap below is the whole ceiling,
+  // because an item cap sent alongside lowers the cost ceiling Apify computes back under the declared minimum.
+  capItems?(scope: S): number | null;
+  // An explicit cost cap in dollars for the start. Pay per event actors read their cap from this, not from
+  // maxItems, and declare a minimum for it that the platform enforces before anything runs.
+  capUsd?(scope: S): number | null;
   // The last step: reads the first dataset item and writes the suggestions.
   // `seq` is the live step's number, for flavors whose read work spans more than one step.
   read(ctx: ActionContext, runId: string, scope: S, seq: number): Promise<AdvanceResult>;
@@ -317,8 +324,10 @@ async function startScrapeStep<S extends EnrichScopeBase>(
   try {
     started = await startApifyRun(token, scope.actorId, flavor.startInput(scope), {
       // One target in the input bounds the work; the floor only clears Apify's minimum charge cap.
-      maxItems: minimumCapItems,
+      // A null from capItems means no item cap at all, for the pay per event start whose dollar cap is the ceiling.
+      maxItems: flavor.capItems === undefined ? minimumCapItems : (flavor.capItems(scope as never) ?? undefined),
       timeoutSeconds: Math.max(1, Math.ceil(apifyTimeoutMilliseconds() / 1000)),
+      maxTotalChargeUsd: flavor.capUsd?.(scope as never) ?? undefined,
     });
   } catch (error) {
     if (error instanceof ApifyError && error.permanent) return providerFailure(ctx, never, runId, scope, token, error);

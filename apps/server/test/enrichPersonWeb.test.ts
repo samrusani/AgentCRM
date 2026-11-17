@@ -180,6 +180,11 @@ describe('web mode search and read', () => {
     expect(apify.state.startCalls).toBe(1);
     expect(apify.state.startActors).toEqual([searchActorKey]);
     expect(apify.state.startBodies[0]).toMatchObject({ queries: `${person.firstName} Ellery`, maxPagesPerQuery: 1 });
+    // The default actor is pay per event and declares minimalMaxTotalChargeUsd 0.50. Real runs proved both that
+    // an item cap alone is refused with HTTP 400 and that an item cap sent beside the dollar cap still is, so the
+    // web start sends the dollar cap and no maxItems at all; the one page input bounds the actual work.
+    expect(apify.state.startQueries[0]).toContain('maxTotalChargeUsd=0.5');
+    expect(apify.state.startQueries[0]).not.toContain('maxItems');
     expect(detail.scope).toMatchObject({ mode: 'web', actorId: 'apify/google-search-scraper', fullName: `${person.firstName} Ellery`, query: `${person.firstName} Ellery` });
     expect(anthropic.state.messageCalls).toBe(1);
   });
