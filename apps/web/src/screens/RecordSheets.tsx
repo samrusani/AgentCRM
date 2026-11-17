@@ -467,6 +467,17 @@ export function PersonSheet({
                   renderValue={(value) => <WebsiteLink value={value} />}
                 />
               </FieldRow>
+              <FieldRow label="Calendar" claims={claimsForField(person.claims, 'calendarUrl')} openClaim={openClaim} onToggleClaim={toggleClaim}>
+                <EditableValue
+                  label="Calendar"
+                  field="calendarUrl"
+                  limit={500}
+                  value={person.calendarUrl ?? null}
+                  save={saveField('calendarUrl')}
+                  onReload={() => query.refetch()}
+                  renderValue={(value) => <WebsiteLink value={value} />}
+                />
+              </FieldRow>
               <FieldRow label="LinkedIn" claims={claimsForField(person.claims, 'linkedinUrl')} openClaim={openClaim} onToggleClaim={toggleClaim}>
                 <EditableValue
                   label="LinkedIn"
@@ -554,7 +565,7 @@ export function PersonSheet({
 
           <OtherEvidence
             claims={person.claims}
-            shownFields={['title', 'organizationId', 'email', 'location', 'phone', 'website', 'linkedinUrl', 'xUrl']}
+            shownFields={['title', 'organizationId', 'email', 'location', 'phone', 'website', 'calendarUrl', 'linkedinUrl', 'xUrl']}
             openClaim={openClaim}
             onToggle={toggleClaim}
           />

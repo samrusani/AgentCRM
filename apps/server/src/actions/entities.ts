@@ -13,7 +13,7 @@ import {
   type Tx,
   versionConflict,
 } from './context.js';
-import { phoneField, websiteField } from './contactFields.js';
+import { calendarUrlField, phoneField, websiteField } from './contactFields.js';
 import { promoteForStageIn } from './lifecycle.js';
 import { linkStoredMessagesToPerson } from './mailLinks.js';
 import {
@@ -88,6 +88,7 @@ export const personFields = {
   xUrl: profileUrlField(canonicalXUrl, xProfileUrlMessage),
   phone: phoneField,
   website: websiteField,
+  calendarUrl: calendarUrlField,
   lifecycle: z.enum(['lead', 'relationship']),
   tags: tagsSchema,
   birthday: birthdayField,
@@ -154,6 +155,7 @@ const specs: Record<UpdatableType, EntitySpec> = {
       xUrl: 'x_url',
       phone: 'phone',
       website: 'website',
+      calendarUrl: 'calendar_url',
       lifecycle: 'lifecycle',
       tags: 'tags',
       birthday: 'birthday',

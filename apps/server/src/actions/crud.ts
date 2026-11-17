@@ -42,6 +42,7 @@ const createPersonSchema = z
     xUrl: personFields.xUrl.optional().default(null),
     phone: personFields.phone.optional().default(null),
     website: personFields.website.optional().default(null),
+    calendarUrl: personFields.calendarUrl.optional().default(null),
     lifecycle: personFields.lifecycle.optional().default('lead'),
     tags: personFields.tags.optional().default([]),
     nextActionAt: personFields.nextActionAt.optional().default(null),
@@ -54,9 +55,10 @@ export function createPerson(ctx: ActionContext, input: unknown) {
 }
 
 // Internal callers pass profile URLs already canonicalized (see profileUrls.ts) and may leave them out.
-type PersonInput = Omit<z.output<typeof createPersonSchema>, 'linkedinUrl' | 'xUrl' | 'lifecycle' | 'phone' | 'website'> & {
+type PersonInput = Omit<z.output<typeof createPersonSchema>, 'linkedinUrl' | 'xUrl' | 'lifecycle' | 'phone' | 'website' | 'calendarUrl'> & {
   phone?: string | null;
   website?: string | null;
+  calendarUrl?: string | null;
   linkedinUrl?: string | null;
   xUrl?: string | null;
   lifecycle?: 'lead' | 'relationship';
@@ -69,8 +71,8 @@ export function createPersonIn(tx: Tx, data: PersonInput) {
   const now = tx.now();
   tx.db
     .prepare(
-      `INSERT INTO person (id, created_at, workspace_id, version, first_name, last_name, email, title, organization_id, location, linkedin_url, x_url, phone, website, lifecycle, tags, next_action_at, updated_at)
-       VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO person (id, created_at, workspace_id, version, first_name, last_name, email, title, organization_id, location, linkedin_url, x_url, phone, website, calendar_url, lifecycle, tags, next_action_at, updated_at)
+       VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -86,6 +88,7 @@ export function createPersonIn(tx: Tx, data: PersonInput) {
       data.xUrl ?? null,
       data.phone ?? null,
       data.website ?? null,
+      data.calendarUrl ?? null,
       data.lifecycle ?? 'lead',
       JSON.stringify(data.tags),
       data.nextActionAt,

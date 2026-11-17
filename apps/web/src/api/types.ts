@@ -69,6 +69,7 @@ export interface Person {
   xUrl?: string | null;
   phone?: string | null;
   website?: string | null;
+  calendarUrl?: string | null;
   tags: string[];
   // YYYY-MM-DD, or MM-DD when the year is unknown. Null when not set.
   birthday?: string | null;

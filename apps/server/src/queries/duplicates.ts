@@ -77,6 +77,7 @@ export const fillableColumns = [
   ['xUrl', 'x_url'],
   ['phone', 'phone'],
   ['website', 'website'],
+  ['calendarUrl', 'calendar_url'],
   ['birthday', 'birthday'],
   ['nextActionAt', 'next_action_at'],
 ] as const;

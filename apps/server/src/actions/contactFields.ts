@@ -6,6 +6,8 @@ import { z } from 'zod';
 export const phoneMessage = 'A phone number needs at least one digit.';
 export const websiteMessage = 'Website must be an http or https link, such as https://example.com.';
 
+export const calendarUrlMessage = 'The calendar link must be an http or https link, such as https://calendly.com/example.';
+
 const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 // Trims, then returns the phone, null for an empty value, or undefined when it is not a phone. Callers that do not
@@ -62,17 +64,24 @@ export const phoneField = z
     return phone;
   });
 
-export const websiteField = z
-  .string()
-  .trim()
-  .max(500)
-  .nullable()
-  .transform((value, ctx) => {
-    if (value === null) return null;
-    const website = normalizeWebsite(value);
-    if (website === undefined) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: websiteMessage.replace(/\.$/, '') });
-      return z.NEVER;
-    }
-    return website;
-  });
+function linkField(message: string) {
+  return z
+    .string()
+    .trim()
+    .max(500)
+    .nullable()
+    .transform((value, ctx) => {
+      if (value === null) return null;
+      const link = normalizeWebsite(value);
+      if (link === undefined) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: message.replace(/\.$/, '') });
+        return z.NEVER;
+      }
+      return link;
+    });
+}
+
+export const websiteField = linkField(websiteMessage);
+
+// The calendar link on people (migration 038) follows the website rules with its own message.
+export const calendarUrlField = linkField(calendarUrlMessage);

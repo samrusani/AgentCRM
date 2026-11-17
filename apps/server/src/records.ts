@@ -74,6 +74,7 @@ export function toPerson(row: Row) {
     xUrl: text(row.x_url),
     phone: text(row.phone),
     website: text(row.website),
+    calendarUrl: text(row.calendar_url),
     lifecycle: (row.lifecycle === 'relationship' ? 'relationship' : 'lead') as Lifecycle,
     tags: parseJson<string[]>(row.tags, []),
     birthday: text(row.birthday),

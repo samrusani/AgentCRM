@@ -133,6 +133,7 @@ export function seedDatabase(db: Db, options: SeedOptions = {}) {
       location: org ? org.location : pick(['Remote', 'Austin', 'Dublin']),
       ...(index % 4 === 0 ? { phone: `+1 555 02${String(index).padStart(2, '0')} 0199` } : {}),
       ...(index % 6 === 0 ? { website: `https://${slugify(firstName)}${slugify(lastName)}.example.com` } : {}),
+      ...(index % 5 === 2 ? { calendarUrl: `https://calendly.com/${slugify(firstName)}-${slugify(lastName)}` } : {}),
       tags,
       nextActionAt: index % 5 === 0 ? new Date(base.getTime() + (index % 9) * dayMilliseconds + 9 * 3_600_000).toISOString() : null,
     });

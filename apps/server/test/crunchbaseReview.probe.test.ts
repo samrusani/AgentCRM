@@ -357,7 +357,7 @@ describe('migration 037', () => {
       expect(cols).not.toContain('crunchbase_url');
       db.prepare("INSERT INTO workspace (id, created_at, name, template) VALUES ('wsp_1','2026-01-01','W','t')").run();
       db.prepare("INSERT INTO organization (id, created_at, workspace_id, version, name, kind, tags, updated_at) VALUES ('org_old','2026-01-01','wsp_1',1,'Old','fund','[]','2026-01-01')").run();
-      expect(applyMigrations(db)).toEqual(['037_crunchbase.sql']);
+      expect(applyMigrations(db)).toEqual(['037_crunchbase.sql', '038_calendar.sql']);
       expect((db.prepare("PRAGMA table_info('organization')").all() as { name: string }[]).map((c) => c.name)).toContain('crunchbase_url');
       expect(db.prepare("SELECT crunchbase_url, version FROM organization WHERE id = 'org_old'").get()).toEqual({ crunchbase_url: null, version: 1 });
       expect(applyMigrations(db)).toEqual([]);

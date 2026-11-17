@@ -26,7 +26,7 @@ IDs are prefixed strings, for example `per_a1b2c3`, generated from random bytes.
 | Table | Columns (beyond id, created_at) |
 | --- | --- |
 | workspace | name, template, settings (JSON: qualification config) |
-| person | workspace_id, version, first_name, last_name, email, title, organization_id, location, linkedin_url, x_url, phone, website, lifecycle (lead, relationship), tags (JSON array), next_action_at, updated_at |
+| person | workspace_id, version, first_name, last_name, email, title, organization_id, location, linkedin_url, x_url, phone, website, calendar_url, lifecycle (lead, relationship), tags (JSON array), next_action_at, updated_at |
 | organization | workspace_id, version, name, domain, kind (fund, company), location, linkedin_url, crunchbase_url, phone, website, tags (JSON array), updated_at |
 | pipeline | workspace_id, version, name, template |
 | stage | pipeline_id, name, seq |
@@ -404,7 +404,7 @@ Base path `/api`. Responses are JSON with camelCase keys (`firstName`, `expected
 | DELETE `/api/lists/:id/members/:personId` | Removes one membership |
 | GET `/api/people/:id` | Person plus `organization`, `affiliationsSummary`, `claims`, `activities`, `tasks`, `opportunities`, `lists`, `interaction` |
 | POST `/api/people` | Create person; `lifecycle` optional, defaulting to `lead` |
-| PATCH `/api/people/:id` | `{ expectedVersion, fields }`, partial update; `linkedinUrl` and `xUrl` are editable and canonicalized, an unparseable profile URL is a validation error |
+| PATCH `/api/people/:id` | `{ expectedVersion, fields }`, partial update; `linkedinUrl` and `xUrl` are editable and canonicalized, an unparseable profile URL is a validation error; `calendarUrl` validates like website |
 | GET `/api/people/:id/enrichment` | `{ run, suggestions }` for the person's newest enrich run, null when none |
 | POST `/api/people/:id/enrichment` | `{ runId, field, expectedVersion }`, accepts one suggestion (see Field enrichment) |
 | DELETE `/api/people/:id/enrichment?runId=` | Dismisses the run's remaining pending suggestions |
@@ -656,6 +656,8 @@ Validation, the same on every write path (PATCH, proposals, capture): phone is t
 The fields ride the standard entity registry, so they flow everywhere fields already flow: `PATCH /api/people/:id` and `PATCH /api/organizations/:id` with the version envelope, `crm_propose_changes` and `crm_apply_changes` (an agent can fill them like any field edit, no approval), CSV import person mapping (suggested headers phone and website; a person's website is never reused as an organization's domain, only a Company Website style header maps to domain), and the capture paths per the capture section (columns on create, and under the fill-in rule). Manual edits write no claim, like every built in field.
 
 `organization.crunchbase_url` (migration 037) is a canonical profile URL column in the mold of `organization.linkedin_url`: it stores `https://www.crunchbase.com/organization/<slug>`, built by a dedicated helper beside the LinkedIn and X ones. The helper accepts crunchbase.com or any subdomain (host compared lowercased), takes the first path segment after `/organization/`, keeps the slug's case and percent encoding, drops query, fragment, trailing slash, and deeper path, prepends https to a schemeless paste, allows http or https only with no userinfo and no port, and refuses a canonical form over 500 characters. The raw paste is also bounded at 500 characters before canonicalization, the same bound every profile URL field shares on edit. Any other link is a validation error on edit; null or an empty string clears the field. The field rides the entity registry like phone and website (PATCH, create, proposals, `crm_propose_changes` and `crm_apply_changes`), and the organization merge fill list includes it. It is never a dedupe key, joins no search index, is not read by capture, CSV import, lead capture extraction, or enrichment, and the migration backfills nothing because no claim has ever carried this field. Manual edits write no claim.
+
+`person.calendar_url` (migration 038) is a scheduling page link (Calendly, cal.com, a Google booking page, any host) and reuses the website rules wholesale: it is validated by the same normalization as `person.website` (trimmed, at most 500 characters on the stored value, https prepended when schemeless after leading slashes are dropped, must parse as an http or https URL with a dotted domain host, no userinfo, no control, zero width, or bidirectional characters, stored as typed otherwise), with its own refusal message naming a calendar link. Null or an empty string clears it. The field rides the entity registry (PATCH, create, proposals, `crm_propose_changes` and `crm_apply_changes`), and the person merge fill list includes it. It is never a dedupe key, joins no search index, is not read by capture, CSV import, lead capture extraction, or enrichment, and the migration backfills nothing because no claim has ever carried this field. Manual edits write no claim.
 
 ## Custom attributes
 
