@@ -70,15 +70,14 @@ describe('Calendar row hostile stored values', () => {
     }
   });
 
-  it('ACCEPTED: a stored mailto:a@example.com is shown as a link to example.com (WebsiteLink prepends https), same as Website', async () => {
-    // Only a direct database edit can store this, the server refuses it. WebsiteLink treats a value without // as
-    // schemeless, so it becomes https://mailto:a@example.com/ (host example.com). Shared with the Website row.
+  it('CONFIRMS: a stored mailto:a@example.com renders as plain text, never a link, same as Website', async () => {
+    // Only a direct database edit can store this, the server refuses it. The shared link parser refuses any value
+    // that starts with a scheme but no //, so it never gains https:// in front and never links anywhere.
     calendarUrl = 'mailto:a@example.com';
     renderSheet();
     await screen.findByText('Berlin');
-    const link = within(row('Calendar')).getByRole('link');
-    expect(link).toHaveAttribute('href', 'https://mailto:a@example.com/');
-    expect(link).toHaveAttribute('rel', 'noreferrer noopener');
+    expect(within(row('Calendar')).queryByRole('link')).toBeNull();
+    expect(within(row('Calendar')).getByText('mailto:a@example.com')).toBeInTheDocument();
   });
 
   it('CONFIRMS: a valid link opens safely in a new tab', async () => {

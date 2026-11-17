@@ -267,3 +267,68 @@ describe('web run suggestions', () => {
     expect(await screen.findByText(/name changed after the search/)).toBeInTheDocument();
   });
 });
+
+describe('Suggestion links', () => {
+  const seed = (suggestions: Array<{ field: string; value: string }>) => {
+    world.enrichment = {
+      run: { id: 'run-web', status: 'succeeded', startedAt: '2026-11-05T10:00:00', mode: 'web', detail: 'Done.', suggestedCount: suggestions.length },
+      suggestions: suggestions.map((entry) => ({ ...entry, sourceUrl: null })),
+    };
+  };
+
+  it('renders each link field as a new-tab anchor with the full stored value as text', async () => {
+    seed([
+      { field: 'website', value: 'https://www.acme.example.com/team' },
+      { field: 'calendarUrl', value: 'https://cal.example.com/jane/30min' },
+      { field: 'linkedinUrl', value: 'https://www.linkedin.com/in/janedoe' },
+      { field: 'xUrl', value: 'https://x.com/janedoe' },
+    ]);
+    renderPerson();
+    for (const value of ['https://www.acme.example.com/team', 'https://cal.example.com/jane/30min', 'https://www.linkedin.com/in/janedoe', 'https://x.com/janedoe']) {
+      const anchor = await screen.findByRole('link', { name: value });
+      expect(anchor).toHaveAttribute('href', new URL(value).toString());
+      expect(anchor).toHaveAttribute('target', '_blank');
+      expect(anchor).toHaveAttribute('rel', 'noreferrer noopener');
+      expect(anchor).toHaveClass('suggestion-row__value');
+    }
+  });
+
+  it('keeps title, location and email suggestions as plain text', async () => {
+    seed([
+      { field: 'title', value: 'Head of Data' },
+      { field: 'location', value: 'Leeds' },
+      { field: 'email', value: 'https://not-a-link.example.com' },
+    ]);
+    renderPerson();
+    const row = (await screen.findByText('Head of Data')).closest('li')!;
+    expect(row.querySelector('a')).toBeNull();
+    for (const text of ['Leeds', 'https://not-a-link.example.com']) {
+      const item = screen.getByText(text).closest('li')!;
+      expect(item.querySelector('a')).toBeNull();
+    }
+  });
+
+  it('keeps hostile or unparseable link values as plain text with no anchor', async () => {
+    const values = ['javascript:alert(1)', 'data:text/html;x', 'plain words with spaces'];
+    seed([
+      { field: 'website', value: values[0] },
+      { field: 'linkedinUrl', value: values[1] },
+      { field: 'calendarUrl', value: values[2] },
+    ]);
+    renderPerson();
+    for (const value of values) {
+      const row = (await screen.findByText(value, { selector: '.suggestion-row__value' })).closest('li')!;
+      expect(row.querySelector('a')).toBeNull();
+    }
+  });
+
+  it('does not accept or dismiss when the anchor is clicked', async () => {
+    seed([{ field: 'website', value: 'https://acme.example.com' }]);
+    const { user } = renderPerson();
+    const anchor = await screen.findByRole('link', { name: 'https://acme.example.com' });
+    anchor.addEventListener('click', (event) => event.preventDefault());
+    await user.click(anchor);
+    expect(world.calls.filter((call) => call.method === 'POST' || call.method === 'DELETE')).toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Accept website' })).toBeInTheDocument();
+  });
+});

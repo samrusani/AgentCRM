@@ -15,10 +15,23 @@ import {
   useStartWebSearch,
 } from '../api/hooks';
 import type { EnrichmentState } from '../api/types';
-import { ENRICH_FIELD_LABELS } from '../lib/enrichment';
+import { ENRICH_FIELD_LABELS, ENRICH_LINK_FIELDS } from '../lib/enrichment';
 import { isRunActive } from '../lib/format';
+import { websiteHref } from '../lib/links';
 import { errorMessage } from './common';
 import { SheetSection } from './record';
+
+// A link field's value opens in a new tab so it can be checked before accepting. The full stored value is the
+// text; a value that does not parse as http or https stays plain text.
+function SuggestionValue({ field, value }: { field: string; value: string }) {
+  const href = ENRICH_LINK_FIELDS.has(field) ? websiteHref(value) : null;
+  if (!href) return <span className="suggestion-row__value">{value}</span>;
+  return (
+    <a className="suggestion-row__value" href={href} target="_blank" rel="noreferrer noopener">
+      {value}
+    </a>
+  );
+}
 
 export const ENRICH_COST_LINE = 'Runs one profile scrape on your Apify account.';
 export const ENRICH_NAME_COST_LINE =
@@ -249,7 +262,7 @@ function SuggestionsView({ version, detailAbovePending, enrichment, accept, dism
           return (
             <li key={suggestion.field} className="suggestion-row">
               <span className="suggestion-row__field">{label}</span>
-              <span className="suggestion-row__value">{suggestion.value}</span>
+              <SuggestionValue field={suggestion.field} value={suggestion.value} />
               <button
                 type="button"
                 className="btn"

@@ -9,6 +9,10 @@ export function recordLink(entityType: string | null, entityId: string | null): 
 function parseProfileUrl(value: string): URL | null {
   const text = value.trim();
   if (!text) return null;
+  // A value that starts with a scheme but no // (mailto:jane@example.com, javascript:1, data:80) must never gain
+  // https:// in front: the result links somewhere the visible text does not say, or carries a scheme the text hides.
+  // Only a plain schemeless value (example.com) gets https:// prepended.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(text) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return null;
   try {
     const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`);
     return url.protocol === 'http:' || url.protocol === 'https:' ? url : null;

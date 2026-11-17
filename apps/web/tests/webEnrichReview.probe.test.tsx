@@ -248,7 +248,11 @@ describe('web suggestions rendering', () => {
     expect(within(section).getByText(detail)).toBeInTheDocument();
     expect(section.querySelector('img, script')).toBeNull();
     expect(section.querySelector('a[href^="javascript"]')).toBeNull();
-    expect(section.querySelector('a')).toBeNull();
+    // The value parses as an https URL, so it is the only link: the source url is never one.
+    const anchors = section.querySelectorAll('a');
+    expect(anchors).toHaveLength(1);
+    expect(anchors[0]).toHaveTextContent('https://x.example.com/"><script>alert(1)</script>');
+    expect(anchors[0].getAttribute('href')!.startsWith('https://x.example.com/')).toBe(true);
   });
 
   it('CONFIRMS: a succeeded web run with nothing suggested and a failed web run show their own detail line, and a fully decided run shows nothing', async () => {

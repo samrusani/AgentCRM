@@ -4,7 +4,7 @@
 
 **The CRM that people and AI agents operate together.**
 
-<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-4681-15685b?style=flat" alt="4681 tests">
+<img src="https://img.shields.io/badge/license-Apache--2.0-15685b?style=flat" alt="License Apache-2.0"> <img src="https://img.shields.io/badge/node-%3E%3D22-15685b?style=flat" alt="Node 22 or newer"> <img src="https://img.shields.io/badge/tests-4715-15685b?style=flat" alt="4715 tests">
 
 [Quick start](#quick-start) · [What works](#what-works-today) · [Architecture docs](docs/architecture.md)
 
@@ -95,7 +95,7 @@ The client spawns the MCP server as a child process per session and it dies with
 
 ## What works today
 
-Every row below is backed by tests: 4,681 across the server (3,077), the web app (1,230), and the browser extension (374), plus 7 on the desktop shell's helpers. "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
+Every row below is backed by tests: 4,715 across the server (3,077), the web app (1,264), and the browser extension (374), plus 7 on the desktop shell's helpers. "Verified against stubbed APIs" means the tests run against a fake provider, not live servers.
 
 ### Core CRM
 
@@ -104,7 +104,7 @@ Every row below is backed by tests: 4,681 across the server (3,077), the web app
 | Leads and Relationships: imported and captured people start as leads and graduate to relationships when they reply or a deal moves past the first stage, with manual promote and demote; LinkedIn and X profiles as first class fields; the person sheet links a person to an organization through a live search picker that can also create the organization in place | Working, synthetic data |
 | Custom attributes: typed fields you define on people and organizations (message angle, fit notes, check sizes ship as defaults), edited like any field and open to agents through the proposal flow, so an agent can research and fill them under your approval | Working |
 | Lists: hand curated people lists such as UK Angels or Energy investors, with bulk add from the table, chips on the person sheet, and a list filter on Leads and Relationships; lists never reach agents or model calls | Working |
-| Field enrichment: one click runs one scrape and suggests values for empty fields, each accepted or dismissed by you, one row at a time or all at once; people by their LinkedIn profile, or by a name search that finds the profile when none is saved and tells you who it found; organizations by their saved page or a name lookup that tells you which company it found; a separate web search mode runs one Google search and reads the result snippets with your model provider, suggesting LinkedIn, X, website, and calendar links that are verified to appear in the results and validated like manual edits, each with its source link as evidence | Working, verified against stubbed Apify and model APIs; bring your own Apify account and model key |
+| Field enrichment: one click runs one scrape and suggests values for empty fields, each accepted or dismissed by you, one row at a time or all at once; people by their LinkedIn profile, or by a name search that finds the profile when none is saved and tells you who it found; organizations by their saved page or a name lookup that tells you which company it found; a separate web search mode runs one Google search and reads the result snippets with your model provider, suggesting LinkedIn, X, website, and calendar links that are verified to appear in the results and validated like manual edits, each with its source link as evidence and rendered as a link you can open before accepting | Working, verified against stubbed Apify and model APIs; bring your own Apify account and model key |
 | Pipeline: as many pipelines as you need (say a US and a UK investor pipeline), each seeded from a template with its own stages and switchable later without losing its name; opportunities in board and table views with stage history; create deals from the Pipeline header or straight from a person or organization sheet, choosing the pipeline as you go | Working |
 | Approvals: review, approve, reject, audit trail | Working |
 | Birthdays: a birthday on each person, with or without the year, and a Today card for the next seven days | Working |
