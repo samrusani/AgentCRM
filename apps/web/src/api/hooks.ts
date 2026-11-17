@@ -198,6 +198,20 @@ export function usePersonEnrichment(id: string | null) {
   });
 }
 
+// The web search: the same run kind with mode 'web', started only by its own button.
+export function useStartWebSearch() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (personId: string) => api.runs.startEnrichPerson(personId, 'web'),
+    onSuccess: (run, personId) => {
+      queryClient.setQueryData(['run', run.id], run);
+      void queryClient.invalidateQueries({ queryKey: ['runs'] });
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+      return queryClient.invalidateQueries({ queryKey: ['enrichment', personId] });
+    },
+  });
+}
+
 export function useStartEnrichPerson() {
   const queryClient = useQueryClient();
   return useMutation({

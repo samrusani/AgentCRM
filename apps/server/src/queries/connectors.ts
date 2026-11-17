@@ -18,6 +18,8 @@ export interface LeadCaptureActors {
   companyActor: string;
   // The people search actor used by person enrichment in name mode, not by lead capture runs.
   personSearchActor: string;
+  // The web search actor used by person enrichment in web mode, not by lead capture runs.
+  webSearchActor: string;
 }
 
 export const defaultLeadCaptureActors: LeadCaptureActors = {
@@ -27,9 +29,10 @@ export const defaultLeadCaptureActors: LeadCaptureActors = {
   profileActor: 'harvestapi/linkedin-profile-scraper',
   companyActor: 'harvestapi/linkedin-company',
   personSearchActor: 'harvestapi/linkedin-profile-search-by-name',
+  webSearchActor: 'apify/google-search-scraper',
 };
 
-export const leadCaptureActorFields = ['postActor', 'reactionsActor', 'commentsActor', 'profileActor', 'companyActor', 'personSearchActor'] as const;
+export const leadCaptureActorFields = ['postActor', 'reactionsActor', 'commentsActor', 'profileActor', 'companyActor', 'personSearchActor', 'webSearchActor'] as const;
 
 export interface ApifyConnectorSettings {
   allowlist: string[];

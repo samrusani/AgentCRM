@@ -36,6 +36,7 @@ import {
   enrichByAgentMessage,
   enrichPersonStartScope,
   enrichPersonNameStepTitles,
+  enrichPersonWebStepTitles,
   enrichPersonStepTitles,
   scheduleEnrichPersonRun,
 } from './enrichPerson.js';
@@ -155,7 +156,8 @@ const enrichPersonRunSchema = z
   .object({
     kind: z.literal('enrich_person'),
     title: z.string().trim().min(1).max(200).optional(),
-    scope: z.object({ personId: idSchema }).strict(),
+    // `mode: 'web'` asks for the web search mode. The profile and name modes are decided at start and never asked for.
+    scope: z.object({ personId: idSchema, mode: z.literal('web').optional() }).strict(),
   })
   .strict();
 
@@ -382,13 +384,18 @@ export function startRun(ctx: ActionContext, input: unknown, options: StartRunOp
         ...(pinned ? { provider: pinned.kind, model: pinned.model } : {}),
       };
     } else if (data.kind === 'enrich_person') {
-      const enrichScope = enrichPersonStartScope(tx, data.scope.personId);
+      const enrichScope = enrichPersonStartScope(tx, data.scope.personId, data.scope.mode);
       const person = requirePerson(tx.db, tx.workspaceId, data.scope.personId);
       title = data.title ?? `Enrich ${person.name}`;
-      stepTitles = enrichScope.mode === 'name' ? enrichPersonNameStepTitles : enrichPersonStepTitles;
+      stepTitles =
+        enrichScope.mode === 'web'
+          ? enrichPersonWebStepTitles
+          : enrichScope.mode === 'name'
+            ? enrichPersonNameStepTitles
+            : enrichPersonStepTitles;
       counts = { processed: 0, found: 0, flagged: 0 };
       storedScope = { ...enrichScope };
-      auditScope = { personId: enrichScope.personId, actorId: enrichScope.actorId, origin };
+      auditScope = { personId: enrichScope.personId, actorId: enrichScope.actorId, ...(enrichScope.mode === 'web' ? { mode: 'web' } : {}), origin };
     } else if (data.kind === 'enrich_organization') {
       const enrichScope = enrichOrganizationStartScope(tx, data.scope.organizationId);
       const organization = requireOrganization(tx.db, tx.workspaceId, data.scope.organizationId);

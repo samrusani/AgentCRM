@@ -401,6 +401,7 @@ function normalizeLeadCapture(kind: unknown, raw: unknown): LeadCaptureSettings 
     profileActor: textOrNull(record.profileActor) ?? DEFAULT_LEAD_ACTORS.profileActor,
     companyActor: textOrNull(record.companyActor) ?? DEFAULT_LEAD_ACTORS.companyActor,
     personSearchActor: textOrNull(record.personSearchActor) ?? DEFAULT_LEAD_ACTORS.personSearchActor,
+    webSearchActor: textOrNull(record.webSearchActor) ?? DEFAULT_LEAD_ACTORS.webSearchActor,
   };
 }
 
@@ -1216,8 +1217,9 @@ export const api = {
       const { title, ...scope } = input;
       return normalizeRun(await request<Run>('POST', '/runs', { body: { kind: 'draft_outreach', title, scope } }));
     },
-    startEnrichPerson: async (personId: string) =>
-      normalizeRun(await request<Run>('POST', '/runs', { body: { kind: 'enrich_person', scope: { personId } } })),
+    // `mode: 'web'` starts the web search. Without it the server picks profile or name mode from the saved link.
+    startEnrichPerson: async (personId: string, mode?: 'web') =>
+      normalizeRun(await request<Run>('POST', '/runs', { body: { kind: 'enrich_person', scope: mode ? { personId, mode } : { personId } } })),
     startEnrichOrganization: async (organizationId: string) =>
       normalizeRun(await request<Run>('POST', '/runs', { body: { kind: 'enrich_organization', scope: { organizationId } } })),
     startQualify: async (scope: { tag?: string } = {}) =>

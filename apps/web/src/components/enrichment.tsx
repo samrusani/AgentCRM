@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import {
   useAcceptEnrichment,
   useAcceptOrganizationEnrichment,
   useApifyConnector,
   useDismissEnrichment,
+  useModelProvider,
   useDismissOrganizationEnrichment,
   useOrganizationEnrichment,
   usePersonEnrichment,
   useStartEnrichOrganization,
   useStartEnrichPerson,
+  useStartWebSearch,
 } from '../api/hooks';
 import type { EnrichmentState } from '../api/types';
 import { ENRICH_FIELD_LABELS } from '../lib/enrichment';
@@ -20,6 +23,9 @@ import { SheetSection } from './record';
 export const ENRICH_COST_LINE = 'Runs one profile scrape on your Apify account.';
 export const ENRICH_NAME_COST_LINE =
   'No profile saved, so this searches LinkedIn by their name on your Apify account. Check the match before accepting.';
+export const WEB_SEARCH_COST_LINE =
+  'Searches the web for their profiles and links on your Apify account and reads the results with your model provider. Check the match before accepting.';
+export const WEB_SEARCH_CHECK_FAILED = 'Could not check the model provider.';
 export const ENRICH_ORG_COST_LINE = 'Runs one company lookup on your Apify account.';
 export const ENRICH_NEEDS_APIFY = 'Connect Apify in Settings to enrich';
 export const ENRICH_CHECK_FAILED = 'Could not check the Apify connector. Retry from Settings.';
@@ -31,15 +37,26 @@ interface EnrichControlViewProps {
   costLine: string;
   enrichment: { data: EnrichmentState | undefined };
   start: { isPending: boolean; isError: boolean; error: unknown; mutate: (id: string) => void };
+  // Person sheets only: the quiet Search the web button beside Enrich.
+  web?: {
+    start: { isPending: boolean; isError: boolean; error: unknown; mutate: (id: string) => void };
+    providerReady: boolean;
+    providerPending: boolean;
+    providerFailed: boolean;
+  };
 }
 
 // The Enrich button and its lines. Rendered beside the Fields title, so the lines wrap below it.
-function EnrichControlView({ subjectId, costLine, enrichment, start }: EnrichControlViewProps) {
+function EnrichControlView({ subjectId, costLine, enrichment, start, web }: EnrichControlViewProps) {
   const { query: connectorQuery, connector } = useApifyConnector();
 
   const connected = Boolean(connector) && connector?.status !== 'error';
   const runOpen = Boolean(enrichment.data?.run && isRunActive(enrichment.data.run.status));
-  const enriching = runOpen || start.isPending;
+  // One open run per person covers both buttons: the one that started it shows its progress, both stay disabled.
+  const webRunOpen = runOpen && enrichment.data?.run?.mode === 'web';
+  const searching = Boolean(web) && (webRunOpen || Boolean(web?.start.isPending));
+  const enriching = (runOpen && !webRunOpen) || start.isPending;
+  const anyOpen = runOpen || start.isPending || Boolean(web?.start.isPending);
 
   // Name the missing piece once the connector check has settled, so the line never flashes while loading.
   // When the check itself failed, say so rather than claiming Apify is not connected.
@@ -47,27 +64,61 @@ function EnrichControlView({ subjectId, costLine, enrichment, start }: EnrichCon
 
   const blocked = !connected;
   const reasonId = `enrich-reason-${subjectId}`;
+  const providerReasonId = `web-search-reason-${subjectId}`;
+  // The search also needs a model provider. Name the missing piece once the check has settled; a failed check says so.
+  const providerReason =
+    !web || web.providerPending || web.providerReady ? null : web.providerFailed ? (
+      <p className="muted sheet-section__note" id={providerReasonId}>
+        {WEB_SEARCH_CHECK_FAILED}
+      </p>
+    ) : (
+      <p className="muted sheet-section__note" id={providerReasonId}>
+        Connect a{' '}
+        <Link className="link" to="/settings/models">
+          model provider
+        </Link>{' '}
+        in Settings to search the web.
+      </p>
+    );
 
   return (
     <>
       <button
         type="button"
         className="btn"
-        disabled={enriching || blocked}
+        disabled={anyOpen || blocked}
         aria-describedby={reason ? reasonId : undefined}
         onClick={() => start.mutate(subjectId)}
       >
         {enriching ? 'Enriching' : 'Enrich'}
       </button>
+      {web ? (
+        <button
+          type="button"
+          className="btn btn--quiet"
+          disabled={anyOpen || blocked || !web.providerReady}
+          aria-describedby={[reason ? reasonId : null, providerReason ? providerReasonId : null].filter(Boolean).join(' ') || undefined}
+          onClick={() => web.start.mutate(subjectId)}
+        >
+          {searching ? 'Searching' : 'Search the web'}
+        </button>
+      ) : null}
       <p className="muted sheet-section__note">{costLine}</p>
+      {web ? <p className="muted sheet-section__note">{WEB_SEARCH_COST_LINE}</p> : null}
       {reason ? (
         <p className="muted sheet-section__note" id={reasonId}>
           {reason}
         </p>
       ) : null}
+      {providerReason}
       {start.isError ? (
         <p className="inline-error sheet-section__note" role="alert">
           {errorMessage(start.error)}
+        </p>
+      ) : null}
+      {web?.start.isError ? (
+        <p className="inline-error sheet-section__note" role="alert">
+          {errorMessage(web.start.error)}
         </p>
       ) : null}
     </>
@@ -77,9 +128,17 @@ function EnrichControlView({ subjectId, costLine, enrichment, start }: EnrichCon
 export function EnrichControl({ personId, linkedinUrl }: { personId: string; linkedinUrl: string | null | undefined }) {
   const enrichment = usePersonEnrichment(personId);
   const start = useStartEnrichPerson();
+  const webStart = useStartWebSearch();
+  const provider = useModelProvider();
   return (
     <EnrichControlView
       subjectId={personId}
+      web={{
+        start: webStart,
+        providerReady: provider.data?.ready === true,
+        providerPending: provider.isPending,
+        providerFailed: provider.isError,
+      }}
       // Without a saved profile the run is a name search, which the line says before any money is spent.
       costLine={linkedinUrl ? ENRICH_COST_LINE : ENRICH_NAME_COST_LINE}
       enrichment={enrichment}
@@ -165,7 +224,7 @@ function SuggestionsView({ version, detailAbovePending, enrichment, accept, dism
           setProblem({
             field,
             message:
-              conflict && run.mode === 'name'
+              conflict && (run.mode === 'name' || run.mode === 'web')
                 ? errorMessage(error)
                 : conflict
                   ? `${label} changed since you opened this record, so the suggestion was not applied.`
@@ -258,7 +317,8 @@ function SuggestionsView({ version, detailAbovePending, enrichment, accept, dism
 }
 
 // Pending suggestions from the newest enrich run, between Fields and Qualification. A name lookup also shows its
-// detail line above them, because that line names the person the search found.
+// detail line above them, because that line names the person the search found, and a web search its detail, which
+// names the query it searched.
 export function EnrichmentSuggestions({ personId, version }: { personId: string; version: number }) {
   const enrichment = usePersonEnrichment(personId);
   const accept = useAcceptEnrichment();
@@ -266,7 +326,7 @@ export function EnrichmentSuggestions({ personId, version }: { personId: string;
   return (
     <SuggestionsView
       version={version}
-      detailAbovePending={(run) => run.mode === 'name'}
+      detailAbovePending={(run) => run.mode === 'name' || run.mode === 'web'}
       enrichment={enrichment}
       accept={{ isPending: accept.isPending, mutate: (vars, options) => accept.mutate({ personId, ...vars }, options) }}
       dismiss={{

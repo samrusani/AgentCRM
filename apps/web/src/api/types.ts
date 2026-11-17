@@ -631,6 +631,7 @@ export interface LeadCaptureSettings {
   profileActor: string;
   companyActor: string;
   personSearchActor: string;
+  webSearchActor: string;
 }
 
 export interface ApifyConnectorInput {
@@ -979,7 +980,7 @@ export interface QualificationResult extends QualificationSummary {
   criteria: CriterionResult[];
 }
 
-export type EnrichmentField = 'title' | 'location' | 'email' | 'linkedinUrl' | 'domain';
+export type EnrichmentField = 'title' | 'location' | 'email' | 'linkedinUrl' | 'xUrl' | 'website' | 'calendarUrl' | 'domain';
 
 export interface EnrichmentRun {
   id: string;
@@ -989,13 +990,15 @@ export interface EnrichmentRun {
   detail?: string | null;
   // How many suggestions the run produced in all, including 0. Only pending ones are listed.
   suggestedCount?: number;
-  // Person runs only: a name search (no LinkedIn profile saved at start) or a profile scrape. Absent from older servers.
-  mode?: 'profile' | 'name';
+  // Person runs only: a name search (no LinkedIn profile saved at start), a profile scrape, or a web search. Absent from older servers.
+  mode?: 'profile' | 'name' | 'web';
 }
 
 export interface EnrichmentSuggestion {
   field: EnrichmentField | string;
   value: string;
+  // Web search suggestions: the result page the link was found on, or null. Absent for other modes.
+  sourceUrl?: string | null;
   status: 'pending' | string;
 }
 

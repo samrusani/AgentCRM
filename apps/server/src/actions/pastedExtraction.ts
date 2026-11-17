@@ -145,7 +145,7 @@ export function describeIssues(error: z.ZodError): string {
     .join('; ');
 }
 
-export function repairPrompt(prompt: string, previous: unknown, problem: string): string {
+export function repairPrompt(prompt: string, previous: unknown, problem: string, listName = 'entries'): string {
   const earlier = (typeof previous === 'string' ? previous : JSON.stringify(previous)).slice(0, 1500);
   return [
     prompt,
@@ -154,7 +154,7 @@ export function repairPrompt(prompt: string, previous: unknown, problem: string)
     '<earlier_reply>',
     earlier,
     '</earlier_reply>',
-    'Reply again with one corrected json object that has an entries list.',
+    `Reply again with one corrected json object that has ${/^[aeiou]/i.test(listName) ? 'an' : 'a'} ${listName} list.`,
   ].join('\n');
 }
 
@@ -178,6 +178,34 @@ export function comparable(text: string): string {
   return text.replace(zeroWidthCharacters, '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
+// Whole token occurrence checks against one text. An identifier counts only as a whole token: `noor` is not inside
+// `noor-ellery`, and an address is not inside a longer one. Both sides go through `comparable`.
+export function occurrenceChecks(text: string) {
+  const haystack = comparable(text);
+  const occursAs = (needle: string, bounded: (before: string, after: string, afterNext: string) => boolean): boolean => {
+    const wanted = comparable(needle);
+    if (wanted === '') return false;
+    for (let at = haystack.indexOf(wanted); at !== -1; at = haystack.indexOf(wanted, at + 1)) {
+      const end = at + wanted.length;
+      if (bounded(haystack.charAt(at - 1), haystack.charAt(end), haystack.charAt(end + 1))) return true;
+    }
+    return false;
+  };
+  const occurs = (needle: string): boolean => occursAs(needle, () => true);
+  // A dot or percent sign that continues into another identifier character extends the identifier too: example.com
+  // must not match inside example.com.evil.net, nor /in/ellery-w inside /in/ellery-w%C3%A9. A sentence period
+  // followed by a space or the end of the text still counts.
+  const occursLink = (needle: string): boolean =>
+    occursAs(needle, (_before, after, afterNext) => !/[a-z0-9_-]/i.test(after) && !(/[.%]/.test(after) && /[a-z0-9]/i.test(afterNext)));
+  const occursEmail = (needle: string): boolean =>
+    occursAs(
+      needle,
+      (before, after, afterNext) =>
+        !/[a-z0-9._%+-]/i.test(before) && !/[a-z0-9_%+-]/i.test(after) && !(after === '.' && /[a-z0-9]/i.test(afterNext)),
+    );
+  return { occurs, occursLink, occursEmail };
+}
+
 export interface VerifyOptions {
   // 'drop' (a post): an entry whose link is not in the text is invented and dropped.
   // 'strip' (a transcript): the link alone is removed and the entry stays.
@@ -194,25 +222,7 @@ export function verifyEntries<E extends ExtractedEntry & { email?: string | null
   text: string,
   options: VerifyOptions,
 ): { kept: E[]; dropped: number } {
-  const haystack = comparable(text);
-  // An identifier counts only as a whole token: `noor` is not inside `noor-ellery`, and an address is not inside a longer one.
-  const occursAs = (needle: string, bounded: (before: string, after: string, afterNext: string) => boolean): boolean => {
-    const wanted = comparable(needle);
-    if (wanted === '') return false;
-    for (let at = haystack.indexOf(wanted); at !== -1; at = haystack.indexOf(wanted, at + 1)) {
-      const end = at + wanted.length;
-      if (bounded(haystack.charAt(at - 1), haystack.charAt(end), haystack.charAt(end + 1))) return true;
-    }
-    return false;
-  };
-  const occurs = (needle: string): boolean => occursAs(needle, () => true);
-  const occursLink = (needle: string): boolean => occursAs(needle, (_before, after) => !/[a-z0-9_-]/i.test(after));
-  const occursEmail = (needle: string): boolean =>
-    occursAs(
-      needle,
-      (before, after, afterNext) =>
-        !/[a-z0-9._%+-]/i.test(before) && !/[a-z0-9_%+-]/i.test(after) && !(after === '.' && /[a-z0-9]/i.test(afterNext)),
-    );
+  const { occurs, occursLink, occursEmail } = occurrenceChecks(text);
   const kept: E[] = [];
   let dropped = 0;
   for (const entry of entries) {
@@ -249,6 +259,8 @@ export interface AskArguments<E> {
   schema: Record<string, unknown>;
   parse: (output: unknown) => ParsedAnswer<E>;
   reports: ModelCallReport[];
+  // The key of the list the schema asks for, named in the repair request. Defaults to entries.
+  listName?: string;
 }
 
 // One model call with no tools. json_object providers only promise valid json, not our schema, so they get one
@@ -266,7 +278,7 @@ export async function askForEntries<E>(args: AskArguments<E>): Promise<{ result:
   let result = await askFor(args.prompt);
   let parsed = result.status === 'ok' ? args.parse(result.output) : null;
   if (result.status === 'ok' && parsed && !parsed.ok && isCompatibleKind(args.kind) && compatiblePresets[args.kind].jsonMode === 'json_object') {
-    result = await askFor(repairPrompt(args.prompt, result.output, parsed.problem));
+    result = await askFor(repairPrompt(args.prompt, result.output, parsed.problem, args.listName));
     parsed = result.status === 'ok' ? args.parse(result.output) : null;
   }
   return { result, parsed };

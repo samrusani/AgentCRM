@@ -31,12 +31,16 @@ export const isEnrichKind = (kind: string): boolean => kind === enrichPersonKind
 export interface StoredSuggestion {
   field: string;
   value: string;
+  // Web mode: the verified result page the value was found on, or null. Runs from before web mode have none.
+  sourceUrl?: string | null;
   status: 'pending' | 'accepted' | 'dismissed';
 }
 
 // Scope keys every enrichment run keeps. The actor id is frozen at start so a settings edit mid run changes nothing.
 export interface EnrichScopeBase {
   actorId: string;
+  // Person enrichment only: profile, name, or web. Web mode folds the actor start and the wait into one search step.
+  mode?: string;
   apifyRunId?: string;
   apifyDatasetId?: string;
   apifyStartedAt?: string;
@@ -54,8 +58,15 @@ export interface EnrichFlavor<S extends EnrichScopeBase = EnrichScopeBase> {
   // What the actor is sent for this run's frozen target.
   startInput(scope: S): Record<string, unknown>;
   // The last step: reads the first dataset item and writes the suggestions.
-  read(ctx: ActionContext, runId: string, scope: S): Promise<AdvanceResult>;
+  // `seq` is the live step's number, for flavors whose read work spans more than one step.
+  read(ctx: ActionContext, runId: string, scope: S, seq: number): Promise<AdvanceResult>;
 }
+
+// Which steps hold the actor start and the wait. The ledger of a profile, name, or organization run is start, wait,
+// read. A web run is validate, search (start and wait in one step), read, suggest.
+const webSearchSeq = 2;
+const isWebScope = (scope: EnrichScopeBase): boolean => scope.mode === 'web';
+const startSeqOf = (scope: EnrichScopeBase): number => (isWebScope(scope) ? webSearchSeq : 1);
 
 export const openStatuses = "('queued', 'running', 'paused', 'waiting_approval')";
 const terminalFailureStatuses = ['FAILED', 'ABORTED', 'TIMED-OUT'];
@@ -114,7 +125,7 @@ export function noteUnknownStartOnCancelIn(tx: Tx, runId: string, scope: Record<
   appendStepNote(
     tx,
     runId,
-    1,
+    startSeqOf(state),
     `The start request for "${state.actorId}" may already have been sent before this cancel and no Apify run id was saved, so a run may have been started and billed and its outcome is unknown. Check your Apify console for the actor's recent runs.`,
   );
 }
@@ -232,13 +243,29 @@ async function advanceStep<S extends EnrichScopeBase>(ctx: ActionContext, flavor
     });
     return { nextRunAt: soon };
   }
+  if (isWebScope(scope)) {
+    // Validate, then one search step that starts the actor and waits for it, then read and suggest.
+    if (active.seq === 1) {
+      return mutate(ctx, (rawTx) => {
+        const tx = withTxActor(rawTx, flavor.actor);
+        const live = liveStep(tx, runId, 1);
+        if (!live) return { nextRunAt: null };
+        completeStep(tx, runId, live.step, 'The person has a usable name and Apify and a model provider are connected.');
+        return { nextRunAt: soon };
+      });
+    }
+    if (active.seq === webSearchSeq) {
+      return scope.apifyRunId ? pollStep(ctx, flavor as EnrichFlavor<never>, runId, scope) : startScrapeStep(ctx, flavor, runId, scope, soon);
+    }
+    return flavor.read(ctx, runId, scope, active.seq);
+  }
   switch (active.seq) {
     case 1:
       return startScrapeStep(ctx, flavor, runId, scope, soon);
     case 2:
       return pollStep(ctx, flavor as EnrichFlavor<never>, runId, scope);
     default:
-      return flavor.read(ctx, runId, scope);
+      return flavor.read(ctx, runId, scope, active.seq);
   }
 }
 
@@ -250,10 +277,13 @@ async function startScrapeStep<S extends EnrichScopeBase>(
   soon: string,
 ): Promise<AdvanceResult> {
   const never = flavor as EnrichFlavor<never>;
+  const seq = startSeqOf(scope);
+  // A web run's search step goes on to wait for the actor, so starting it leaves the step running.
+  const merged = isWebScope(scope);
   if (scope.apifyRunId) {
     return mutate(ctx, (rawTx) => {
       const tx = withTxActor(rawTx, flavor.actor);
-      const live = liveStep(tx, runId, 1);
+      const live = liveStep(tx, runId, seq);
       if (!live) return { nextRunAt: null };
       completeStep(tx, runId, live.step, `Found Apify run ${scope.apifyRunId} from before a restart. No second run was started.`);
       return { nextRunAt: soon };
@@ -272,7 +302,7 @@ async function startScrapeStep<S extends EnrichScopeBase>(
   // again inside the transaction, so a marker or run id written since this tick began is never overwritten.
   const marked = mutate(ctx, (rawTx): 'marked' | 'already' | 'gone' => {
     const tx = withTxActor(rawTx, flavor.actor);
-    if (!liveStep(tx, runId, 1)) return 'gone';
+    if (!liveStep(tx, runId, seq)) return 'gone';
     const current = readScope(JSON.parse((tx.db.prepare('SELECT scope FROM run WHERE id = ?').get(runId) as { scope: string }).scope));
     if (current.startAttemptedAt || current.apifyRunId) return 'already';
     patchScope(tx, runId, { startAttemptedAt: tx.now() });
@@ -306,9 +336,11 @@ async function startScrapeStep<S extends EnrichScopeBase>(
       const tx = withTxActor(rawTx, flavor.actor);
       patchScope(tx, runId, { apifyRunId: started.id, apifyDatasetId: started.datasetId, apifyStartedAt: tx.now() });
       tx.audit('run.apify_started', 'run', runId, { apifyRunId: started.id });
-      const live = liveStep(tx, runId, 1);
+      const live = liveStep(tx, runId, seq);
       if (!live) return { nextRunAt: null };
-      completeStep(tx, runId, live.step, `Started Apify run ${started.id} for ${scope.actorId} with status ${started.status}.`);
+      const detail = `Started Apify run ${started.id} for ${scope.actorId} with status ${started.status}.`;
+      if (merged) tx.db.prepare('UPDATE run_step SET detail = ? WHERE id = ?').run(detail, live.step.id);
+      else completeStep(tx, runId, live.step, detail);
       return { nextRunAt: soon };
     });
   } catch {
@@ -333,6 +365,7 @@ async function pollStep(ctx: ActionContext, flavor: EnrichFlavor<never>, runId: 
   if (!scope.apifyRunId || !scope.apifyStartedAt) {
     return failNow(ctx, flavor, runId, 'The Apify run id was not saved, so the run cannot be polled.');
   }
+  const pollSeq = 2;
   const token = getConnectorSecret(ctx.db, ctx.workspaceId, 'apify');
   if (!token) return failNow(ctx, flavor, runId, notConnectedMessage);
   let remote;
@@ -353,7 +386,7 @@ async function pollStep(ctx: ActionContext, flavor: EnrichFlavor<never>, runId: 
   if (providerStatus === 'SUCCEEDED') {
     return mutate(ctx, (rawTx) => {
       const tx = withTxActor(rawTx, flavor.actor);
-      const live = liveStep(tx, runId, 2);
+      const live = liveStep(tx, runId, pollSeq);
       if (!live) return { nextRunAt: null };
       if (!remote.datasetId && !scope.apifyDatasetId) {
         patchScope(tx, runId, { apifyFinished: true });
@@ -377,12 +410,12 @@ async function pollStep(ctx: ActionContext, flavor: EnrichFlavor<never>, runId: 
 
   return mutate(ctx, (rawTx) => {
     const tx = withTxActor(rawTx, flavor.actor);
-    const live = liveStep(tx, runId, 2);
+    const live = liveStep(tx, runId, pollSeq);
     if (!live) return { nextRunAt: null };
     tx.db
       .prepare('UPDATE run_step SET detail = ? WHERE id = ?')
       .run(`Apify run status ${providerStatus}. Elapsed ${formatElapsed(elapsed)}.`, live.step.id);
-    tx.audit('run.step_progress', 'run', runId, { seq: 2 });
+    tx.audit('run.step_progress', 'run', runId, { seq: pollSeq });
     tx.emit({ type: 'run_updated', runId });
     return { nextRunAt: addMilliseconds(tx.now(), apifyPollMilliseconds()) };
   });
@@ -397,7 +430,7 @@ export const isEmpty = (value: string | null | undefined): boolean => value === 
 
 export interface EnrichmentState<F extends string = string> {
   run: { id: string; status: string; startedAt: string | null; detail: string | null; suggestedCount: number } | null;
-  suggestions: { field: F; value: string }[];
+  suggestions: { field: F; value: string; sourceUrl?: string | null }[];
 }
 
 export function newestEnrichRun(db: ActionContext['db'], workspaceId: string, kind: string, scopeKey: string, entityId: string) {
@@ -432,7 +465,9 @@ export function enrichmentState<F extends string>(
       detail: terminal ? (last?.detail ?? null) : null,
       suggestedCount: all.length,
     },
-    suggestions: all.filter((s) => s.status === 'pending').map((s) => ({ field: s.field as F, value: s.value })),
+    suggestions: all
+      .filter((s) => s.status === 'pending')
+      .map((s) => ({ field: s.field as F, value: s.value, ...(s.sourceUrl !== undefined ? { sourceUrl: s.sourceUrl } : {}) })),
   };
 }
 

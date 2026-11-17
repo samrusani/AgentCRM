@@ -36,6 +36,8 @@ import { mapProfileItem } from './leadCaptureMapping.js';
 import { scrubCapturedLine } from './capture.js';
 import { canonicalPersonLinkedinUrl, encodeIdentifier, normalizeProfileUrl } from './profileUrls.js';
 import { clean, fieldAliases, pick, pickLocation } from './apifyMapping.js';
+import { isActiveModelReady } from '../queries/modelProvider.js';
+import { personHoldingX, type WebScope, webModeFields, webNeedsProviderMessage, webReadStep, webSearchInput, webSearchQuery } from './enrichWeb.js';
 
 // Person enrichment: one Apify call, suggestions a person accepts one by one. The mode is decided at start by the
 // saved LinkedIn link and frozen into the run scope. Profile mode scrapes that profile and checks the item against
@@ -55,7 +57,15 @@ export const enrichPersonNameStepTitles = [
   'Read the search result and suggest fields',
 ] as const;
 
-export const enrichFields = ['title', 'location', 'email', 'linkedinUrl'] as const;
+// A web run is a four step ledger: validate, search (the actor start and the wait in one step), read, suggest.
+export const enrichPersonWebStepTitles = [
+  'Check the name and the services',
+  'Search the web',
+  'Read the search results',
+  'Suggest links',
+] as const;
+
+export const enrichFields = ['title', 'location', 'email', 'linkedinUrl', 'xUrl', 'website', 'calendarUrl'] as const;
 export type EnrichField = (typeof enrichFields)[number];
 
 // Profile mode suggests these. Email is out of scope in name mode: the short search result carries none.
@@ -63,16 +73,24 @@ const profileModeFields: readonly EnrichField[] = ['title', 'location', 'email']
 // The link comes last: saving it invalidates the other suggestions, so the list never offers it first.
 const nameModeFields: readonly EnrichField[] = ['title', 'location', 'linkedinUrl'];
 
+// Web mode suggests links only: a search snippet is weak evidence for a title, a place, or an address.
+const webFields: readonly EnrichField[] = webModeFields;
+
+const fieldsOf = (mode: EnrichMode): readonly EnrichField[] =>
+  mode === 'web' ? webFields : mode === 'name' ? nameModeFields : profileModeFields;
+
 // The longest profile link kept, the same bound the extraction schema puts on URLs.
 const maxProfileUrlLength = 500;
 
 export interface EnrichSuggestion {
   field: EnrichField;
   value: string;
+  // Web mode: the verified search result page the link was found on, or null.
+  sourceUrl?: string | null;
   status: 'pending' | 'accepted' | 'dismissed';
 }
 
-export type EnrichMode = 'profile' | 'name';
+export type EnrichMode = 'profile' | 'name' | 'web';
 
 interface EnrichScope extends EnrichScopeBase {
   personId: string;
@@ -87,6 +105,13 @@ interface EnrichScope extends EnrichScopeBase {
   // Name mode: the source of accepted claims, the item's own canonical profile page or null. Never the name.
   sourceUrl?: string | null;
   suggestions?: EnrichSuggestion[];
+  // Web mode: the query searched (frozen at start, like the name), the organization name in it, and what the read step used.
+  query?: string;
+  organizationName?: string | null;
+  provider?: WebScope['provider'];
+  model?: string;
+  candidates?: WebScope['candidates'];
+  readResult?: WebScope['readResult'];
 }
 
 const modeOf = (scope: EnrichScope): EnrichMode => scope.mode ?? 'profile';
@@ -100,7 +125,7 @@ export function scheduleEnrichPersonRun(tx: Tx, runId: string, runAt: string): v
 
 // Start guards, checked inside the start transaction so two starts cannot both pass. Each failure is a validation
 // error with a sentence a person can act on. Returns the scope the run is stored with.
-export function enrichPersonStartScope(tx: Tx, personId: string): EnrichScope {
+export function enrichPersonStartScope(tx: Tx, personId: string, requested?: 'web'): EnrichScope {
   const connector = readyApifyConnector(tx, validationError);
   const person = getPerson(tx.db, tx.workspaceId, personId);
   if (!person) throw validationError('That person was not found, so there is nothing to enrich.');
@@ -111,6 +136,19 @@ export function enrichPersonStartScope(tx: Tx, personId: string): EnrichScope {
     .get(tx.workspaceId, enrichPersonKind, personId);
   if (open) throw validationError('An enrichment run for this person is already open. Wait for it to finish or cancel it first.');
   const { leadCapture } = connector.settings;
+  if (requested === 'web') {
+    if (!isActiveModelReady(tx.db, tx.workspaceId)) throw validationError(webNeedsProviderMessage);
+    const name = scrubCapturedLine(person.name);
+    if (name === '') throw validationError('This person has no usable name, so there is nothing to search for. Add a name first.');
+    return {
+      personId,
+      actorId: leadCapture.webSearchActor,
+      mode: 'web',
+      fullName: person.name,
+      query: webSearchQuery(person.name, person.organizationName),
+      organizationName: person.organizationName,
+    };
+  }
   if (person.linkedinUrl) return { personId, actorId: leadCapture.profileActor, mode: 'profile', profileUrl: person.linkedinUrl };
   // An invisible only name scrubs to nothing, and a search for nothing would still be billed.
   if (scrubCapturedLine(person.name) === '') {
@@ -130,7 +168,9 @@ export const enrichPersonFlavor: EnrichFlavor<EnrichScope> = {
   kind: enrichPersonKind,
   actor: enrichPersonActor,
   startInput: (scope) =>
-    modeOf(scope) === 'name'
+    modeOf(scope) === 'web'
+      ? webSearchInput(scope)
+      : modeOf(scope) === 'name'
       ? // Short results are one search page. maxItems is the app's floor for a charge cap, and the last name is
         // left out when the person has none.
         {
@@ -141,7 +181,10 @@ export const enrichPersonFlavor: EnrichFlavor<EnrichScope> = {
         }
       : // The same input shape the lead capture profile enrichment sends, for one profile.
         { queries: [scope.profileUrl], profileUrls: [scope.profileUrl], usernames: [scope.profileUrl] },
-  read: (ctx, runId, scope) => readStep(ctx, runId, scope),
+  read: (ctx, runId, scope, seq) =>
+    modeOf(scope) === 'web'
+      ? webReadStep(ctx, enrichPersonFlavor as EnrichFlavor<never>, enrichPersonActor, runId, scope, seq)
+      : readStep(ctx, runId, scope),
 };
 
 export const advanceEnrichPersonRun = (ctx: ActionContext, runId: string) => advanceEnrichRun(ctx, enrichPersonFlavor, runId);
@@ -349,7 +392,7 @@ export function acceptEnrichmentSuggestion(ctx: ActionContext, personId: string,
     const run = loadRunFor(tx, personId, data.runId);
     const scope = readScope<EnrichScope>(run.scope);
     // A field the run's mode never offers (email from a name search, a profile link from a profile scrape) is a bad request.
-    if (!(modeOf(scope) === 'name' ? nameModeFields : profileModeFields).includes(data.field)) {
+    if (!fieldsOf(modeOf(scope)).includes(data.field)) {
       throw validationError(`That enrichment run does not suggest ${data.field}.`);
     }
     if (run.status !== 'succeeded') throw conflict('That enrichment run did not finish successfully, so it has nothing to accept.');
@@ -360,11 +403,12 @@ export function acceptEnrichmentSuggestion(ctx: ActionContext, personId: string,
     if (!newest || newest.id !== run.id) throw conflict('A newer enrichment run exists for this person, so this older one cannot be accepted.');
     // The record must still match what the run was started for: the frozen profile in profile mode, the frozen name
     // with no profile saved since in name mode.
-    if (modeOf(scope) === 'name') {
+    if (modeOf(scope) === 'name' || modeOf(scope) === 'web') {
       if (person.name.toLowerCase() !== (scope.fullName ?? '').toLowerCase()) {
         throw conflict('This person\'s name changed after the search, so its suggestions may describe someone else and were not applied.');
       }
-      if (!isEmpty(person.linkedinUrl)) {
+      // A web run can legitimately fill the other fields beside a saved profile, so only name mode checks it.
+      if (modeOf(scope) === 'name' && !isEmpty(person.linkedinUrl)) {
         throw conflict('A LinkedIn link was saved on this person after the search, so its suggestions were not applied.');
       }
     } else if (person.linkedinUrl !== scope.profileUrl) {
@@ -373,6 +417,9 @@ export function acceptEnrichmentSuggestion(ctx: ActionContext, personId: string,
     if (!isEmpty(person[data.field])) throw conflict(`This person already has a ${data.field}, so the suggestion was not applied.`);
     // A link another person saved after the run is refused the way a duplicate email is.
     if (data.field === 'linkedinUrl') assertLinkedinAvailable(tx, suggestion.value, personId);
+    if (data.field === 'xUrl' && personHoldingX(tx, suggestion.value, personId)) {
+      throw conflict('A person with this X link already exists, so the suggestion was not applied.');
+    }
 
     const parsed = parseUpdate('person', { expectedVersion: data.expectedVersion, fields: { [data.field]: suggestion.value } });
     const updated = updateEntityIn(tx, 'person', personId, parsed);
@@ -382,15 +429,24 @@ export function acceptEnrichmentSuggestion(ctx: ActionContext, personId: string,
       field: data.field,
       value: suggestion.value.slice(0, 2000),
       // Evidence is never guessed: the profile that was scraped, or the search item's own page (null when it named none).
-      sourceUrl: modeOf(scope) === 'name' ? (scope.sourceUrl ?? null) : (person.linkedinUrl ?? scope.profileUrl ?? null),
+      // In web mode it is the suggestion's verified result page, or null.
+      sourceUrl:
+        modeOf(scope) === 'web'
+          ? (suggestion.sourceUrl ?? null)
+          : modeOf(scope) === 'name'
+            ? (scope.sourceUrl ?? null)
+            : (person.linkedinUrl ?? scope.profileUrl ?? null),
       sourceType: 'apify',
       observedAt: tx.now(),
       status: 'imported',
-      extractionMethod: `enrich:${scope.actorId}`.slice(0, 200),
+      extractionMethod:
+        modeOf(scope) === 'web'
+          ? `enrich:web:${scope.actorId}:${scope.provider ?? 'unknown'}:${scope.model ?? 'unknown'}`.slice(0, 200)
+          : `enrich:${scope.actorId}`.slice(0, 200),
     });
     // Saving the link invalidates the rest of the run (the next accept would be refused as a changed record), so the
     // remaining pending suggestions are dismissed in the same transaction, the way a dismiss marks them.
-    const dismissing = data.field === 'linkedinUrl' ? suggestions.filter((s) => s !== suggestion && s.status === 'pending').length : 0;
+    const dismissing = data.field === 'linkedinUrl' && modeOf(scope) === 'name' ? suggestions.filter((s) => s !== suggestion && s.status === 'pending').length : 0;
     patchScope(tx, run.id, {
       suggestions: suggestions.map((s) =>
         s === suggestion ? { ...s, status: 'accepted' } : dismissing > 0 && s.status === 'pending' ? { ...s, status: 'dismissed' } : s,
@@ -412,7 +468,7 @@ export function dismissEnrichment(ctx: ActionContext, personId: string, runId: u
     requirePerson(tx.db, tx.workspaceId, personId);
     const run = loadRunFor(tx, personId, id);
     if (only === undefined) return dismissSuggestionsIn(tx, run, 'person', personId);
-    if (!(modeOf(readScope<EnrichScope>(run.scope)) === 'name' ? nameModeFields : profileModeFields).includes(only)) {
+    if (!fieldsOf(modeOf(readScope<EnrichScope>(run.scope))).includes(only)) {
       throw validationError(`That enrichment run does not suggest ${only}.`);
     }
     dismissSuggestionIn(tx, run, 'person', personId, only);

@@ -214,6 +214,7 @@ describe('web client contract', () => {
         profileActor: defaults[2],
         companyActor: defaultCompany,
         personSearchActor: defaultPersonSearch,
+        webSearchActor: 'apify/google-search-scraper',
       });
 
       // The web sends only leadCapture, with single fields and empty strings for resets.
@@ -226,6 +227,7 @@ describe('web client contract', () => {
         profileActor: 'custom~profile',
         companyActor: defaultCompany,
         personSearchActor: defaultPersonSearch,
+        webSearchActor: 'apify/google-search-scraper',
       });
       expect(edited.body.tokenMasked).toBe('****1234');
       const single = await call('PUT', '/api/connectors/apify', { leadCapture: { profileActor: '' } });
@@ -242,6 +244,7 @@ describe('web client contract', () => {
         profileActor: defaults[2],
         companyActor: defaultCompany,
         personSearchActor: defaultPersonSearch,
+        webSearchActor: 'apify/google-search-scraper',
       });
       // The post source needs a ready model provider, and the message names the fix.
       const noProvider = await call('POST', '/api/runs', { kind: 'lead_capture', scope: { postUrl, sources: ['post', 'reactions', 'comments'] } });

@@ -3,5 +3,8 @@ export const ENRICH_FIELD_LABELS: Record<string, string> = {
   location: 'Location',
   email: 'Email',
   linkedinUrl: 'LinkedIn',
+  xUrl: 'X',
+  website: 'Website',
+  calendarUrl: 'Calendar',
   domain: 'Domain',
 };

@@ -22,6 +22,7 @@ export const DEFAULT_LEAD_ACTORS: LeadCaptureSettings = {
   profileActor: 'harvestapi/linkedin-profile-scraper',
   companyActor: 'harvestapi/linkedin-company',
   personSearchActor: 'harvestapi/linkedin-profile-search-by-name',
+  webSearchActor: 'apify/google-search-scraper',
 };
 
 export const ACCEPTED_POST_SHAPES =

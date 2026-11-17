@@ -132,6 +132,11 @@ const LEAD_FIELDS: Array<{ key: keyof LeadCaptureSettings; label: string; note?:
     label: 'People search actor',
     note: 'Used by Enrich on a person with no LinkedIn profile saved. Lead capture does not use it.',
   },
+  {
+    key: 'webSearchActor',
+    label: 'Web search actor',
+    note: 'Used by Search the web on a person. Lead capture does not use it.',
+  },
 ];
 
 // Actor ids compare trimmed, with a slash as a tilde, and without regard to case, as the server lowercases them. Only

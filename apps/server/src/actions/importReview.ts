@@ -35,6 +35,10 @@ export function closeImportBatchForRun(tx: Tx, runId: string, outcome: 'rejected
   tx.db
     .prepare("UPDATE run SET scope = json_remove(scope, '$.extraction', '$.extractionResult', '$.transcriptText') WHERE id = ? AND kind = 'transcript_capture'")
     .run(runId);
+  // A web enrichment run that ends early keeps no search results or links read from them in its scope.
+  tx.db
+    .prepare("UPDATE run SET scope = json_remove(scope, '$.results', '$.candidates', '$.readResult') WHERE id = ? AND kind = 'enrich_person'")
+    .run(runId);
   const batch = getImportBatchForRun(tx.db, tx.workspaceId, runId);
   if (!batch || (batch.status !== 'staging' && batch.status !== 'awaiting_review')) return;
   tx.db

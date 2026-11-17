@@ -80,6 +80,7 @@ const configureSchema = z
         profileActor: leadCaptureField,
         companyActor: leadCaptureField,
         personSearchActor: leadCaptureField,
+        webSearchActor: leadCaptureField,
       })
       .strict()
       .optional(),
