@@ -165,10 +165,8 @@ describe('Search the web button states', () => {
     for (const status of ['queued', 'running', 'paused', 'waiting_approval']) {
       world.enrichment = { run: { id: 'r', status, startedAt: null, mode: 'web' }, suggestions: [] };
       const { unmount } = (() => {
-        const user = userEvent.setup();
         const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
         return {
-          user,
           ...render(
             <QueryClientProvider client={client}>
               <Router>

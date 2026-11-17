@@ -188,7 +188,8 @@ describe('pasted text bounds', () => {
     await waitFor(() => expect(runCalls()).toHaveLength(1));
     const sent = String(runCalls()[0]!.body!.scope.postText);
     expect(sent).toHaveLength(14999);
-    expect(sent.isWellFormed()).toBe(true);
+    // isWellFormed exists at runtime on Node 22; the tsconfig lib predates its typing.
+    expect((sent as string & { isWellFormed(): boolean }).isWellFormed()).toBe(true);
     // A pair that fits whole is kept.
     fireEvent.change(textBox(), { target: { value: `${'a'.repeat(14998)}\u{1F600}tail` } });
     expect((textBox() as HTMLTextAreaElement).value).toBe(`${'a'.repeat(14998)}\u{1F600}`);

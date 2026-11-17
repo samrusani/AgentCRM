@@ -93,7 +93,7 @@ function renderSheet(kind: 'person' | 'org' = 'person') {
         {kind === 'person' ? (
           <PersonSheet id="p1" onClose={() => {}} onOpenOrganization={() => {}} />
         ) : (
-          <OrganizationSheet id="o1" onClose={() => {}} onPerson={undefined as never} onOpenPerson={() => {}} />
+          <OrganizationSheet id="o1" onClose={() => {}} onOpenPerson={() => {}} />
         )}
       </Router>
     </QueryClientProvider>,

@@ -619,6 +619,30 @@ textarea.input {
 .editable__text {
   white-space: pre-wrap;
 }
+.note {
+  max-width: 62ch;
+}
+.note__line,
+.note__list {
+  margin: 2px 0;
+}
+.note__line,
+.note__list li {
+  white-space: pre-wrap;
+}
+.note__list {
+  padding-left: 18px;
+  list-style: disc;
+}
+.note__list li {
+  margin: 2px 0;
+}
+.note > .note__gap {
+  margin-top: 8px;
+}
+.note__label {
+  font-weight: 600;
+}
 .editable__limit {
   flex-basis: 100%;
   margin: 0;

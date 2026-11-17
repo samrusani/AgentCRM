@@ -230,6 +230,24 @@ describe('attribute rows on the person sheet', () => {
     expect(await within(rowOf('Fit notes')).findByText('Writes seed checks.')).toBeInTheDocument();
   });
 
+  it('renders a saved text value as notes and opens the exact stored text in the textarea', async () => {
+    const stored = 'Stage: seed\n\n- first\n- second\n**raw**  spaced';
+    values = { 'research-notes': stored };
+    const { user } = renderSheet();
+    await screen.findByText('Research notes', { selector: 'dt' });
+    const row = await waitFor(() => {
+      const found = rowOf('Research notes');
+      expect(found.querySelector('.note__label')).toHaveTextContent('Stage:');
+      return found;
+    });
+    expect(within(row).getAllByRole('listitem')).toHaveLength(2);
+    expect(row).toHaveTextContent('**raw**');
+    await user.click(within(row).getByRole('button', { name: 'Edit research notes' }));
+    expect((screen.getByRole('textbox', { name: 'Research notes' }) as HTMLTextAreaElement).value).toBe(stored);
+    await user.click(screen.getByText('Fields'));
+    expect(patches()).toHaveLength(0);
+  });
+
   it('clears a text value by sending null', async () => {
     values = { 'research-notes': 'Old notes.' };
     const { user } = renderSheet();

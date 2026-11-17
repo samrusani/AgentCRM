@@ -252,7 +252,8 @@ export function EditableValue({
 
   const commit = async (versionOverride?: number) => {
     const next = draft.trim();
-    if (next === (value ?? '') && versionOverride === undefined) {
+    // An untouched draft is never a change, even when the stored value carries whitespace that trimming would drop.
+    if ((draft === (value ?? '') || next === (value ?? '')) && versionOverride === undefined) {
       setEditing(false);
       return;
     }
