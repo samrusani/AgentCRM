@@ -233,7 +233,8 @@ export function useAcceptEnrichment() {
 export function useDismissEnrichment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { personId: string; runId: string }) => api.people.dismissEnrichment(input.personId, input.runId),
+    mutationFn: (input: { personId: string; runId: string; field?: string }) =>
+      api.people.dismissEnrichment(input.personId, input.runId, input.field),
     onSettled: async (_data, _error, input) => {
       await queryClient.invalidateQueries({ queryKey: ['enrichment', input.personId] });
     },
@@ -288,8 +289,8 @@ export function useAcceptOrganizationEnrichment() {
 export function useDismissOrganizationEnrichment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { organizationId: string; runId: string }) =>
-      api.organizations.dismissEnrichment(input.organizationId, input.runId),
+    mutationFn: (input: { organizationId: string; runId: string; field?: string }) =>
+      api.organizations.dismissEnrichment(input.organizationId, input.runId, input.field),
     onSettled: async (_data, _error, input) => {
       await queryClient.invalidateQueries({ queryKey: ['enrichment', 'organization', input.organizationId] });
     },

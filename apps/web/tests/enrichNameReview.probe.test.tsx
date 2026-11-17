@@ -273,11 +273,11 @@ describe('accepting from a name lookup', () => {
     await user.click(button);
     await user.click(screen.getByRole('button', { name: 'Accept title' }));
     expect(posts('/api/people/p1/enrichment')).toHaveLength(1);
-    for (const control of [...screen.getAllByRole('button', { name: /^Accept / }), screen.getByRole('button', { name: 'Dismiss' })]) {
+    for (const control of [...screen.getAllByRole('button', { name: /^Accept / }), screen.getByRole('button', { name: 'Dismiss all' })]) {
       expect(control).toBeDisabled();
     }
     hold.open();
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Dismiss' })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Dismiss all' })).toBeEnabled());
   });
 
   it('KILLS: the accept request carries only the run id, the field, and the record version, never the scraped value', async () => {

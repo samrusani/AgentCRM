@@ -218,7 +218,7 @@ describe('accept version', () => {
     await waitFor(() => expect(posts('/api/people/p1/enrichment')).toHaveLength(1));
     await waitFor(() => expect(document.querySelector('.fields')?.textContent ?? '').toContain('Partner'));
     expect(screen.getByRole('button', { name: 'Accept location' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Dismiss all' })).toBeDisabled();
     slow.open();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Accept location' })).toBeEnabled());
     expect(screen.getByRole('button', { name: 'Dismiss' })).toBeEnabled();

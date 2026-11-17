@@ -999,8 +999,8 @@ export const api = {
     },
     acceptEnrichment: (id: string, input: { runId: string; field: string; expectedVersion: number }) =>
       request<unknown>('POST', `/people/${id}/enrichment`, { body: input }),
-    dismissEnrichment: (id: string, runId: string) =>
-      request<unknown>('DELETE', `/people/${id}/enrichment`, { query: { runId } }),
+    dismissEnrichment: (id: string, runId: string, field?: string) =>
+      request<unknown>('DELETE', `/people/${id}/enrichment`, { query: field ? { runId, field } : { runId } }),
   },
 
   organizations: {
@@ -1023,8 +1023,8 @@ export const api = {
     },
     acceptEnrichment: (id: string, input: { runId: string; field: string; expectedVersion: number }) =>
       request<unknown>('POST', `/organizations/${id}/enrichment`, { body: input }),
-    dismissEnrichment: (id: string, runId: string) =>
-      request<unknown>('DELETE', `/organizations/${id}/enrichment`, { query: { runId } }),
+    dismissEnrichment: (id: string, runId: string, field?: string) =>
+      request<unknown>('DELETE', `/organizations/${id}/enrichment`, { query: field ? { runId, field } : { runId } }),
   },
 
   pipelines: async () => asPage<Pipeline>(await request<unknown>('GET', '/pipelines')).items.map(normalizePipeline),

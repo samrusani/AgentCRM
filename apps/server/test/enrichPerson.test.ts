@@ -419,6 +419,33 @@ describe('enrichment suggestions', () => {
     expect((await call('DELETE', `/api/people/${person.id}/enrichment`)).status).toBe(400);
   });
 
+  it('dismisses one suggestion by field and leaves the rest pending', async () => {
+    const person = newPerson({ email: 'already.has@example.com' });
+    const { run } = await enrich(person);
+    const base = `/api/people/${person.id}/enrichment`;
+    const one = await call('DELETE', `${base}?runId=${run.id}&field=title`);
+    expect(one.status).toBe(204);
+    const statuses = (getRunDetail(env.db, env.workspaceId, run.id).scope.suggestions as { field: string; status: string }[]).map((s) => [s.field, s.status]);
+    expect(statuses.find(([f]) => f === 'title')).toEqual(['title', 'dismissed']);
+    expect(statuses.filter(([f]) => f !== 'title').every(([, s]) => s === 'pending')).toBe(true);
+    const state = await call('GET', base);
+    const remaining = (state.body!.suggestions as { field: string }[]).map((s) => s.field);
+    expect(remaining).not.toContain('title');
+    expect(remaining.length).toBe(statuses.length - 1);
+    const audits = env.db.prepare("SELECT detail FROM audit_event WHERE action = 'enrichment.dismiss' AND entity_id = ?").all(person.id) as { detail: string }[];
+    expect(audits.map((row) => JSON.parse(row.detail))).toEqual([{ runId: run.id, field: 'title' }]);
+    // The same field again is a conflict, and so is one that was never suggested.
+    expect((await call('DELETE', `${base}?runId=${run.id}&field=title`)).status).toBe(409);
+    expect((await call('DELETE', `${base}?runId=${run.id}&field=email`)).status).toBe(409);
+    expect((await call('DELETE', `${base}?runId=${run.id}&field=linkedinUrl`)).status).toBe(400);
+    expect((await call('DELETE', `${base}?runId=${run.id}&field=company`)).status).toBe(400);
+    // No field still clears the rest, with the count audit.
+    expect((await call('DELETE', `${base}?runId=${run.id}`)).status).toBe(204);
+    expect((await call('GET', base)).body!.suggestions).toEqual([]);
+    const all = env.db.prepare("SELECT detail FROM audit_event WHERE action = 'enrichment.dismiss' AND entity_id = ?").all(person.id) as { detail: string }[];
+    expect(all.map((row) => JSON.parse(row.detail))).toContainEqual({ runId: run.id, dismissed: remaining.length });
+  });
+
   it('is workspace scoped: another workspace cannot read a person or accept a suggestion', async () => {
     const person = newPerson();
     const { run } = await enrich(person);

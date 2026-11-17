@@ -10,6 +10,7 @@ import { type AdvanceResult, setCounts } from './demoResearch.js';
 import { assertLinkedinAvailable, parseUpdate, personHoldingLinkedin, updateEntityIn } from './entities.js';
 import {
   advanceEnrichRun,
+  dismissSuggestionIn,
   dismissSuggestionsIn,
   type EnrichFlavor,
   type EnrichmentState as BaseEnrichmentState,
@@ -403,12 +404,18 @@ export function acceptEnrichmentSuggestion(ctx: ActionContext, personId: string,
 }
 
 // Dismisses the run's remaining pending suggestions. Accepting and dismissing cost nothing.
-export function dismissEnrichment(ctx: ActionContext, personId: string, runId: unknown): void {
+// With a field, only that suggestion is dismissed and the rest stay pending.
+export function dismissEnrichment(ctx: ActionContext, personId: string, runId: unknown, field?: unknown): void {
   const id = parseInput(z.string().trim().min(1).max(64), runId);
+  const only = field === undefined ? undefined : parseInput(z.enum(enrichFields), field);
   mutate(ctx, (tx) => {
     requirePerson(tx.db, tx.workspaceId, personId);
     const run = loadRunFor(tx, personId, id);
-    dismissSuggestionsIn(tx, run, 'person', personId);
+    if (only === undefined) return dismissSuggestionsIn(tx, run, 'person', personId);
+    if (!(modeOf(readScope<EnrichScope>(run.scope)) === 'name' ? nameModeFields : profileModeFields).includes(only)) {
+      throw validationError(`That enrichment run does not suggest ${only}.`);
+    }
+    dismissSuggestionIn(tx, run, 'person', personId, only);
   });
 }
 

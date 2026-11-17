@@ -5,6 +5,7 @@ import {
   minimumCapItems,
   startRun as startApifyRun,
 } from '../providers/apify.js';
+import { conflict } from '../errors.js';
 import { apifyPollMilliseconds, apifyTimeoutMilliseconds } from '../config.js';
 import { getConnector, getConnectorSecret } from '../queries/connectors.js';
 import { getRun, listRunSteps } from '../queries/runs.js';
@@ -447,5 +448,22 @@ export function dismissSuggestionsIn(
   if (pending === 0) return;
   patchScope(tx, run.id, { suggestions: suggestions.map((s) => (s.status === 'pending' ? { ...s, status: 'dismissed' } : s)) });
   tx.audit('enrichment.dismiss', entityType, entityId, { runId: run.id, dismissed: pending });
+  emitRecord(tx, entityType, entityId);
+}
+
+// Dismisses one pending suggestion by field and leaves the rest pending. A suggestion that is missing or already
+// decided is a conflict, the same wording accept uses.
+export function dismissSuggestionIn(
+  tx: Tx,
+  run: NonNullable<ReturnType<typeof getRun>>,
+  entityType: 'person' | 'organization',
+  entityId: string,
+  field: string,
+): void {
+  const suggestions = readScope(run.scope).suggestions ?? [];
+  const suggestion = suggestions.find((candidate) => candidate.field === field);
+  if (!suggestion || suggestion.status !== 'pending') throw conflict('That suggestion was already accepted or dismissed.');
+  patchScope(tx, run.id, { suggestions: suggestions.map((s) => (s === suggestion ? { ...s, status: 'dismissed' } : s)) });
+  tx.audit('enrichment.dismiss', entityType, entityId, { runId: run.id, field });
   emitRecord(tx, entityType, entityId);
 }

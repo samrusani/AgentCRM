@@ -12,6 +12,7 @@ import { type AdvanceResult, setCounts } from './demoResearch.js';
 import { parseUpdate, updateEntityIn } from './entities.js';
 import {
   advanceEnrichRun,
+  dismissSuggestionIn,
   dismissSuggestionsIn,
   type EnrichFlavor,
   type EnrichmentState as BaseEnrichmentState,
@@ -314,10 +315,14 @@ export function acceptOrganizationEnrichmentSuggestion(ctx: ActionContext, organ
 }
 
 // Dismisses the run's remaining pending suggestions. Accepting and dismissing cost nothing.
-export function dismissOrganizationEnrichment(ctx: ActionContext, organizationId: string, runId: unknown): void {
+// With a field, only that suggestion is dismissed and the rest stay pending.
+export function dismissOrganizationEnrichment(ctx: ActionContext, organizationId: string, runId: unknown, field?: unknown): void {
   const id = parseInput(z.string().trim().min(1).max(64), runId);
+  const only = field === undefined ? undefined : parseInput(z.enum(enrichOrganizationFields), field);
   mutate(ctx, (tx) => {
     requireOrganization(tx.db, tx.workspaceId, organizationId);
-    dismissSuggestionsIn(tx, loadRunFor(tx, organizationId, id), 'organization', organizationId);
+    const run = loadRunFor(tx, organizationId, id);
+    if (only === undefined) return dismissSuggestionsIn(tx, run, 'organization', organizationId);
+    dismissSuggestionIn(tx, run, 'organization', organizationId, only);
   });
 }

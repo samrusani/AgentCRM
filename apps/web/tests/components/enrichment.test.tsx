@@ -23,6 +23,8 @@ interface World {
   calls: Call[];
   // When set, the next accept answers with this status and error envelope.
   acceptFailure: { status: number; code: string; message: string } | null;
+  dismissFailure: { status: number; code: string; message: string } | null;
+  dismissGate: Promise<void> | null;
   patchFailure: { status: number; code: string; message: string } | null;
 }
 
@@ -85,6 +87,8 @@ function freshWorld(): World {
     enrichment: { run: null, suggestions: [] },
     calls: [],
     acceptFailure: null,
+    dismissFailure: null,
+    dismissGate: null,
     patchFailure: null,
   };
 }
@@ -120,7 +124,10 @@ function installFetch() {
         return json(200, {});
       }
       if (url.pathname === '/api/people/p1/enrichment' && method === 'DELETE') {
-        world.enrichment = { ...world.enrichment, suggestions: [] };
+        if (world.dismissGate) await world.dismissGate;
+        if (world.dismissFailure) return json(world.dismissFailure.status, { error: world.dismissFailure });
+        const only = url.searchParams.get('field');
+        world.enrichment = { ...world.enrichment, suggestions: world.enrichment.suggestions.filter((entry) => only !== null && entry.field !== only) };
         return json(200, {});
       }
       if (url.pathname === '/api/runs' && method === 'POST') {
@@ -459,7 +466,8 @@ describe('suggestions', () => {
     expect(within(section).getByText('Location')).toBeInTheDocument();
     expect(within(section).getByText('Lisbon, Portugal')).toBeInTheDocument();
     expect(within(section).getAllByRole('button', { name: /^Accept / })).toHaveLength(2);
-    expect(within(section).getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+    expect(within(section).getByRole('button', { name: 'Dismiss all' })).toBeInTheDocument();
+    expect(within(section).getAllByRole('button', { name: /^Dismiss / })).toHaveLength(3);
 
     const titles = screen.getAllByRole('heading', { level: 3 }).map((node) => node.textContent);
     expect(titles.indexOf('Suggestions')).toBe(titles.indexOf('Fields') + 1);
@@ -549,11 +557,61 @@ describe('suggestions', () => {
   it('dismisses the rest of the run and clears the list', async () => {
     withSuggestions();
     const { user } = renderPerson();
-    await user.click(await screen.findByRole('button', { name: 'Dismiss' }));
+    await user.click(await screen.findByRole('button', { name: 'Dismiss all' }));
     await waitFor(() => expect(calls('DELETE', '/api/people/p1/enrichment')).toHaveLength(1));
     expect(calls('DELETE', '/api/people/p1/enrichment')[0]?.path).toBe('/api/people/p1/enrichment?runId=run-1');
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Suggestions' })).not.toBeInTheDocument());
     expect(screen.queryByText('Nothing new to suggest.')).not.toBeInTheDocument();
+  });
+});
+
+describe('per-row dismiss', () => {
+  function withSuggestions() {
+    world.enrichment = {
+      run: { id: 'run-1', status: 'succeeded', startedAt: '2026-11-05T09:00:00', detail: '2 fields suggested.', suggestedCount: 2 },
+      suggestions: [
+        { field: 'title', value: 'VP Engineering', status: 'pending' },
+        { field: 'location', value: 'Lisbon, Portugal', status: 'pending' },
+      ],
+    };
+  }
+
+  it('dismisses one row with its field and leaves the other, then the last button reads Dismiss', async () => {
+    withSuggestions();
+    const { user } = renderPerson();
+    expect(await screen.findByRole('button', { name: 'Dismiss all' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Dismiss title' }));
+    await waitFor(() => expect(calls('DELETE', '/api/people/p1/enrichment')).toHaveLength(1));
+    expect(calls('DELETE', '/api/people/p1/enrichment')[0]?.path).toBe('/api/people/p1/enrichment?runId=run-1&field=title');
+    await waitFor(() => expect(screen.queryByText('VP Engineering')).not.toBeInTheDocument());
+    expect(screen.getByText('Lisbon, Portugal')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Dismiss all' })).not.toBeInTheDocument();
+  });
+
+  it('shows the server message when a per-row dismiss fails', async () => {
+    withSuggestions();
+    world.dismissFailure = { status: 409, code: 'conflict', message: 'That suggestion was already accepted or dismissed.' };
+    const { user } = renderPerson();
+    await user.click(await screen.findByRole('button', { name: 'Dismiss location' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('That suggestion was already accepted or dismissed.');
+    expect(screen.getByText('Lisbon, Portugal')).toBeInTheDocument();
+  });
+
+  it('disables every Accept and Dismiss while a dismiss is in flight', async () => {
+    withSuggestions();
+    const { user } = renderPerson();
+    let release: () => void = () => {};
+    world.dismissGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await user.click(await screen.findByRole('button', { name: 'Dismiss title' }));
+    await waitFor(() => expect(calls('DELETE', '/api/people/p1/enrichment')).toHaveLength(1));
+    const controls = screen.getAllByRole('button', { name: /^(Accept|Dismiss)/ });
+    expect(controls).toHaveLength(5);
+    for (const control of controls) expect(control).toBeDisabled();
+    release();
+    await waitFor(() => expect(screen.queryByText('VP Engineering')).not.toBeInTheDocument());
   });
 });
 

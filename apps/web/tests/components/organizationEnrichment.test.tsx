@@ -21,6 +21,7 @@ interface World {
   enrichment: { run: Record<string, unknown> | null; suggestions: Array<Record<string, unknown>> };
   calls: Call[];
   acceptFailure: { status: number; code: string; message: string } | null;
+  dismissFailure: { status: number; code: string; message: string } | null;
 }
 
 let world: World;
@@ -49,6 +50,7 @@ function freshWorld(): World {
     enrichment: { run: null, suggestions: [] },
     calls: [],
     acceptFailure: null,
+    dismissFailure: null,
   };
 }
 
@@ -81,7 +83,9 @@ function installFetch() {
         return json(200, {});
       }
       if (url.pathname === '/api/organizations/o1/enrichment' && method === 'DELETE') {
-        world.enrichment = { ...world.enrichment, suggestions: [] };
+        if (world.dismissFailure) return json(world.dismissFailure.status, { error: world.dismissFailure });
+        const only = url.searchParams.get('field');
+        world.enrichment = { ...world.enrichment, suggestions: world.enrichment.suggestions.filter((entry) => only !== null && entry.field !== only) };
         return json(200, {});
       }
       if (url.pathname === '/api/runs' && method === 'POST') {
@@ -221,7 +225,8 @@ describe('organization suggestions', () => {
     expect(within(section).getByText('Location')).toBeInTheDocument();
     expect(within(section).getByText('Austin, United States')).toBeInTheDocument();
     expect(within(section).getAllByRole('button', { name: /^Accept / })).toHaveLength(3);
-    expect(within(section).getAllByRole('button', { name: 'Dismiss' })).toHaveLength(1);
+    expect(within(section).getByRole('button', { name: 'Dismiss all' })).toBeInTheDocument();
+    expect(within(section).getAllByRole('button', { name: /^Dismiss / })).toHaveLength(4);
 
     const titles = screen.getAllByRole('heading', { level: 3 }).map((node) => node.textContent);
     expect(titles.indexOf('Suggestions')).toBe(titles.indexOf('Fields') + 1);
@@ -290,12 +295,44 @@ describe('organization suggestions', () => {
   it('dismisses the rest of the run, including the detail line above the list', async () => {
     withSuggestions(NAME_MODE_DETAIL);
     const { user } = renderOrganization();
-    await user.click(await screen.findByRole('button', { name: 'Dismiss' }));
+    await user.click(await screen.findByRole('button', { name: 'Dismiss all' }));
     await waitFor(() => expect(calls('DELETE', '/api/organizations/o1/enrichment')).toHaveLength(1));
     expect(calls('DELETE', '/api/organizations/o1/enrichment')[0]?.path).toBe('/api/organizations/o1/enrichment?runId=run-1');
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Suggestions' })).not.toBeInTheDocument());
     expect(screen.queryByText(NAME_MODE_DETAIL)).not.toBeInTheDocument();
     expect(screen.queryByText('Nothing new to suggest.')).not.toBeInTheDocument();
+  });
+});
+
+describe('organization per-row dismiss', () => {
+  function withSuggestions() {
+    world.enrichment = {
+      run: { id: 'run-1', status: 'succeeded', startedAt: '2026-11-05T09:00:00', detail: '3 fields suggested.', suggestedCount: 3 },
+      suggestions: [
+        { field: 'linkedinUrl', value: 'https://www.linkedin.com/company/acme', status: 'pending' },
+        { field: 'domain', value: 'acme.example.com', status: 'pending' },
+        { field: 'location', value: 'Austin, United States', status: 'pending' },
+      ],
+    };
+  }
+
+  it('dismisses one row with its field and keeps the rest', async () => {
+    withSuggestions();
+    const { user } = renderOrganization();
+    await user.click(await screen.findByRole('button', { name: 'Dismiss domain' }));
+    await waitFor(() => expect(calls('DELETE', '/api/organizations/o1/enrichment')).toHaveLength(1));
+    expect(calls('DELETE', '/api/organizations/o1/enrichment')[0]?.path).toBe('/api/organizations/o1/enrichment?runId=run-1&field=domain');
+    await waitFor(() => expect(screen.queryByText('acme.example.com', { selector: '.suggestion-row__value' })).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Dismiss location' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Dismiss all' })).toBeInTheDocument();
+  });
+
+  it('shows the server message when a per-row dismiss fails', async () => {
+    withSuggestions();
+    world.dismissFailure = { status: 409, code: 'conflict', message: 'That suggestion was already accepted or dismissed.' };
+    const { user } = renderOrganization();
+    await user.click(await screen.findByRole('button', { name: 'Dismiss location' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('That suggestion was already accepted or dismissed.');
   });
 });
 

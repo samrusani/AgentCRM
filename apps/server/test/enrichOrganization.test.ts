@@ -640,6 +640,32 @@ describe('organization enrichment suggestions', () => {
     expect((await call('DELETE', `/api/organizations/${org.id}/enrichment`)).status).toBe(400);
   });
 
+  it('dismisses one suggestion by field and leaves the rest pending', async () => {
+    const org = newOrg();
+    const { run } = await enrich(org);
+    const base = `/api/organizations/${org.id}/enrichment`;
+    const one = await call('DELETE', `${base}?runId=${run.id}&field=domain`);
+    expect(one.status).toBe(204);
+    const statuses = (getRunDetail(env.db, env.workspaceId, run.id).scope.suggestions as { field: string; status: string }[]).map((s) => [s.field, s.status]);
+    expect(statuses.find(([f]) => f === 'domain')).toEqual(['domain', 'dismissed']);
+    expect(statuses.filter(([f]) => f !== 'domain').every(([, s]) => s === 'pending')).toBe(true);
+    const state = await call('GET', base);
+    const remaining = (state.body!.suggestions as { field: string }[]).map((s) => s.field);
+    expect(remaining).not.toContain('domain');
+    expect(remaining.length).toBe(statuses.length - 1);
+    const audits = env.db.prepare("SELECT detail FROM audit_event WHERE action = 'enrichment.dismiss' AND entity_id = ?").all(org.id) as { detail: string }[];
+    expect(audits.map((row) => JSON.parse(row.detail))).toEqual([{ runId: run.id, field: 'domain' }]);
+    // The same field again is a conflict, and so is one that was never suggested.
+    expect((await call('DELETE', `${base}?runId=${run.id}&field=domain`)).status).toBe(409);
+    expect((await call('DELETE', `${base}?runId=${run.id}&field=linkedinUrl`)).status).toBe(409);
+    expect((await call('DELETE', `${base}?runId=${run.id}&field=name`)).status).toBe(400);
+    // No field still clears the rest, with the count audit.
+    expect((await call('DELETE', `${base}?runId=${run.id}`)).status).toBe(204);
+    expect((await call('GET', base)).body!.suggestions).toEqual([]);
+    const all = env.db.prepare("SELECT detail FROM audit_event WHERE action = 'enrichment.dismiss' AND entity_id = ?").all(org.id) as { detail: string }[];
+    expect(all.map((row) => JSON.parse(row.detail))).toContainEqual({ runId: run.id, dismissed: remaining.length });
+  });
+
   it('is workspace scoped: another workspace cannot read an organization or accept a suggestion', async () => {
     const org = newOrg();
     const { run } = await enrich(org);

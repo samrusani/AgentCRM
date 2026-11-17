@@ -114,11 +114,14 @@ interface SuggestionsViewProps {
   detailAbovePending: boolean | ((run: NonNullable<EnrichmentState['run']>) => boolean);
   enrichment: { data: EnrichmentState | undefined; refetch: () => unknown };
   accept: { isPending: boolean; mutate: (vars: AcceptVars, options: { onError: (error: unknown) => void; onSettled: () => void }) => void };
-  dismiss: { isPending: boolean; isError: boolean; error: unknown; mutate: (runId: string) => void };
+  dismiss: { isPending: boolean; mutate: (runId: string, field?: string, options?: { onError: (error: unknown) => void }) => void };
 }
 
 function SuggestionsView({ version, detailAbovePending, enrichment, accept, dismiss }: SuggestionsViewProps) {
   const [problem, setProblem] = useState<{ field: string; message: string } | null>(null);
+  // A failed dismiss reports where it was started: a row failure in the row, a Dismiss all failure beside its button.
+  // Neither reads the shared mutation state, so a cleared error can never resurface somewhere else.
+  const [bottomProblem, setBottomProblem] = useState<string | null>(null);
   const [acceptingField, setAcceptingField] = useState<string | null>(null);
 
   const run = enrichment.data?.run ?? null;
@@ -128,6 +131,7 @@ function SuggestionsView({ version, detailAbovePending, enrichment, accept, dism
 
   useEffect(() => {
     setProblem(null);
+    setBottomProblem(null);
   }, [runId]);
 
   if (!run) return null;
@@ -148,6 +152,7 @@ function SuggestionsView({ version, detailAbovePending, enrichment, accept, dism
 
   const onAccept = (field: string) => {
     setProblem(null);
+    setBottomProblem(null);
     setAcceptingField(field);
     accept.mutate(
       { runId: run.id, field, expectedVersion: version },
@@ -195,6 +200,21 @@ function SuggestionsView({ version, detailAbovePending, enrichment, accept, dism
               >
                 {acceptingField === suggestion.field ? 'Accepting...' : 'Accept'}
               </button>
+              <button
+                type="button"
+                className="btn btn--quiet"
+                disabled={busy}
+                aria-label={`Dismiss ${label.toLowerCase()}`}
+                onClick={() => {
+                  setProblem(null);
+                  setBottomProblem(null);
+                  dismiss.mutate(run.id, suggestion.field, {
+                    onError: (error) => setProblem({ field: suggestion.field, message: errorMessage(error) }),
+                  });
+                }}
+              >
+                Dismiss
+              </button>
               {failed ? (
                 <div className="conflict suggestion-row__problem" role="alert">
                   <p>{failed.message}</p>
@@ -223,12 +243,15 @@ function SuggestionsView({ version, detailAbovePending, enrichment, accept, dism
           disabled={busy}
           onClick={() => {
             setProblem(null);
-            dismiss.mutate(run.id);
+            setBottomProblem(null);
+            dismiss.mutate(run.id, undefined, {
+              onError: (error) => setBottomProblem(errorMessage(error)),
+            });
           }}
         >
-          Dismiss
+          {suggestions.length === 1 ? 'Dismiss' : 'Dismiss all'}
         </button>
-        {dismiss.isError ? <span className="inline-error">{errorMessage(dismiss.error)}</span> : null}
+        {bottomProblem ? <span className="inline-error">{bottomProblem}</span> : null}
       </div>
     </SheetSection>
   );
@@ -248,9 +271,7 @@ export function EnrichmentSuggestions({ personId, version }: { personId: string;
       accept={{ isPending: accept.isPending, mutate: (vars, options) => accept.mutate({ personId, ...vars }, options) }}
       dismiss={{
         isPending: dismiss.isPending,
-        isError: dismiss.isError,
-        error: dismiss.error,
-        mutate: (runId) => dismiss.mutate({ personId, runId }),
+        mutate: (runId, field, options) => dismiss.mutate({ personId, runId, field }, options),
       }}
     />
   );
@@ -269,9 +290,7 @@ export function OrganizationEnrichmentSuggestions({ organizationId, version }: {
       accept={{ isPending: accept.isPending, mutate: (vars, options) => accept.mutate({ organizationId, ...vars }, options) }}
       dismiss={{
         isPending: dismiss.isPending,
-        isError: dismiss.isError,
-        error: dismiss.error,
-        mutate: (runId) => dismiss.mutate({ organizationId, runId }),
+        mutate: (runId, field, options) => dismiss.mutate({ organizationId, runId, field }, options),
       }}
     />
   );

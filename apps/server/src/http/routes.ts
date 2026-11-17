@@ -298,8 +298,8 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
     acceptEnrichmentSuggestion(context(), idParam(request.params), request.body),
   );
   app.delete('/api/people/:id/enrichment', async (request, reply) => {
-    const { runId } = parseInput(z.object({ runId: z.string().min(1) }), request.query);
-    dismissEnrichment(context(), idParam(request.params), runId);
+    const { runId, field } = parseInput(z.object({ runId: z.string().min(1), field: z.string().optional() }), request.query);
+    dismissEnrichment(context(), idParam(request.params), runId, field);
     return reply.status(204).send();
   });
 
@@ -323,8 +323,8 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
     acceptOrganizationEnrichmentSuggestion(context(), idParam(request.params), request.body),
   );
   app.delete('/api/organizations/:id/enrichment', async (request, reply) => {
-    const { runId } = parseInput(z.object({ runId: z.string().min(1) }), request.query);
-    dismissOrganizationEnrichment(context(), idParam(request.params), runId);
+    const { runId, field } = parseInput(z.object({ runId: z.string().min(1), field: z.string().optional() }), request.query);
+    dismissOrganizationEnrichment(context(), idParam(request.params), runId, field);
     return reply.status(204).send();
   });
 
