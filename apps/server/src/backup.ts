@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { acquireDatabaseLock, canonicalDatabasePath, openLockedDatabase, restoreMarkerPath } from './databaseLock.js';
 import { AppError } from './errors.js';
@@ -71,41 +71,40 @@ export async function backupDatabase(options: BackupOptions): Promise<BackupResu
     }
   }
 
-  // Reserve the file name first with an exclusive create, so two backups in the same second never share a file.
+  const stagingDirectory = mkdtempSync(path.join(directory, '.agentcrm-backup-'));
+  const staged = path.join(stagingDirectory, 'snapshot.db');
   const stamp = fileTimestamp((options.now ?? (() => new Date()))());
-  let target = '';
-  for (let attempt = 1; ; attempt += 1) {
-    target = path.join(directory, `agentcrm-backup-${stamp}${attempt === 1 ? '' : `-${attempt}`}.db`);
-    try {
-      closeSync(openSync(target, 'wx', 0o600));
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-        throw refuse(`Cannot write a backup in ${shown(directory)}: ${(error as Error).message}`);
-      }
-    }
-  }
-
+  let target: string;
   try {
     const source = openLockedDatabase(databasePath, { readonly: true, fileMustExist: true });
     try {
-      await source.backup(target);
+      await source.backup(staged);
     } finally {
       source.close();
     }
+
+    // Publish only a self-contained snapshot. A restore cannot open a half-written backup.
+    const finished = new Database(staged);
+    try {
+      finished.pragma('journal_mode = DELETE');
+    } finally {
+      finished.close();
+    }
+    if (process.platform !== 'win32') chmodSync(staged, 0o600);
+    for (let attempt = 1; ; attempt += 1) {
+      target = path.join(directory, `agentcrm-backup-${stamp}${attempt === 1 ? '' : `-${attempt}`}.db`);
+      try {
+        linkSync(staged, target);
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      }
+    }
   } catch (error) {
-    rmSync(target, { force: true });
     throw refuse(`The backup failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  // A snapshot is one self contained file. Rollback journal mode keeps -wal and -shm files from appearing beside it
-  // when it is opened later. The server switches the database back to WAL when it opens the restored file.
-  const finished = new Database(target);
-  try {
-    finished.pragma('journal_mode = DELETE');
   } finally {
-    finished.close();
+    rmSync(stagingDirectory, { recursive: true, force: true });
   }
-  if (process.platform !== 'win32') chmodSync(target, 0o600);
   const bytes = statSync(target).size;
   return {
     path: target,
@@ -129,31 +128,26 @@ export interface RestoreResult {
   message: string;
 }
 
-// Checks the snapshot is an AgentCRM database that this build can open, and returns the migrations it has applied.
-function inspectSnapshot(snapshot: string): string[] {
-  let db: Database.Database;
+// An AgentCRM snapshot must be readable, intact, and use migrations this build knows.
+function inspectSnapshot(db: Database.Database, snapshot: string): void {
   try {
-    db = new Database(snapshot, { readonly: true, fileMustExist: true });
-  } catch (error) {
-    throw refuse(`${shown(snapshot)} cannot be opened as a database: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  try {
-    let names: string[];
-    try {
-      const hasTable = (name: string) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name));
-      if (!hasTable('migrations') || !hasTable('workspace')) {
-        throw refuse(`${shown(snapshot)} is not an AgentCRM database. Nothing was changed.`);
-      }
-      names = (db.prepare('SELECT name FROM migrations ORDER BY name').all() as { name: string }[]).map((row) => row.name);
-      const check = db.pragma('quick_check', { simple: true });
-      if (check !== 'ok') throw refuse(`${shown(snapshot)} failed the integrity check (${String(check)}). Nothing was changed.`);
-    } catch (error) {
-      if (error instanceof AppError) throw error;
-      throw refuse(`${shown(snapshot)} is not an AgentCRM database: ${error instanceof Error ? error.message : String(error)}`);
+    const hasTable = (name: string) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name));
+    if (!hasTable('migrations') || !hasTable('workspace')) {
+      throw refuse(`${shown(snapshot)} is not an AgentCRM database. Nothing was changed.`);
     }
-    return names;
-  } finally {
-    db.close();
+    const check = db.pragma('quick_check', { simple: true });
+    if (check !== 'ok') throw refuse(`${shown(snapshot)} failed the integrity check (${String(check)}). Nothing was changed.`);
+    const known = new Set(listMigrationFiles());
+    const rows = db.prepare('SELECT name FROM migrations ORDER BY name').all() as { name: string }[];
+    const unknown = rows.map((row) => row.name).filter((name) => !known.has(name));
+    if (unknown.length > 0) {
+      throw refuse(
+        `This backup comes from a newer version of AgentCRM. It has migrations this version does not know: ${unknown.join(', ')}. Update AgentCRM, then restore. Nothing was changed.`,
+      );
+    }
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw refuse(`${shown(snapshot)} is not an AgentCRM database: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -175,14 +169,13 @@ export async function restoreDatabase(options: RestoreOptions): Promise<RestoreR
   try {
     const releaseSnapshot = acquireDatabaseLock(snapshot, 'exclusive');
     try {
-      const known = new Set(listMigrationFiles());
-      const unknown = inspectSnapshot(snapshot).filter((name) => !known.has(name));
-      if (unknown.length > 0) {
-        throw refuse(
-          `This backup comes from a newer version of AgentCRM. It has migrations this version does not know: ${unknown.join(', ')}. Update AgentCRM, then restore. Nothing was changed.`,
-        );
+      const source = new Database(snapshot, { readonly: true, fileMustExist: true });
+      try {
+        inspectSnapshot(source, snapshot);
+        return await installSnapshot(databasePath, source, options.now?.() ?? new Date());
+      } finally {
+        source.close();
       }
-      return installSnapshot(databasePath, snapshot, options.now?.() ?? new Date());
     } finally {
       releaseSnapshot();
     }
@@ -191,7 +184,7 @@ export async function restoreDatabase(options: RestoreOptions): Promise<RestoreR
   }
 }
 
-function installSnapshot(databasePath: string, snapshot: string, now: Date): RestoreResult {
+async function installSnapshot(databasePath: string, snapshot: Database.Database, now: Date): Promise<RestoreResult> {
   const parsed = path.parse(databasePath);
   const stamp = fileTimestamp(now);
   let asideBase = path.join(parsed.dir, `${parsed.name}.pre-restore-${stamp}`);
@@ -210,7 +203,7 @@ function installSnapshot(databasePath: string, snapshot: string, now: Date): Res
   const stagedMarker = `${staged}.restore-pending.db`;
   try {
     writeFileSync(staged, '', { flag: 'wx', mode: 0o600 });
-    copyFileSync(snapshot, staged);
+    await snapshot.backup(staged);
     if (process.platform !== 'win32') chmodSync(staged, 0o600);
     writeFileSync(stagedMarker, token, { flag: 'wx', mode: 0o600, flush: true });
     renameSync(stagedMarker, marker);
@@ -228,7 +221,7 @@ function installSnapshot(databasePath: string, snapshot: string, now: Date): Res
     rmSync(stagedMarker, { force: true });
   }
 
-  const lines = [`Restored the database from ${shown(snapshot)}.`];
+  const lines = [`Restored the database from ${shown(snapshot.name)}.`];
   if (moved.length === 0) lines.push('There was no previous database to move aside.');
   else {
     lines.push('Moved the previous database aside, nothing was deleted:');

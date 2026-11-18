@@ -222,8 +222,8 @@ export function createWorkerTick(
     onTakeover: (canRecover: boolean) => { recoveryDue = Boolean(options.recover && canRecover); },
   };
   const tick = () => {
-    if (stopping && !activeMail) return;
     try {
+      if (stopping && (!activeMail || readWorkerLease(ctx)?.holder !== identity.holder)) return;
       if (!settleWorkerLease(ctx, identity, lease) || stopping) return;
       if (recoveryDue) {
         recoverStaleJobs(ctx);
@@ -326,35 +326,34 @@ export function startWorker(
     }
   };
   const timer = setInterval(() => {
-    if (options.guard) {
+    if (!tripped && options.guard) {
       try {
         options.guard.check();
       } catch {
-        // A stale process stops for good and hands the lease to a current one.
+        // Stand down without handing a live mail request to another worker.
         tripped = true;
-        clearInterval(timer);
-        release();
+        void stop();
         return;
       }
     }
     tick();
   }, workerTickMilliseconds);
+
   let stopped: Promise<void> | undefined;
   const finish = () => {
     clearInterval(timer);
     if (tripped) release();
     else releaseWorkerLease(ctx, identity);
   };
-  return {
-    stop: () => {
-      if (stopped) return stopped;
-      const activeMail = tick.stop();
-      if (activeMail) stopped = activeMail.then(finish);
-      else {
-        finish();
-        stopped = Promise.resolve();
-      }
-      return stopped;
-    },
+  const stop = (): Promise<void> => {
+    if (stopped) return stopped;
+    const activeMail = tick.stop();
+    if (activeMail) stopped = activeMail.then(finish);
+    else {
+      finish();
+      stopped = Promise.resolve();
+    }
+    return stopped;
   };
+  return { stop };
 }

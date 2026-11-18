@@ -21,8 +21,6 @@ const sourcePath = path.join(root, 'source', 'agentcrm.db');
 const fixedNow = () => new Date('2026-03-01T09:00:00.000Z');
 let sourceDb: ReturnType<typeof openDatabase>;
 let peopleInSource = 0;
-let health: http.Server;
-let healthPort = 0;
 
 const countPeople = (file: string): number => {
   const db = new Database(file, { readonly: true, fileMustExist: true });
@@ -33,26 +31,14 @@ const countPeople = (file: string): number => {
   }
 };
 
-beforeAll(async () => {
+beforeAll(() => {
   sourceDb = openDatabase(sourcePath);
   seedDatabase(sourceDb, { now: new Date('2026-03-01T12:00:00.000Z') });
   peopleInSource = Number((sourceDb.prepare('SELECT COUNT(*) AS n FROM person').get() as { n: number }).n);
-  health = http.createServer((request, response) => {
-    if (request.url === '/api/health') {
-      response.setHeader('content-type', 'application/json');
-      response.end('{"ok":true}');
-    } else {
-      response.statusCode = 404;
-      response.end();
-    }
-  });
-  await new Promise<void>((resolve) => health.listen(0, '127.0.0.1', resolve));
-  healthPort = (health.address() as AddressInfo).port;
 });
 
-afterAll(async () => {
+afterAll(() => {
   sourceDb.close();
-  await new Promise((resolve) => health.close(resolve));
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -63,6 +49,17 @@ function makeLiveDatabase(name: string): string {
   ensureWorkspace(db);
   db.close();
   return databasePath;
+}
+
+function crm(args: string[], env: Record<string, string>): Promise<{ code: number; out: string; err: string }> {
+  return new Promise((resolve) => {
+    execFile(
+      process.execPath,
+      ['--import', 'tsx', path.join(packageRoot, 'src', 'cli.ts'), ...args],
+      { cwd: packageRoot, env: { ...process.env, ...env } },
+      (error, stdout, stderr) => resolve({ code: error ? ((error as { code?: number }).code ?? 1) : 0, out: stdout, err: stderr }),
+    );
+  });
 }
 
 describe('backup', () => {
@@ -120,6 +117,26 @@ describe('restore', () => {
       await server.close();
     }
     await expect(restoreDatabase({ snapshot, databasePath: live })).resolves.toMatchObject({ moved: expect.any(Array) });
+  });
+
+  it('allows restore while an unrelated service answers on the configured HTTP port', async () => {
+    const live = makeLiveDatabase('live-unrelated-service');
+    const unrelated = http.createServer((_request, response) => {
+      response.setHeader('content-type', 'application/json');
+      response.end('{"ok":true}');
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        unrelated.once('error', reject);
+        unrelated.listen(0, '127.0.0.1', resolve);
+      });
+      const port = (unrelated.address() as AddressInfo).port;
+      const result = await crm(['restore', snapshot], { AGENTCRM_DB: live, AGENTCRM_PORT: String(port) });
+      expect(result.code).toBe(0);
+      expect(countPeople(live)).toBe(peopleInSource);
+    } finally {
+      if (unrelated.listening) await new Promise((resolve) => unrelated.close(resolve));
+    }
   });
 
   it('refuses to replace a database open by a separate stdio MCP process', async () => {
@@ -233,18 +250,7 @@ describe('restore', () => {
 });
 
 describe('crm backup and crm restore', () => {
-  function crm(args: string[], env: Record<string, string>): Promise<{ code: number; out: string; err: string }> {
-    return new Promise((resolve) => {
-      execFile(
-        process.execPath,
-        ['--import', 'tsx', path.join(packageRoot, 'src', 'cli.ts'), ...args],
-        { cwd: packageRoot, env: { ...process.env, ...env } },
-        (error, stdout, stderr) => resolve({ code: error ? ((error as { code?: number }).code ?? 1) : 0, out: stdout, err: stderr }),
-      );
-    });
-  }
-
-  it('backs up and restores from the command line while an unrelated service answers on the configured port', async () => {
+  it('backs up and restores from the command line and refuses while the target is open', async () => {
     const directory = path.join(root, 'cli-backups');
     const backup = await crm(['backup', directory], { AGENTCRM_DB: sourcePath });
     expect(backup.code).toBe(0);
@@ -256,7 +262,7 @@ describe('crm backup and crm restore', () => {
     const live = makeLiveDatabase('cli-live');
     const open = openDatabase(live);
     try {
-      const refused = await crm(['restore', file], { AGENTCRM_DB: live, AGENTCRM_PORT: String(healthPort) });
+      const refused = await crm(['restore', file], { AGENTCRM_DB: live });
       expect(refused.code).toBe(1);
       expect(refused.err).toContain('Close the desktop app, API server, and MCP sessions');
       expect(countPeople(live)).toBe(0);
@@ -264,7 +270,7 @@ describe('crm backup and crm restore', () => {
       open.close();
     }
 
-    const restored = await crm(['restore', file], { AGENTCRM_DB: live, AGENTCRM_PORT: String(healthPort) });
+    const restored = await crm(['restore', file], { AGENTCRM_DB: live });
     expect(restored.code).toBe(0);
     expect(restored.out).toContain('Restored the database from');
     expect(countPeople(live)).toBe(peopleInSource);

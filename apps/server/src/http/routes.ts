@@ -718,10 +718,13 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   });
 
   const openStreams = new Set<() => void>();
+  let closingStreams = false;
   app.addHook('preClose', async () => {
+    closingStreams = true;
     for (const close of [...openStreams]) close();
   });
   app.get('/api/events', async (request, reply) => {
+    if (closingStreams) return reply.code(503).send();
     openEventStream(request, reply, bus, openStreams);
     return reply;
   });

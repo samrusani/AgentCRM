@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { closeSync, lstatSync, openSync, realpathSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, openSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { AppError } from './errors.js';
 
@@ -41,6 +41,9 @@ export function openLockedDatabase(databasePath: string, options: Database.Optio
   const target = canonicalDatabasePath(databasePath);
   const release = acquireDatabaseLock(target, 'shared');
   try {
+    if (!existsSync(target) && existsSync(restoreMarkerPath(target))) {
+      throw new AppError('validation', 'Restore stopped before installing the database. Run restore again. The pre-restore files are still available.');
+    }
     const db = new Database(target, options);
     const close = db.close.bind(db);
     db.close = () => {
