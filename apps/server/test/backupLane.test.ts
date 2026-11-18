@@ -1,3 +1,5 @@
+import { openDatabase } from '../src/db.js';
+import { backupNamespace } from '../src/actions/backblazeConnector.js';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -27,7 +29,9 @@ function contextAt(): ActionContext {
   return createContext(env.db, env.workspaceId, { bus: env.bus, actor: 'system', now: () => new Date(clock).toISOString() });
 }
 const ctx = contextAt();
-const autoDirectory = path.join(path.dirname(env.databasePath), 'backups', 'auto');
+const namespace = backupNamespace(env.databasePath);
+const prefix = `agentcrm/${namespace}/`;
+const autoDirectory = path.join(path.dirname(env.databasePath), 'backups', 'auto', namespace);
 
 function settings() {
   return getConnector(env.db, env.workspaceId, 'backblaze')!.settings;
@@ -154,7 +158,7 @@ describe('backup lane run', () => {
     const result = await runBackupIfDue(ctx);
     expect(result?.ok).toBe(true);
     const upload = stub.uploads[0]!;
-    expect(upload.fileName).toMatch(/^agentcrm\/agentcrm-backup-20260310T120000Z(-\d+)?\.db$/);
+    expect(upload.fileName).toMatch(/^agentcrm\/[0-9a-f-]{36}\/agentcrm-backup-20260310T120000Z(-\d+)?\.db$/);
     expect(upload.declaredSha1).toBe(upload.actualSha1);
     expect(upload.contentType).toBe('b2/x-auto');
     expect(upload.contentLength).toBe(String(upload.size));
@@ -192,10 +196,10 @@ describe('backup lane run', () => {
     mkdirSync(autoDirectory, { recursive: true });
     const stamps = ['20260301T000000Z', '20260302T000000Z', '20260303T000000Z', '20260304T000000Z', '20260305T000000Z'];
     stamps.forEach((stamp, index) => {
-      stub.files.push({ fileId: `old_${index}`, fileName: `agentcrm/agentcrm-backup-${stamp}.db`, bytes: Buffer.from('x') });
+      stub.files.push({ fileId: `old_${index}`, fileName: `${prefix}agentcrm-backup-${stamp}.db`, bytes: Buffer.from('x') });
       writeFileSync(path.join(autoDirectory, `agentcrm-backup-${stamp}.db`), 'x');
     });
-    stub.files.push({ fileId: 'other', fileName: 'agentcrm/notes.txt', bytes: Buffer.from('x') });
+    stub.files.push({ fileId: 'other', fileName: `${prefix}notes.txt`, bytes: Buffer.from('x') });
     writeFileSync(path.join(autoDirectory, 'keepme.txt'), 'x');
     const result = await runBackupIfDue(ctx);
     expect(result?.ok).toBe(true);
@@ -203,19 +207,42 @@ describe('backup lane run', () => {
     // keep is 3: the new upload plus the two newest old ones.
     const remote = stub.files.map((file) => file.fileName).sort();
     expect(remote).toEqual([
-      'agentcrm/agentcrm-backup-20260304T000000Z.db',
-      'agentcrm/agentcrm-backup-20260305T000000Z.db',
+      `${prefix}agentcrm-backup-20260304T000000Z.db`,
+      `${prefix}agentcrm-backup-20260305T000000Z.db`,
       stub.uploads[0]!.fileName,
-      'agentcrm/notes.txt',
+      `${prefix}notes.txt`,
     ].sort());
     expect(readdirSync(autoDirectory).sort()).toEqual(
       ['agentcrm-backup-20260304T000000Z.db', 'agentcrm-backup-20260305T000000Z.db', path.basename(stub.uploads[0]!.fileName), 'keepme.txt'].sort(),
     );
   });
 
+  it('keeps snapshots for two databases in the same directory and bucket with keep set to one', async () => {
+    patchSettings({ keep: 1 });
+    const first = await runBackupIfDue(ctx);
+    expect(first?.ok).toBe(true);
+    const otherPath = path.join(path.dirname(env.databasePath), 'second.db');
+    // Use a copy of the first database so the two databases even have the same workspace id.
+    await env.db.backup(otherPath);
+    const other = openDatabase(otherPath);
+    try {
+      const secondCtx = { ...ctx, db: other };
+      requestBackup(secondCtx);
+      const second = await runBackupIfDue(secondCtx);
+      expect(second?.ok).toBe(true);
+      expect(path.basename(first!.fileName!)).toBe(path.basename(second!.fileName!));
+      expect(stub.files.map((file) => file.fileName).sort()).toEqual([first!.fileName!, second!.fileName!].sort());
+      expect(readdirSync(autoDirectory)).toEqual([path.basename(first!.fileName!)]);
+      const secondDirectory = path.join(path.dirname(otherPath), 'backups', 'auto', backupNamespace(otherPath));
+      expect(readdirSync(secondDirectory)).toEqual([path.basename(second!.fileName!)]);
+    } finally {
+      other.close();
+    }
+  });
+
   it('counts a prune failure as a success and records the sentence', async () => {
     for (let index = 0; index < 4; index += 1) {
-      stub.files.push({ fileId: `old_${index}`, fileName: `agentcrm/agentcrm-backup-2026030${index + 1}T000000Z.db`, bytes: Buffer.from('x') });
+      stub.files.push({ fileId: `old_${index}`, fileName: `${prefix}agentcrm-backup-2026030${index + 1}T000000Z.db`, bytes: Buffer.from('x') });
     }
     stub.failDeletes = true;
     const result = await runBackupIfDue(ctx);

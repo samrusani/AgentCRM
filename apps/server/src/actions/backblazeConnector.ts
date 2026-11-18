@@ -1,7 +1,9 @@
-import { readFileSync, readdirSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { linkSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { backupDatabase } from '../backup.js';
+import { canonicalDatabasePath } from '../databaseLock.js';
 import { AppError, notFound, validationError } from '../errors.js';
 import {
   authorizeAccount,
@@ -19,7 +21,6 @@ import { type ActionContext, mutate, parseInput } from './context.js';
 export const connectBackblazeMessage = 'Backblaze is not connected. Connect Backblaze in Settings first.';
 export const backblazeKeyRejectedMessage = 'Backblaze rejected the saved application key. Enter a new one to reconnect.';
 
-const remotePrefix = 'agentcrm/';
 const requiredCapabilities = ['writeFiles', 'listFiles', 'deleteFiles'] as const;
 const hourMilliseconds = 3_600_000;
 const dayMilliseconds = 24 * hourMilliseconds;
@@ -216,6 +217,37 @@ function patchSettingsIn(tx: { db: ActionContext['db'] }, id: string, patch: Rec
   tx.db.prepare('UPDATE connector SET settings = ? WHERE id = ?').run(JSON.stringify(settings), id);
 }
 
+export function backupNamespace(databasePath: string): string {
+  const namespaceFile = `${canonicalDatabasePath(databasePath)}.backup-id.db`;
+  try {
+    return readBackupNamespace(namespaceFile);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+
+  const id = randomUUID();
+  const staged = `${namespaceFile}.${id}.db`;
+  writeFileSync(staged, id, { flag: 'wx', mode: 0o600, flush: true });
+  try {
+    // Publish a complete id without replacing an id a concurrent writer already installed.
+    linkSync(staged, namespaceFile);
+    return id;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    return readBackupNamespace(namespaceFile);
+  } finally {
+    rmSync(staged, { force: true });
+  }
+}
+
+function readBackupNamespace(file: string): string {
+  const id = readFileSync(file, 'utf8');
+  if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id)) {
+    throw validationError('The database backup identifier is invalid.');
+  }
+  return id;
+}
+
 // The in memory throttle: the worker asks at most once a minute per workspace.
 const lastCheck = new Map<string, number>();
 const running = new Set<string>();
@@ -237,7 +269,7 @@ export function requestBackup(ctx: ActionContext): void {
     patchSettingsIn(tx, row.id, { runRequestedAt: tx.now() });
     tx.emit({ type: 'record_updated', entityType: 'connector', entityId: row.id });
   });
-  lastCheck.delete(ctx.workspaceId);
+  lastCheck.delete(JSON.stringify([ctx.db.name, ctx.workspaceId]));
 }
 
 export interface BackupRunResult {
@@ -303,7 +335,7 @@ async function uploadWithRetry(auth: B2Authorization, bucketId: string, fileName
 // Returns an error sentence when pruning failed, otherwise null. Never throws. The file this run just uploaded is
 // never a deletion candidate and counts among the kept files, so a stepped clock cannot make a run delete its own
 // upload.
-async function prune(auth: B2Authorization, bucketId: string, directory: string, keep: number, uploadedFileName: string): Promise<string | null> {
+async function prune(auth: B2Authorization, bucketId: string, directory: string, remotePrefix: string, keep: number, uploadedFileName: string): Promise<string | null> {
   const problems: string[] = [];
   const keepOthers = Math.max(0, keep - 1);
   try {
@@ -330,10 +362,13 @@ async function prune(auth: B2Authorization, bucketId: string, directory: string,
 async function runBackup(ctx: ActionContext, connector: BackblazeConnector, applicationKey: string): Promise<BackupRunResult> {
   const keyId = connector.settings.keyId ?? '';
   const bucketId = connector.settings.bucketId ?? '';
-  const directory = path.join(path.dirname(ctx.db.name), 'backups', 'auto');
   let result: BackupRunResult;
   let rejectedKey = false;
   try {
+    if (ctx.db.memory) throw validationError('There is no database file to back up.');
+    const namespace = backupNamespace(ctx.db.name);
+    const directory = path.join(path.dirname(ctx.db.name), 'backups', 'auto', namespace);
+    const remotePrefix = `agentcrm/${namespace}/`;
     let auth: B2Authorization;
     try {
       auth = await authorizeAccount(keyId, applicationKey);
@@ -350,7 +385,7 @@ async function runBackup(ctx: ActionContext, connector: BackblazeConnector, appl
       rmSync(snapshot.path, { force: true });
       throw error;
     }
-    const pruneProblem = await prune(auth, bucketId, directory, connector.settings.keep, fileName);
+    const pruneProblem = await prune(auth, bucketId, directory, remotePrefix, connector.settings.keep, fileName);
     result = { ok: true, fileName, bytes: snapshot.bytes, ...(pruneProblem ? { error: pruneProblem } : {}) };
   } catch (error) {
     result = { ok: false, error: failureSentence(rejectedKey ? new BackblazeError('unauthorized', 'Backblaze rejected the saved application key.') : error, [applicationKey]) };
@@ -388,19 +423,20 @@ async function runBackup(ctx: ActionContext, connector: BackblazeConnector, appl
 
 // The worker calls this on every tick. It looks at most once a minute, and runs only when a backup is due.
 export async function runBackupIfDue(ctx: ActionContext): Promise<BackupRunResult | null> {
-  const last = lastCheck.get(ctx.workspaceId) ?? 0;
+  const key = JSON.stringify([ctx.db.name, ctx.workspaceId]);
+  const last = lastCheck.get(key) ?? 0;
   if (Date.now() - last < throttleMilliseconds) return null;
-  lastCheck.set(ctx.workspaceId, Date.now());
-  if (running.has(ctx.workspaceId)) return null;
+  lastCheck.set(key, Date.now());
+  if (running.has(key)) return null;
   const connector = getConnector(ctx.db, ctx.workspaceId, 'backblaze');
   const secret = getConnectorSecret(ctx.db, ctx.workspaceId, 'backblaze');
   if (!connector || !secret || !connector.settings.bucketId) return null;
   const now = parseTime(ctx.now());
   if (now === null || !isDue(connector, now)) return null;
-  running.add(ctx.workspaceId);
+  running.add(key);
   try {
     return await runBackup(ctx, connector, secret);
   } finally {
-    running.delete(ctx.workspaceId);
+    running.delete(key);
   }
 }

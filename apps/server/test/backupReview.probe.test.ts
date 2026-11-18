@@ -1,3 +1,4 @@
+import { backupNamespace } from '../src/actions/backblazeConnector.js';
 // Adversarial review probes for the Backblaze offsite backup wave. A test named KILLS proves a defect when it fails;
 // CONFIRMS tests probe a suspicion and the code holds; ACCEPTED tests pin a documented tradeoff.
 import Database from 'better-sqlite3';
@@ -49,7 +50,9 @@ function contextAt(): ActionContext {
   return createContext(env.db, env.workspaceId, { bus: env.bus, actor: 'system', now: () => new Date(clock).toISOString() });
 }
 const ctx = contextAt();
-const autoDirectory = path.join(path.dirname(env.databasePath), 'backups', 'auto');
+const namespace = backupNamespace(env.databasePath);
+const prefix = `agentcrm/${namespace}/`;
+const autoDirectory = path.join(path.dirname(env.databasePath), 'backups', 'auto', namespace);
 const manualDirectory = path.join(path.dirname(env.databasePath), 'backups');
 
 const settings = () => getConnector(env.db, env.workspaceId, 'backblaze')!.settings;
@@ -116,8 +119,8 @@ async function startEchoStub(): Promise<Echo> {
       if (url.pathname === '/b2api/v2/b2_list_file_names') {
         return send(200, {
           files: [
-            { fileId: 'old1', fileName: 'agentcrm/agentcrm-backup-20200101T000000Z.db' },
-            { fileId: 'old2', fileName: 'agentcrm/agentcrm-backup-20200102T000000Z.db' },
+            { fileId: 'old1', fileName: `${prefix}agentcrm-backup-20200101T000000Z.db` },
+            { fileId: 'old2', fileName: `${prefix}agentcrm-backup-20200102T000000Z.db` },
           ],
           nextFileName: null,
         });
@@ -460,11 +463,11 @@ describe('4 snapshot and prune', () => {
     writeFileSync(path.join(autoDirectory, 'agentcrm-backup-2020.db'), 'bad pattern');
     writeFileSync(path.join(autoDirectory, 'agentcrm-backup-20200101T000000Z.db'), 'own old');
     for (const [id, name] of [
-      ['a', 'agentcrm/readme.txt'],
+      ['a', `${prefix}readme.txt`],
       ['b', 'other/agentcrm-backup-20200101T000000Z.db'],
-      ['c', 'agentcrm/sub/agentcrm-backup-20200101T000000Z.db'],
-      ['d', 'agentcrm/agentcrm-backup-20200101T000000Z.db.bak'],
-      ['e', 'agentcrm/agentcrm-backup-20200101T000000Z.db'],
+      ['c', `${prefix}sub/agentcrm-backup-20200101T000000Z.db`],
+      ['d', `${prefix}agentcrm-backup-20200101T000000Z.db.bak`],
+      ['e', `${prefix}agentcrm-backup-20200101T000000Z.db`],
     ] as const) {
       stub.files.push({ fileId: id, fileName: name, bytes: Buffer.from('x') });
     }
@@ -474,14 +477,14 @@ describe('4 snapshot and prune', () => {
     expect(existsSync(path.join(autoDirectory, 'notes.txt'))).toBe(true);
     expect(existsSync(path.join(autoDirectory, 'agentcrm-backup-2020.db'))).toBe(true);
     expect(existsSync(path.join(autoDirectory, 'agentcrm-backup-20200101T000000Z.db'))).toBe(false);
-    expect(stub.deletes).toEqual(['agentcrm/agentcrm-backup-20200101T000000Z.db']);
+    expect(stub.deletes).toEqual([`${prefix}agentcrm-backup-20200101T000000Z.db`]);
     expect(stub.files.map((file) => file.fileName).sort()).toEqual(
       [
-        'agentcrm/readme.txt',
+        `${prefix}readme.txt`,
         'other/agentcrm-backup-20200101T000000Z.db',
-        'agentcrm/sub/agentcrm-backup-20200101T000000Z.db',
-        'agentcrm/agentcrm-backup-20200101T000000Z.db.bak',
-        'agentcrm/agentcrm-backup-20260310T120000Z.db',
+        `${prefix}sub/agentcrm-backup-20200101T000000Z.db`,
+        `${prefix}agentcrm-backup-20200101T000000Z.db.bak`,
+        `${prefix}agentcrm-backup-20260310T120000Z.db`,
       ].sort(),
     );
   });
@@ -490,11 +493,11 @@ describe('4 snapshot and prune', () => {
     await connect(2);
     const stamp = '20260310T110000Z';
     for (const suffix of ['', '-2', '-10', '-3']) {
-      stub.files.push({ fileId: `f${suffix}`, fileName: `agentcrm/agentcrm-backup-${stamp}${suffix}.db`, bytes: Buffer.from('x') });
+      stub.files.push({ fileId: `f${suffix}`, fileName: `${prefix}agentcrm-backup-${stamp}${suffix}.db`, bytes: Buffer.from('x') });
     }
     await runBackupIfDue(ctx);
     expect(stub.files.map((file) => file.fileName).sort()).toEqual(
-      [`agentcrm/agentcrm-backup-${stamp}-10.db`, 'agentcrm/agentcrm-backup-20260310T120000Z.db'].sort(),
+      [`${prefix}agentcrm-backup-${stamp}-10.db`, `${prefix}agentcrm-backup-20260310T120000Z.db`].sort(),
     );
   });
 
@@ -504,13 +507,13 @@ describe('4 snapshot and prune', () => {
     clock += 25 * hour;
     resetBackupThrottle();
     await runBackupIfDue(contextAt());
-    expect(stub.files.map((file) => file.fileName)).toEqual(['agentcrm/agentcrm-backup-20260311T130000Z.db']);
+    expect(stub.files.map((file) => file.fileName)).toEqual([`${prefix}agentcrm-backup-20260311T130000Z.db`]);
     expect(readdirSync(autoDirectory)).toEqual(['agentcrm-backup-20260311T130000Z.db']);
   });
 
   it('KILLS: with the clock stepped back, prune deletes the file it just uploaded and the result still reports it (prune() ranks by timestamp, never exempts the new upload)', async () => {
     await connect(1);
-    stub.files.push({ fileId: 'future', fileName: 'agentcrm/agentcrm-backup-20990101T000000Z.db', bytes: Buffer.from('x') });
+    stub.files.push({ fileId: 'future', fileName: `${prefix}agentcrm-backup-20990101T000000Z.db`, bytes: Buffer.from('x') });
     const result = await runBackupIfDue(ctx);
     expect(result?.ok).toBe(true);
     expect(stub.files.map((file) => file.fileName)).toContain(result!.fileName!);
@@ -548,8 +551,8 @@ describe('4 snapshot and prune', () => {
     requestBackup(ctx);
     await runBackupIfDue(ctx);
     expect(stub.files.map((file) => file.fileName).sort()).toEqual([
-      'agentcrm/agentcrm-backup-20260310T120000Z-2.db',
-      'agentcrm/agentcrm-backup-20260310T120000Z.db',
+      `${prefix}agentcrm-backup-20260310T120000Z-2.db`,
+      `${prefix}agentcrm-backup-20260310T120000Z.db`,
     ]);
   });
 });
@@ -560,9 +563,9 @@ describe('4 snapshot and prune', () => {
 describe('5 upload correctness', () => {
   it('CONFIRMS: a hostile file name is percent-encoded in X-Bz-File-Name, round-trips, and the sha1 matches the bytes sent', async () => {
     const bytes = Buffer.from('hello é bytes');
-    await uploadFile({ uploadUrl: `${stub.origin}/upload/1`, authorizationToken: 't' }, 'agentcrm/a b+é#?.db', bytes);
+    await uploadFile({ uploadUrl: `${stub.origin}/upload/1`, authorizationToken: 't' }, `${prefix}a b+é#?.db`, bytes);
     const upload = stub.uploads[0]!;
-    expect(upload.fileName).toBe('agentcrm/a b+é#?.db');
+    expect(upload.fileName).toBe(`${prefix}a b+é#?.db`);
     expect(upload.declaredSha1).toBe(upload.actualSha1);
     expect(upload.size).toBe(bytes.length);
   });

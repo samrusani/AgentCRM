@@ -118,7 +118,7 @@ Every row below is backed by tests: 4,785 across the server (3,077), the web app
 | Qualification: editable criteria, per criterion verdicts with evidence, fit sort | Working; unknown never counts as a match |
 | Reports: pipeline state and closures, stage flow, weekly intake by source, outreach outcomes, and run spend, all computed live from the local database with estimates labelled as such | Working, read only |
 | Backup and restore: consistent snapshots and a guarded restore | Working, CLI |
-| Offsite backups: a daily snapshot uploaded to your own Backblaze B2 bucket, pruned to a keep count, verified against a stubbed API | Working |
+| Offsite backups: a daily snapshot uploaded to your own Backblaze B2 bucket, with retention per database, verified against a stubbed API | Working |
 | Performance: measured against the published budgets at 100,000 people and 1,000,000 activities | 9 of 9 budgets pass; see docs/performance.md |
 
 ### Agents and models
