@@ -814,7 +814,7 @@ describe('9 migration 035', () => {
           .run(`con_${index}`, `2026-01-0${(index % 9) + 1}T00:00:00.000Z`, 'wsp_1', kind, `{"i":${index}}`, `secret-${index}`, index % 2 ? 'error' : 'connected', '2026-02-01T00:00:00.000Z'),
       );
       const before = db.prepare('SELECT * FROM connector ORDER BY id').all();
-      expect(applyMigrations(db)).toEqual(['035_backblaze.sql', '036_contact_fields.sql', '037_crunchbase.sql', '038_calendar.sql']);
+      expect(applyMigrations(db)).toEqual(['035_backblaze.sql', '036_contact_fields.sql', '037_crunchbase.sql', '038_calendar.sql', '039_restore_mail.sql']);
       expect(db.prepare('SELECT * FROM connector ORDER BY id').all()).toEqual(before);
       expect((db.pragma('index_info(idx_connector_workspace)') as { name: string }[]).map((c) => c.name)).toEqual(['workspace_id', 'kind']);
       expect(db.pragma('foreign_key_check')).toEqual([]);

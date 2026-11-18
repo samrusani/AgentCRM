@@ -173,7 +173,7 @@ The extension adds a small icon button at the end of the profile name line on Li
 
 ## Under the hood
 
-The API closes browser event streams on shutdown so an open browser tab cannot delay it.
+Startup serializes SQLite migrations when multiple processes open the same database. The API closes browser event streams on shutdown so an open browser tab cannot delay it.
 
 SQLite (WAL, better-sqlite3), Fastify 5, React 18 with Vite, and strict TypeScript with ESM throughout.
 

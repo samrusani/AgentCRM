@@ -99,21 +99,21 @@ const migrationHooks: Record<string, (db: Db) => void> = {
 };
 
 export function applyMigrations(db: Db): string[] {
-  db.exec('CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
-  const done = new Set(appliedMigrations(db));
-  const applied: string[] = [];
-  for (const file of listMigrationFiles()) {
-    if (done.has(file)) continue;
-    const sql = readFileSync(path.join(migrationsDirectory, file), 'utf8');
-    db.transaction(() => {
+  return db.transaction(() => {
+    db.exec('CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
+    const done = new Set(appliedMigrations(db));
+    const applied: string[] = [];
+    for (const file of listMigrationFiles()) {
+      if (done.has(file)) continue;
+      const sql = readFileSync(path.join(migrationsDirectory, file), 'utf8');
       db.exec(sql);
       migrationHooks[file]?.(db);
       db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, ?)').run(
         file,
         new Date().toISOString(),
       );
-    }).immediate();
-    applied.push(file);
-  }
-  return applied;
+      applied.push(file);
+    }
+    return applied;
+  }).immediate();
 }

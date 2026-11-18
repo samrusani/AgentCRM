@@ -22,6 +22,7 @@ export function ensureWorkspace(db: Db, options: BootstrapOptions = {}) {
   const newId = options.newId ?? randomId;
   const template = requireTemplate(defaultTemplate);
   db.transaction(() => {
+    if (findWorkspace(db)) return;
     const timestamp = now();
     const workspaceId = newId('wsp');
     db.prepare('INSERT INTO workspace (id, created_at, name, template) VALUES (?, ?, ?, ?)').run(

@@ -425,7 +425,7 @@ describe('migration 038', () => {
       db.prepare("INSERT INTO workspace (id, created_at, name, template) VALUES ('wsp_1','2026-01-01','W','t')").run();
       db.prepare("INSERT INTO person (id, created_at, workspace_id, version, first_name, last_name, tags, updated_at) VALUES ('per_old','2026-01-01','wsp_1',3,'Old','P','[]','2026-01-01')").run();
       const indexesBefore = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'index'").all() as { name: string }[]).map((i) => i.name).sort();
-      expect(applyMigrations(db)).toEqual(['038_calendar.sql']);
+      expect(applyMigrations(db)).toEqual(['038_calendar.sql', '039_restore_mail.sql']);
       expect(db.prepare("SELECT calendar_url, version FROM person WHERE id = 'per_old'").get()).toEqual({ calendar_url: null, version: 3 });
       const indexesAfter = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'index'").all() as { name: string }[]).map((i) => i.name).sort();
       expect(indexesAfter).toEqual(indexesBefore);
