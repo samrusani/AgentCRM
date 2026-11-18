@@ -79,7 +79,7 @@ It exposes 8 tools:
 
 `crm_describe` · `crm_search` · `crm_get_record` · `crm_propose_changes` · `crm_apply_changes` · `crm_start_research` · `start_lead_capture` · `crm_get_run`
 
-- **Propose, then apply.** Writes start as a proposal. You review it, and only then does it apply.
+- `crm_propose_changes` validates and previews edits. `crm_apply_changes` applies the matching versioned record edits and custom attribute values immediately, without human approval.
 - **No tool can decide an approval.** An agent can ask for one. It cannot grant one.
 - **Bounded runs.** Agents can start qualify runs, allowlisted Apify runs, allowlisted lead captures, and budgeted draft runs.
 
@@ -102,7 +102,7 @@ Every row below is backed by tests: 4,785 across the server (3,077), the web app
 | Area | Status |
 | --- | --- |
 | Leads and Relationships: imported and captured people start as leads and graduate to relationships when they reply or a deal moves past the first stage, with manual promote and demote; LinkedIn and X profiles as first class fields; the person sheet links a person to an organization through a live search picker that can also create the organization in place | Working, synthetic data |
-| Custom attributes: typed fields you define on people and organizations (message angle, fit notes, check sizes ship as defaults), edited like any field and open to agents through the proposal flow, so an agent can research and fill them under your approval; saved text renders as readable notes with semibold "Label:" leads, bulleted lists, and paragraph spacing, never as links or markup | Working |
+| Custom attributes: typed fields you define on people and organizations (message angle, fit notes, check sizes ship as defaults), edited like any field and open to agents through the same immediate, versioned apply tool; saved text renders as readable notes with semibold "Label:" leads, bulleted lists, and paragraph spacing, never as links or markup | Working |
 | Lists: hand curated people lists such as UK Angels or Energy investors, with bulk add from the table, chips on the person sheet, and a list filter on Leads and Relationships; lists never reach agents or model calls | Working |
 | Field enrichment: one click runs one scrape and suggests values for empty fields, each accepted or dismissed by you, one row at a time or all at once; people by their LinkedIn profile, or by a name search that finds the profile when none is saved and tells you who it found; organizations by their saved page or a name lookup that tells you which company it found; a separate web search mode runs one Google search and reads the result snippets with your model provider, suggesting LinkedIn, X, website, and calendar links that are verified to appear in the results and validated like manual edits, each with its source link as evidence and rendered as a link you can open before accepting | Working, verified against stubbed Apify and model APIs; bring your own Apify account and model key |
 | Pipeline: as many pipelines as you need (say a US and a UK investor pipeline), each seeded from a template with its own stages and switchable later without losing its name; opportunities in board and table views with stage history; create deals from the Pipeline header or straight from a person or organization sheet, choosing the pipeline as you go | Working |
@@ -129,7 +129,7 @@ Every row below is backed by tests: 4,785 across the server (3,077), the web app
 | Draft outreach: model written drafts with budgets, review before saving | Working, verified against stubbed provider APIs; drafts are never sent |
 | Model costs: per call usage rows, per run estimates from list prices | Working, always labelled estimates |
 | Research: runs with live steps, counts, and partial results; the run list stays short, with open runs and the newest finished ones up front and everything older behind a collapsed history that pages from the server | Simulated demo run only |
-| MCP server over stdio | Working, read and propose tools; can start qualify runs, allowlisted Apify runs, allowlisted lead captures, and budgeted draft runs; a database wide worker lease keeps exactly one job worker active, with the API server preferred, so a long lived MCP process never runs steps while the server is up |
+| MCP server over stdio | Working, read tools and immediate versioned edits; can start qualify runs, allowlisted Apify runs, allowlisted lead captures, and budgeted draft runs; a database wide worker lease keeps exactly one job worker active, with the API server preferred, so a long lived MCP process never runs steps while the server is up |
 | CLI: doctor, seed, serve, search, runs | Working |
 
 ### Getting data in
