@@ -45,8 +45,8 @@ export const microsoftSignInMessageFor: Record<string, string> = {
 // Microsoft matches the loopback host name localhost for a Mobile and desktop redirect and ignores the port.
 export const microsoftOAuthCallbackPath = '/api/connectors/microsoft/oauth/callback';
 
-export function microsoftRedirectUri(): string {
-  return `http://localhost:${apiPort()}${microsoftOAuthCallbackPath}`;
+export function microsoftRedirectUri(port = apiPort()): string {
+  return `http://localhost:${port}${microsoftOAuthCallbackPath}`;
 }
 
 const configureSchema = z
@@ -153,7 +153,7 @@ const loopbackOrigin = /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d{1,5})
 
 // Builds the Microsoft consent URL and saves the pending state and PKCE verifier. returnOrigin is the browser page that
 // asked for the sign in; the callback sends the browser back there when it is a loopback origin.
-export function startMicrosoftOAuth(ctx: ActionContext, options: { returnOrigin?: string | null } = {}): { url: string } {
+export function startMicrosoftOAuth(ctx: ActionContext, options: { returnOrigin?: string | null; listenerPort?: number | undefined } = {}): { url: string } {
   const internals = getMicrosoftInternals(ctx.db, ctx.workspaceId);
   const clientId = typeof internals?.settings.clientId === 'string' ? internals.settings.clientId : null;
   if (!internals || !clientId) {
@@ -161,14 +161,15 @@ export function startMicrosoftOAuth(ctx: ActionContext, options: { returnOrigin?
   }
   const { verifier, challenge } = createPkce();
   const state = createState();
+  const redirectUri = microsoftRedirectUri(options.listenerPort);
   const returnOrigin = options.returnOrigin && loopbackOrigin.test(options.returnOrigin) ? options.returnOrigin : null;
   mutate(ctx, (tx) => {
     const current = readRow(tx);
     if (!current) throw notFound('Microsoft connector');
-    writeIn(tx, current, { settings: { pending: { state, verifier, createdAt: tx.now(), returnOrigin } } });
+    writeIn(tx, current, { settings: { pending: { state, verifier, createdAt: tx.now(), returnOrigin, redirectUri } } });
     tx.audit('connector.oauth_start', 'connector', current.row.id, { kind: 'microsoft', scopes: microsoftScopes.length });
   });
-  return { url: buildMicrosoftAuthorizationUrl({ clientId, redirectUri: microsoftRedirectUri(), state, challenge }) };
+  return { url: buildMicrosoftAuthorizationUrl({ clientId, redirectUri, state, challenge }) };
 }
 
 function equalStrings(left: string, right: string): boolean {
@@ -249,7 +250,7 @@ export async function completeMicrosoftOAuth(ctx: ActionContext, query: Microsof
       clientId,
       code: query.code,
       verifier: pending.verifier,
-      redirectUri: microsoftRedirectUri(),
+      redirectUri: pending.redirectUri ?? microsoftRedirectUri(),
       now: () => Date.parse(ctx.now()),
     });
   } catch (error) {

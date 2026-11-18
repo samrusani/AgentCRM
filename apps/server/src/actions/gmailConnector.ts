@@ -42,8 +42,8 @@ export const oauthPendingMaxAgeMilliseconds = 15 * 60 * 1000;
 
 export const oauthCallbackPath = '/api/connectors/gmail/oauth/callback';
 
-export function oauthRedirectUri(): string {
-  return `http://${apiHost}:${apiPort()}${oauthCallbackPath}`;
+export function oauthRedirectUri(port = apiPort()): string {
+  return `http://${apiHost}:${port}${oauthCallbackPath}`;
 }
 
 const credentialField = (max: number) =>
@@ -172,7 +172,7 @@ const loopbackOrigin = /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d{1,5})
 
 // Builds the Google consent URL and saves the pending state and PKCE verifier. returnOrigin is the browser page that
 // asked for the sign in; the callback sends the browser back there when it is a loopback origin.
-export function startGmailOAuth(ctx: ActionContext, options: { returnOrigin?: string | null } = {}): { url: string } {
+export function startGmailOAuth(ctx: ActionContext, options: { returnOrigin?: string | null; listenerPort?: number | undefined } = {}): { url: string } {
   const internals = getGmailInternals(ctx.db, ctx.workspaceId);
   const clientId = typeof internals?.settings.clientId === 'string' ? internals.settings.clientId : null;
   if (!internals || !clientId || !internals.secret) {
@@ -180,14 +180,15 @@ export function startGmailOAuth(ctx: ActionContext, options: { returnOrigin?: st
   }
   const { verifier, challenge } = createPkce();
   const state = createState();
+  const redirectUri = oauthRedirectUri(options.listenerPort);
   const returnOrigin = options.returnOrigin && loopbackOrigin.test(options.returnOrigin) ? options.returnOrigin : null;
   mutate(ctx, (tx) => {
     const current = readRow(tx);
     if (!current) throw notFound('Gmail connector');
-    writeIn(tx, current, { settings: { pending: { state, verifier, createdAt: tx.now(), returnOrigin } } });
+    writeIn(tx, current, { settings: { pending: { state, verifier, createdAt: tx.now(), returnOrigin, redirectUri } } });
     tx.audit('connector.oauth_start', 'connector', current.row.id, { kind: 'gmail', scopes: gmailScopes.length });
   });
-  return { url: buildAuthorizationUrl({ clientId, redirectUri: oauthRedirectUri(), state, challenge }) };
+  return { url: buildAuthorizationUrl({ clientId, redirectUri, state, challenge }) };
 }
 
 function equalStrings(left: string, right: string): boolean {
@@ -269,7 +270,7 @@ export async function completeGmailOAuth(ctx: ActionContext, query: OAuthCallbac
       clientSecret: internals.secret.clientSecret,
       code: query.code,
       verifier: pending.verifier,
-      redirectUri: oauthRedirectUri(),
+      redirectUri: pending.redirectUri ?? oauthRedirectUri(),
       now: () => Date.parse(ctx.now()),
     });
   } catch (error) {

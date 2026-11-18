@@ -70,6 +70,7 @@ export interface GmailPendingAuth {
   state: string;
   verifier: string;
   createdAt: string;
+  redirectUri: string | null;
   // Where the browser goes after the callback: a loopback origin that started the flow, or null for a relative redirect.
   returnOrigin: string | null;
 }
@@ -272,8 +273,12 @@ function isPendingAuth(value: unknown): value is GmailPendingAuth {
 export function readGmailPending(settings: Record<string, unknown>): GmailPendingAuth | null {
   const pending = settings.pending;
   if (!isPendingAuth(pending)) return null;
-  const origin = (pending as unknown as Record<string, unknown>).returnOrigin;
-  return { state: pending.state, verifier: pending.verifier, createdAt: pending.createdAt, returnOrigin: typeof origin === 'string' ? origin : null };
+  const { state, verifier, createdAt, returnOrigin, redirectUri } = pending;
+  return {
+    state, verifier, createdAt,
+    returnOrigin: typeof returnOrigin === 'string' ? returnOrigin : null,
+    redirectUri: typeof redirectUri === 'string' ? redirectUri : null,
+  };
 }
 
 // The stored settings and secret of the Gmail connector, for the code that runs the sign in and the sync. Never send

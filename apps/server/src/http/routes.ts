@@ -574,9 +574,14 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
     return reply.status(204).send();
   });
   // Returns the Google consent URL. The browser opens it; Google sends it back to the callback below.
+  const oauthListenerPort = (): number | undefined => {
+    const address = app.server.address();
+    return address && typeof address === 'object' ? address.port : undefined;
+  };
+
   app.post('/api/connectors/gmail/oauth/start', async (request) => {
     const origin = request.headers.origin;
-    return startGmailOAuth(context(), { returnOrigin: typeof origin === 'string' ? origin : null });
+    return startGmailOAuth(context(), { returnOrigin: typeof origin === 'string' ? origin : null, listenerPort: oauthListenerPort() });
   });
   app.get('/api/connectors/gmail/oauth/callback', async (request, reply) => {
     const query = parseInput(
@@ -598,7 +603,7 @@ export function registerRoutes(app: FastifyInstance, options: AppOptions): void 
   // Returns the Microsoft consent URL. The browser opens it; Microsoft sends it back to the callback below.
   app.post('/api/connectors/microsoft/oauth/start', async (request) => {
     const origin = request.headers.origin;
-    return startMicrosoftOAuth(context(), { returnOrigin: typeof origin === 'string' ? origin : null });
+    return startMicrosoftOAuth(context(), { returnOrigin: typeof origin === 'string' ? origin : null, listenerPort: oauthListenerPort() });
   });
   app.get('/api/connectors/microsoft/oauth/callback', async (request, reply) => {
     const query = parseInput(
