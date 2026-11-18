@@ -271,6 +271,7 @@ const FOLLOWUP_STOPPED_LABELS: Record<string, string> = {
   stopped_by_user: 'Stopped, by you',
   connector_changed: 'Stopped, connector changed',
   not_sent: 'Stopped, the first message was not sent',
+  backup_restored: 'Stopped after a backup restore',
   step_not_sent: 'Stopped, a follow-up could not be sent',
 };
 

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { createContext, ensureWorkspace } from './actions/index.js';
+import { holdRestoredMail } from './actions/restoreMail.js';
 import { apiHost, apiPort, imapFakeEnabled } from './config.js';
 import { createSchemaGuard, type Db, openDatabase } from './db.js';
 import { EventBus } from './events.js';
@@ -23,7 +24,16 @@ export async function startServer(options: { port?: number; databasePath?: strin
   const port = options.port ?? apiPort();
   const db = openDatabase(databasePath);
   const bus = new EventBus();
-  const workspace = ensureWorkspace(db);
+  const workspace = (() => {
+    try {
+      const workspace = ensureWorkspace(db);
+      holdRestoredMail(db, databasePath);
+      return workspace;
+    } catch (error) {
+      db.close();
+      throw error;
+    }
+  })();
 
   // openDatabase applied the migrations, so the snapshot taken here is the schema this code expects.
   const guard = createSchemaGuard(db, staleApiMessage);

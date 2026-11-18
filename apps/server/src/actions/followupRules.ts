@@ -198,6 +198,12 @@ export function createFollowupRuleIn(
   return id;
 }
 
+export function stopRestoredFollowupRulesIn(tx: Tx): void {
+  const rows = tx.db.prepare(`SELECT * FROM followup_rule WHERE workspace_id = ? AND status IN (${activeFollowupStatuses.map(() => '?').join(', ')})`)
+    .all(tx.workspaceId, ...activeFollowupStatuses) as RuleRow[];
+  for (const rule of rows) stopRuleIn(tx, rule, activeFollowupStatuses, 'backup_restored');
+}
+
 // Stops every active rule of a provider. `provider` stops that provider's rules (its connector was removed), and
 // `notProvider` stops every rule of the others (the sending provider was switched). No task: the rule list shows why.
 export function stopRulesForProviderIn(tx: Tx, where: { provider?: MailProviderKind; notProvider?: MailProviderKind }, reason: string): number {

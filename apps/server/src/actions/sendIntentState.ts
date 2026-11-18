@@ -38,6 +38,7 @@ export interface IntentPatch {
   submittedAt?: string;
   // Set when a person acknowledges an intent whose outcome was unknown.
   unknownAcknowledged?: boolean;
+  restoreHeld?: boolean;
 }
 
 export const sendOutreachStepTitles = ['Check recipients', 'Review messages', 'Send messages'] as const;
@@ -87,6 +88,9 @@ export function transitionIntentIn(
   if (patch.unknownAcknowledged !== undefined) {
     assignments.push('unknown_acknowledged = ?');
     params.push(patch.unknownAcknowledged ? 1 : 0);
+  }
+  if (patch.restoreHeld) {
+    assignments.push('restore_held = 1');
   }
   tx.db
     .prepare(`UPDATE send_intent SET ${assignments.join(', ')} WHERE id = ? AND workspace_id = ? AND status = ?`)
@@ -236,7 +240,7 @@ export const mailReconcileJobKind = 'mail_reconcile';
 // reconcile job waiting is left alone.
 export function resumeReconcilesIn(tx: Tx, provider: 'gmail' | 'microsoft' | 'imap', address: string): number {
   const rows = tx.db
-    .prepare('SELECT id FROM send_intent WHERE workspace_id = ? AND provider = ? AND status = \'unknown\' AND lower(inbox_id) = ?')
+    .prepare('SELECT id FROM send_intent WHERE workspace_id = ? AND provider = ? AND status = \'unknown\' AND restore_held = 0 AND lower(inbox_id) = ?')
     .all(tx.workspaceId, provider, address.toLowerCase()) as { id: string }[];
   let resumed = 0;
   for (const row of rows) {

@@ -1,3 +1,6 @@
+import { backupDatabase, restoreDatabase } from '../src/backup.js';
+import { startServer } from '../src/server.js';
+import { requireFollowupRule } from '../src/queries/followupRules.js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   controlSendIntent,
@@ -6,6 +9,7 @@ import {
   disconnectAgentmailConnector,
   prepareSendIntents,
   recoverSubmittingIntents,
+  tickFollowupRules,
 } from '../src/actions/index.js';
 import { submitNextIntent } from '../src/actions/sendIntents.js';
 import { AppError } from '../src/errors.js';
@@ -67,6 +71,43 @@ function expectAppError(work: () => unknown, code: string, message?: RegExp): vo
 }
 
 const realAddress = 'maren.testwell@lanternrow.invalid';
+
+it('holds restored mail even when the provider accepted it after the snapshot', async () => {
+  const env = await freshEnv();
+  const person = addPerson(env, 'Maren', realAddress);
+  const draft = addDraft(env, person.id, 'Snapshot message', 'Here is the requested update.');
+  const staged = prepareSendIntents(env.ctx, {
+    draftActivityIds: [draft],
+    followups: { steps: [{ waitDays: 1, body: 'Following up on that update.' }] },
+  });
+  const id = staged.intents[0]!.id;
+  approve(env, staged.approval!.id);
+  const pending = stage(env, [addDraft(env, person.id, 'Another pending review', 'Another message.')]);
+  expect(statusOf(env, id)).toBe('queued');
+  const rule = env.db.prepare('SELECT id FROM followup_rule WHERE workspace_id = ? AND intent_id = ?')
+    .get(env.workspaceId, id) as { id: string };
+  const snapshot = await backupDatabase({ databasePath: env.databasePath });
+  expect(await submitNextIntent(env.ctx)).toBe(true);
+  expect(statusOf(env, id)).toBe('accepted');
+  expect(stub.state.sendAttempts).toHaveLength(1);
+  env.db.close();
+
+  await restoreDatabase({ snapshot: snapshot.path, databasePath: env.databasePath });
+  const server = await startServer({ port: 0, databasePath: env.databasePath });
+  try {
+    const ctx = { ...env.ctx, db: server.db };
+    const restored = { ...env, db: server.db, ctx };
+    expect(intentOf(restored, id)).toMatchObject({ status: 'unknown', error: expect.stringContaining('Held after a backup restore') });
+    expect(requireFollowupRule(server.db, env.workspaceId, rule.id)).toMatchObject({ status: 'stopped', stoppedReason: 'backup_restored' });
+    expect(() => approve(restored, pending.approval!.id)).toThrow(/held after a backup restore/);
+    env.advance(2 * 86_400_000);
+    tickFollowupRules(ctx);
+    await processMailJobs(ctx);
+    expect(stub.state.sendAttempts).toHaveLength(1);
+  } finally {
+    await server.close();
+  }
+});
 
 describe('preflight and the send_review approval', () => {
   it('freezes messages into one approval and sends nothing', async () => {

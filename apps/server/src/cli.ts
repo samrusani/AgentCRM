@@ -18,7 +18,7 @@ Commands:
   approvals decide <id> approve|reject
                          Decide an approval as the local user
   backup [directory]     Write a snapshot of the database (default: data/backups)
-  restore <file>         Replace the database with a snapshot, after the server is stopped
+  restore <file>         Replace the database with a snapshot, after closing all clients
   mcp                    Start the MCP server over stdio
 
 Options:
@@ -67,7 +67,10 @@ async function openWorkspace() {
   const { findWorkspace } = await import('./queries/workspace.js');
   const db = openDatabase();
   const workspace = findWorkspace(db);
-  if (!workspace) throw new AppError('not_found', 'No workspace exists yet. Run "crm seed" first.');
+  if (!workspace) {
+    db.close();
+    throw new AppError('not_found', 'No workspace exists yet. Run "crm seed" first.');
+  }
   return { db, workspace };
 }
 
@@ -86,7 +89,7 @@ function portIsFree(port: number): Promise<boolean> {
 }
 
 async function doctor(parsed: Parsed): Promise<number> {
-  const { default: Database } = await import('better-sqlite3');
+  const { openLockedDatabase } = await import('./databaseLock.js');
   const { listMigrationFiles } = await import('./db.js');
   const { apiPort, workerLeaseTimeoutMilliseconds } = await import('./config.js');
   const { readWorkerLease } = await import('./actions/workerLease.js');
@@ -106,46 +109,49 @@ async function doctor(parsed: Parsed): Promise<number> {
     checks.push({ name: 'Database', status: 'warn', detail: `${shown} does not exist yet. Run "npm run seed" to create it.` });
   } else {
     try {
-      const db = new Database(databasePath, { readonly: true, fileMustExist: true });
-      const mode = db.pragma('journal_mode', { simple: true });
-      const applied = db.prepare("SELECT name FROM sqlite_master WHERE name = 'migrations'").get()
-        ? (db.prepare('SELECT name FROM migrations').all() as { name: string }[]).length
-        : 0;
-      const pending = listMigrationFiles().length - applied;
-      checks.push({
-        name: 'Database',
-        status: pending === 0 ? 'ok' : 'warn',
-        detail: `${shown}, journal mode ${String(mode)}, ${pending === 0 ? 'migrations current' : `${pending} migration(s) pending, start the server to apply them`}`,
-      });
-      if (applied > 0) {
-        const people = (db.prepare('SELECT COUNT(*) AS n FROM person').get() as { n: number }).n;
+      const db = openLockedDatabase(databasePath, { readonly: true, fileMustExist: true });
+      try {
+        const mode = db.pragma('journal_mode', { simple: true });
+        const applied = db.prepare("SELECT name FROM sqlite_master WHERE name = 'migrations'").get()
+          ? (db.prepare('SELECT name FROM migrations').all() as { name: string }[]).length
+          : 0;
+        const pending = listMigrationFiles().length - applied;
         checks.push({
-          name: 'Records',
-          status: people > 0 ? 'ok' : 'warn',
-          detail: people > 0 ? `${people} people` : 'The database is empty. Run "npm run seed".',
+          name: 'Database',
+          status: pending === 0 ? 'ok' : 'warn',
+          detail: `${shown}, journal mode ${String(mode)}, ${pending === 0 ? 'migrations current' : `${pending} migration(s) pending, start the server to apply them`}`,
         });
-        // The lease table exists once migration 021 has been applied.
-        if (db.prepare("SELECT name FROM sqlite_master WHERE name = 'worker_lease'").get()) {
-          const lease = readWorkerLease({ db });
-          if (!lease) {
-            checks.push({ name: 'Worker lease', status: 'ok', detail: 'No process holds it, so no worker is claiming jobs.' });
-          } else {
-            // The same freshness rule as the workers: a future dated or unreadable stamp is stale too.
-            const ageMilliseconds = Date.now() - Date.parse(lease.renewedAt);
-            const fresh = Math.abs(ageMilliseconds) <= workerLeaseTimeoutMilliseconds;
-            const held = `Held by the ${lease.kind} process with pid ${lease.pid}`;
-            const detail = fresh
-              ? `${held}, renewed ${Math.round(Math.abs(ageMilliseconds) / 1000)} seconds ago.`
-              : Number.isNaN(ageMilliseconds)
-                ? `${held}, but its renewal time is unreadable, so it is stale and the next worker will take it.`
-                : ageMilliseconds < 0
-                  ? `${held}, but its renewal time is ${Math.round(-ageMilliseconds / 1000)} seconds in the future, so it is stale and the next worker will take it.`
-                  : `${held}, last renewed ${Math.round(ageMilliseconds / 1000)} seconds ago, so it is stale and the next worker will take it.`;
-            checks.push({ name: 'Worker lease', status: fresh ? 'ok' : 'warn', detail });
+        if (applied > 0) {
+          const people = (db.prepare('SELECT COUNT(*) AS n FROM person').get() as { n: number }).n;
+          checks.push({
+            name: 'Records',
+            status: people > 0 ? 'ok' : 'warn',
+            detail: people > 0 ? `${people} people` : 'The database is empty. Run "npm run seed".',
+          });
+          // The lease table exists once migration 021 has been applied.
+          if (db.prepare("SELECT name FROM sqlite_master WHERE name = 'worker_lease'").get()) {
+            const lease = readWorkerLease({ db });
+            if (!lease) {
+              checks.push({ name: 'Worker lease', status: 'ok', detail: 'No process holds it, so no worker is claiming jobs.' });
+            } else {
+              // The same freshness rule as the workers: a future dated or unreadable stamp is stale too.
+              const ageMilliseconds = Date.now() - Date.parse(lease.renewedAt);
+              const fresh = Math.abs(ageMilliseconds) <= workerLeaseTimeoutMilliseconds;
+              const held = `Held by the ${lease.kind} process with pid ${lease.pid}`;
+              const detail = fresh
+                ? `${held}, renewed ${Math.round(Math.abs(ageMilliseconds) / 1000)} seconds ago.`
+                : Number.isNaN(ageMilliseconds)
+                  ? `${held}, but its renewal time is unreadable, so it is stale and the next worker will take it.`
+                  : ageMilliseconds < 0
+                    ? `${held}, but its renewal time is ${Math.round(-ageMilliseconds / 1000)} seconds in the future, so it is stale and the next worker will take it.`
+                    : `${held}, last renewed ${Math.round(ageMilliseconds / 1000)} seconds ago, so it is stale and the next worker will take it.`;
+              checks.push({ name: 'Worker lease', status: fresh ? 'ok' : 'warn', detail });
+            }
           }
         }
+      } finally {
+        db.close();
       }
-      db.close();
     } catch (error) {
       checks.push({ name: 'Database', status: 'fail', detail: `Cannot open ${shown}: ${error instanceof Error ? error.message : String(error)}` });
     }
@@ -377,9 +383,8 @@ async function restoreCommand(parsed: Parsed): Promise<number> {
   const file = parsed.positionals[1];
   if (!file) throw new UsageError('Give a backup file, for example: crm restore data/backups/agentcrm-backup-20260301T090000Z.db');
   const { restoreDatabase } = await import('./backup.js');
-  const { apiPort } = await import('./config.js');
   const { resolveDatabasePath } = await import('./paths.js');
-  const result = await restoreDatabase({ snapshot: file, databasePath: resolveDatabasePath(), port: apiPort() });
+  const result = await restoreDatabase({ snapshot: file, databasePath: resolveDatabasePath() });
   print(parsed, { restored: true, moved: result.moved.map((entry) => ({ from: path.basename(entry.from), to: path.basename(entry.to) })) }, () => result.message);
   return 0;
 }

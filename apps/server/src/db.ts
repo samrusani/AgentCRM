@@ -1,4 +1,5 @@
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
+import { openLockedDatabase } from './databaseLock.js';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { AppError } from './errors.js';
@@ -12,14 +13,19 @@ export function openDatabase(databasePath: string = resolveDatabasePath()): Db {
   if (databasePath !== ':memory:') {
     directoryCreated = mkdirSync(path.dirname(databasePath), { recursive: true }) !== undefined;
   }
-  const db = new Database(databasePath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('synchronous = NORMAL');
-  db.pragma('foreign_keys = ON');
-  db.pragma('busy_timeout = 5000');
-  applyMigrations(db);
-  if (databasePath !== ':memory:') restrictPermissions(databasePath, directoryCreated);
-  return db;
+  const db = openLockedDatabase(databasePath);
+  try {
+    db.pragma('journal_mode = WAL');
+    db.pragma('synchronous = NORMAL');
+    db.pragma('foreign_keys = ON');
+    db.pragma('busy_timeout = 5000');
+    applyMigrations(db);
+    if (databasePath !== ':memory:') restrictPermissions(databasePath, directoryCreated);
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 // The database holds connector secrets (the Apify token and the Anthropic key) in plain text, so only the owner

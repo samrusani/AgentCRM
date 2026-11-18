@@ -1,6 +1,8 @@
 import Database from 'better-sqlite3';
-import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, renameSync, rmSync, statSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { acquireDatabaseLock, canonicalDatabasePath, openLockedDatabase, restoreMarkerPath } from './databaseLock.js';
 import { AppError } from './errors.js';
 import { listMigrationFiles } from './db.js';
 import { displayDatabasePath, repoRoot } from './paths.js';
@@ -84,14 +86,16 @@ export async function backupDatabase(options: BackupOptions): Promise<BackupResu
     }
   }
 
-  const source = new Database(databasePath, { readonly: true, fileMustExist: true });
   try {
-    await source.backup(target);
+    const source = openLockedDatabase(databasePath, { readonly: true, fileMustExist: true });
+    try {
+      await source.backup(target);
+    } finally {
+      source.close();
+    }
   } catch (error) {
     rmSync(target, { force: true });
     throw refuse(`The backup failed: ${error instanceof Error ? error.message : String(error)}`);
-  } finally {
-    source.close();
   }
   // A snapshot is one self contained file. Rollback journal mode keeps -wal and -shm files from appearing beside it
   // when it is opened later. The server switches the database back to WAL when it opens the restored file.
@@ -117,26 +121,12 @@ export async function backupDatabase(options: BackupOptions): Promise<BackupResu
 export interface RestoreOptions {
   snapshot: string;
   databasePath: string;
-  port: number;
   now?: () => Date;
-  // Tests shorten the health check timeout.
-  healthTimeoutMs?: number;
 }
 
 export interface RestoreResult {
   moved: { from: string; to: string }[];
   message: string;
-}
-
-async function serverAnswers(port: number, timeoutMs: number): Promise<boolean> {
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(timeoutMs) });
-    if (!response.ok) return false;
-    const body = (await response.json().catch(() => null)) as { ok?: unknown } | null;
-    return body?.ok === true;
-  } catch {
-    return false;
-  }
 }
 
 // Checks the snapshot is an AgentCRM database that this build can open, and returns the migrations it has applied.
@@ -167,33 +157,43 @@ function inspectSnapshot(snapshot: string): string[] {
   }
 }
 
-// Replaces the local database with a snapshot. Safety order: server check, snapshot check, move aside, copy in.
+// Hold the target lock until the snapshot and its mail hold marker are in place.
 export async function restoreDatabase(options: RestoreOptions): Promise<RestoreResult> {
-  const { databasePath } = options;
-  const snapshot = resolveUserPath(options.snapshot);
-  if (databasePath === ':memory:') throw refuse('Restore needs a database file, not an in memory database.');
-
-  if (!existsSync(snapshot) || !statSync(snapshot).isFile()) {
-    throw refuse(`Cannot read ${shown(snapshot)}. Check the path to the backup file.`);
+  if (options.databasePath === ':memory:') throw refuse('Restore needs a database file, not an in memory database.');
+  const input = resolveUserPath(options.snapshot);
+  if (!existsSync(input) || !statSync(input).isFile()) {
+    throw refuse(`Cannot read ${shown(input)}. Check the path to the backup file.`);
   }
-  if (path.resolve(databasePath) === snapshot) {
+  const snapshot = canonicalDatabasePath(input);
+  const databasePath = canonicalDatabasePath(options.databasePath);
+  if (databasePath === snapshot) {
     throw refuse('That file is the live database. Give a backup file made by "crm backup".');
   }
 
-  if (await serverAnswers(options.port, options.healthTimeoutMs ?? 1000)) {
-    throw refuse(`The AgentCRM server is running on port ${options.port}. Stop it first, then restore. Nothing was changed.`);
+  mkdirSync(path.dirname(databasePath), { recursive: true, mode: 0o700 });
+  const release = acquireDatabaseLock(databasePath, 'exclusive');
+  try {
+    const releaseSnapshot = acquireDatabaseLock(snapshot, 'exclusive');
+    try {
+      const known = new Set(listMigrationFiles());
+      const unknown = inspectSnapshot(snapshot).filter((name) => !known.has(name));
+      if (unknown.length > 0) {
+        throw refuse(
+          `This backup comes from a newer version of AgentCRM. It has migrations this version does not know: ${unknown.join(', ')}. Update AgentCRM, then restore. Nothing was changed.`,
+        );
+      }
+      return installSnapshot(databasePath, snapshot, options.now?.() ?? new Date());
+    } finally {
+      releaseSnapshot();
+    }
+  } finally {
+    release();
   }
+}
 
-  const known = new Set(listMigrationFiles());
-  const unknown = inspectSnapshot(snapshot).filter((name) => !known.has(name));
-  if (unknown.length > 0) {
-    throw refuse(
-      `This backup comes from a newer version of AgentCRM. It has migrations this version does not know: ${unknown.join(', ')}. Update AgentCRM, then restore. Nothing was changed.`,
-    );
-  }
-
+function installSnapshot(databasePath: string, snapshot: string, now: Date): RestoreResult {
   const parsed = path.parse(databasePath);
-  const stamp = fileTimestamp((options.now ?? (() => new Date()))());
+  const stamp = fileTimestamp(now);
   let asideBase = path.join(parsed.dir, `${parsed.name}.pre-restore-${stamp}`);
   for (let attempt = 2; existsSync(`${asideBase}.db`); attempt += 1) {
     asideBase = path.join(parsed.dir, `${parsed.name}.pre-restore-${stamp}-${attempt}`);
@@ -204,22 +204,28 @@ export async function restoreDatabase(options: RestoreOptions): Promise<RestoreR
     [`${databasePath}-wal`, `${asideBase}.db-wal`],
     [`${databasePath}-shm`, `${asideBase}.db-shm`],
   ];
-  const putBack = () => {
-    for (const { from, to } of moved.reverse()) renameSync(to, from);
-  };
+  const token = randomUUID();
+  const staged = `${databasePath}.restore-${token}.db`;
+  const marker = restoreMarkerPath(databasePath);
+  const stagedMarker = `${staged}.restore-pending.db`;
   try {
+    writeFileSync(staged, '', { flag: 'wx', mode: 0o600 });
+    copyFileSync(snapshot, staged);
+    if (process.platform !== 'win32') chmodSync(staged, 0o600);
+    writeFileSync(stagedMarker, token, { flag: 'wx', mode: 0o600, flush: true });
+    renameSync(stagedMarker, marker);
     for (const [from, to] of pairs) {
       if (!existsSync(from)) continue;
       renameSync(from, to);
       moved.push({ from, to });
     }
-    mkdirSync(parsed.dir, { recursive: true });
-    copyFileSync(snapshot, databasePath);
-    if (process.platform !== 'win32') chmodSync(databasePath, 0o600);
+    renameSync(staged, databasePath);
   } catch (error) {
-    rmSync(databasePath, { force: true });
-    putBack();
-    throw refuse(`The restore failed and the previous database was put back: ${error instanceof Error ? error.message : String(error)}`);
+    for (const { from, to } of moved.reverse()) renameSync(to, from);
+    throw refuse(`The restore could not install the snapshot: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    rmSync(staged, { force: true });
+    rmSync(stagedMarker, { force: true });
   }
 
   const lines = [`Restored the database from ${shown(snapshot)}.`];
@@ -228,6 +234,7 @@ export async function restoreDatabase(options: RestoreOptions): Promise<RestoreR
     lines.push('Moved the previous database aside, nothing was deleted:');
     for (const { from, to } of moved) lines.push(`  ${path.basename(from)} -> ${path.basename(to)}`);
   }
-  lines.push('Start the server to apply any pending migrations.');
+  lines.push('At startup, AgentCRM holds restored outbound messages and stops restored follow-up rules.');
+  lines.push('Check the sending mailbox before preparing any replacement sends for fresh approval.');
   return { moved, message: lines.join('\n') };
 }

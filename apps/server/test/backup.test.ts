@@ -1,5 +1,7 @@
 import Database from 'better-sqlite3';
 import { execFile } from 'node:child_process';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -9,7 +11,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ensureWorkspace } from '../src/actions/index.js';
 import { backupDatabase, fileTimestamp, restoreDatabase } from '../src/backup.js';
 import { openDatabase } from '../src/db.js';
-import { AppError } from '../src/errors.js';
+import { acquireDatabaseLock } from '../src/databaseLock.js';
+import { startServer } from '../src/server.js';
 import { packageRoot } from '../src/paths.js';
 import { seedDatabase } from '../src/seed/seed.js';
 
@@ -20,7 +23,6 @@ let sourceDb: ReturnType<typeof openDatabase>;
 let peopleInSource = 0;
 let health: http.Server;
 let healthPort = 0;
-let healthBody = '{"ok":true,"version":"0.1.0","dbPath":"data/agentcrm.db"}';
 
 const countPeople = (file: string): number => {
   const db = new Database(file, { readonly: true, fileMustExist: true });
@@ -38,7 +40,7 @@ beforeAll(async () => {
   health = http.createServer((request, response) => {
     if (request.url === '/api/health') {
       response.setHeader('content-type', 'application/json');
-      response.end(healthBody);
+      response.end('{"ok":true}');
     } else {
       response.statusCode = 404;
       response.end();
@@ -53,15 +55,6 @@ afterAll(async () => {
   await new Promise((resolve) => health.close(resolve));
   rmSync(root, { recursive: true, force: true });
 });
-
-// A port nothing listens on: bind to a free one, then release it.
-async function closedPort(): Promise<number> {
-  const probe = http.createServer();
-  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
-  const port = (probe.address() as AddressInfo).port;
-  await new Promise((resolve) => probe.close(resolve));
-  return port;
-}
 
 function makeLiveDatabase(name: string): string {
   const directory = path.join(root, name);
@@ -116,24 +109,56 @@ describe('restore', () => {
     snapshot = (await backupDatabase({ databasePath: sourcePath, directory: path.join(root, 'snapshots'), now: fixedNow })).path;
   });
 
-  it('refuses while a server answers on the port, and changes nothing', async () => {
+  it('refuses to replace a database open on a dynamically assigned HTTP port', async () => {
     const live = makeLiveDatabase('live-running');
-    const before = readFileSync(live);
-    const error = await restoreDatabase({ snapshot, databasePath: live, port: healthPort }).catch((caught: unknown) => caught);
-    expect(error).toBeInstanceOf(AppError);
-    expect((error as Error).message).toContain(`server is running on port ${healthPort}`);
-    expect(readFileSync(live).equals(before)).toBe(true);
-    expect(readdirSync(path.dirname(live))).toEqual(['agentcrm.db', 'agentcrm.db-shm', 'agentcrm.db-wal'].filter((name) => existsSync(path.join(path.dirname(live), name))));
+    const server = await startServer({ databasePath: live, port: 0 });
+    try {
+      const before = readFileSync(live);
+      await expect(restoreDatabase({ snapshot, databasePath: live })).rejects.toThrow(/This database is open/);
+      expect(readFileSync(live).equals(before)).toBe(true);
+    } finally {
+      await server.close();
+    }
+    await expect(restoreDatabase({ snapshot, databasePath: live })).resolves.toMatchObject({ moved: expect.any(Array) });
   });
 
-  it('does not treat another service on the port as the AgentCRM server', async () => {
-    const live = makeLiveDatabase('live-other-service');
-    healthBody = '{"hello":"world"}';
+  it('refuses to replace a database open by a separate stdio MCP process', async () => {
+    const live = makeLiveDatabase('live-mcp');
+    const client = new Client({ name: 'restore-lock-test', version: '1.0.0' });
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: ['--import', 'tsx', path.join(packageRoot, 'src', 'cli.ts'), 'mcp'],
+      cwd: packageRoot,
+      env: { ...(process.env as Record<string, string>), AGENTCRM_DB: live },
+      stderr: 'ignore',
+    });
+    await client.connect(transport);
     try {
-      const result = await restoreDatabase({ snapshot, databasePath: live, port: healthPort, now: fixedNow });
-      expect(result.moved.length).toBeGreaterThan(0);
+      await expect(restoreDatabase({ snapshot, databasePath: live })).rejects.toThrow(/This database is open/);
+      expect(countPeople(live)).toBe(0);
     } finally {
-      healthBody = '{"ok":true,"version":"0.1.0","dbPath":"data/agentcrm.db"}';
+      await client.close();
+    }
+    await expect(restoreDatabase({ snapshot, databasePath: live })).resolves.toMatchObject({ moved: expect.any(Array) });
+  });
+
+  it('allows shared openers but blocks openers and other restores while restore holds the lock', async () => {
+    const live = makeLiveDatabase('live-locked');
+    const a = openDatabase(live);
+    const b = openDatabase(live);
+    try {
+      await expect(restoreDatabase({ snapshot, databasePath: live })).rejects.toThrow(/This database is open/);
+    } finally {
+      a.close();
+      b.close();
+    }
+    const release = acquireDatabaseLock(live, 'exclusive');
+    try {
+      expect(() => openDatabase(live)).toThrow(/A restore is running/);
+      await expect(backupDatabase({ databasePath: live })).rejects.toThrow(/A restore is running/);
+      await expect(restoreDatabase({ snapshot, databasePath: live })).rejects.toThrow(/another restore is running/);
+    } finally {
+      release();
     }
   });
 
@@ -146,7 +171,7 @@ describe('restore', () => {
     const edit = new Database(newer);
     edit.prepare("INSERT INTO migrations (name, applied_at) VALUES ('999_from_the_future.sql', '2030-01-01T00:00:00.000Z')").run();
     edit.close();
-    await expect(restoreDatabase({ snapshot: newer, databasePath: live, port: await closedPort() })).rejects.toThrow(
+    await expect(restoreDatabase({ snapshot: newer, databasePath: live })).rejects.toThrow(
       /newer version of AgentCRM.*999_from_the_future\.sql/,
     );
     expect(countPeople(live)).toBe(0);
@@ -155,17 +180,16 @@ describe('restore', () => {
 
   it('refuses files that are not AgentCRM databases', async () => {
     const live = makeLiveDatabase('live-bad');
-    const port = await closedPort();
     const text = path.join(root, 'notes.txt');
     writeFileSync(text, 'not a database, just some text that is longer than a header would be.'.repeat(5));
-    await expect(restoreDatabase({ snapshot: text, databasePath: live, port })).rejects.toThrow(/not an AgentCRM database|cannot be opened/);
+    await expect(restoreDatabase({ snapshot: text, databasePath: live })).rejects.toThrow(/not an AgentCRM database|cannot be opened/);
     const other = path.join(root, 'other.db');
     const db = new Database(other);
     db.exec('CREATE TABLE things (id INTEGER)');
     db.close();
-    await expect(restoreDatabase({ snapshot: other, databasePath: live, port })).rejects.toThrow(/is not an AgentCRM database/);
-    await expect(restoreDatabase({ snapshot: path.join(root, 'nope.db'), databasePath: live, port })).rejects.toThrow(/Cannot read/);
-    await expect(restoreDatabase({ snapshot: live, databasePath: live, port })).rejects.toThrow(/live database/);
+    await expect(restoreDatabase({ snapshot: other, databasePath: live })).rejects.toThrow(/is not an AgentCRM database/);
+    await expect(restoreDatabase({ snapshot: path.join(root, 'nope.db'), databasePath: live })).rejects.toThrow(/Cannot read/);
+    await expect(restoreDatabase({ snapshot: live, databasePath: live })).rejects.toThrow(/live database/);
   });
 
   it('moves the current files aside and swaps the snapshot in', async () => {
@@ -178,7 +202,7 @@ describe('restore', () => {
     // Stand in for the files a crashed server leaves behind.
     writeFileSync(`${live}-wal`, 'wal');
     writeFileSync(`${live}-shm`, 'shm');
-    const result = await restoreDatabase({ snapshot, databasePath: live, port: await closedPort(), now: fixedNow });
+    const result = await restoreDatabase({ snapshot, databasePath: live, now: fixedNow });
 
     const asideDb = path.join(liveDirectory, 'agentcrm.pre-restore-20260301T090000Z.db');
     expect(existsSync(asideDb)).toBe(true);
@@ -201,7 +225,7 @@ describe('restore', () => {
 
   it('works when there is no current database', async () => {
     const live = path.join(root, 'live-empty', 'agentcrm.db');
-    const result = await restoreDatabase({ snapshot, databasePath: live, port: await closedPort() });
+    const result = await restoreDatabase({ snapshot, databasePath: live });
     expect(result.moved).toEqual([]);
     expect(result.message).toContain('no previous database');
     expect(countPeople(live)).toBe(peopleInSource);
@@ -220,7 +244,7 @@ describe('crm backup and crm restore', () => {
     });
   }
 
-  it('backs up from the command line, then refuses to restore while the port answers, then restores', async () => {
+  it('backs up and restores from the command line while an unrelated service answers on the configured port', async () => {
     const directory = path.join(root, 'cli-backups');
     const backup = await crm(['backup', directory], { AGENTCRM_DB: sourcePath });
     expect(backup.code).toBe(0);
@@ -230,12 +254,17 @@ describe('crm backup and crm restore', () => {
     expect(countPeople(file)).toBe(peopleInSource);
 
     const live = makeLiveDatabase('cli-live');
-    const refused = await crm(['restore', file], { AGENTCRM_DB: live, AGENTCRM_PORT: String(healthPort) });
-    expect(refused.code).toBe(1);
-    expect(refused.err).toContain('Stop it first');
-    expect(countPeople(live)).toBe(0);
+    const open = openDatabase(live);
+    try {
+      const refused = await crm(['restore', file], { AGENTCRM_DB: live, AGENTCRM_PORT: String(healthPort) });
+      expect(refused.code).toBe(1);
+      expect(refused.err).toContain('Close the desktop app, API server, and MCP sessions');
+      expect(countPeople(live)).toBe(0);
+    } finally {
+      open.close();
+    }
 
-    const restored = await crm(['restore', file], { AGENTCRM_DB: live, AGENTCRM_PORT: String(await closedPort()) });
+    const restored = await crm(['restore', file], { AGENTCRM_DB: live, AGENTCRM_PORT: String(healthPort) });
     expect(restored.code).toBe(0);
     expect(restored.out).toContain('Restored the database from');
     expect(countPeople(live)).toBe(peopleInSource);

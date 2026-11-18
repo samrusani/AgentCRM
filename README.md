@@ -91,7 +91,7 @@ claude mcp add agentcrm -- npm run --silent mcp --prefix apps/server
 
 Run it from the repository root, or make the `--prefix` path absolute. Keep `--silent`: it stops npm from writing its own output into the stdio channel the MCP protocol uses. Other MCP clients, Codex included, can launch the same command from their config.
 
-The client spawns the MCP server as a child process per session and it dies with that session. Two consequences: a "Transport closed" error means the process ended (for example it was killed, or the machine slept), and the fix is starting a new client session, which spawns a fresh one; and after updating AgentCRM, start a new client session too, so the agent runs the new code rather than a server spawned before the update. A server you forget to restart notices on its own: it checks before every tool call that the database schema still matches the code it started with, and once the schema has changed (an update ran, or a backup was restored) every tool answers the error `stale_server` naming that same fix, and its job worker stands down so a current process advances runs.
+The client spawns the MCP server as a child process per session and it dies with that session. Two consequences: a "Transport closed" error means the process ended (for example it was killed, or the machine slept), and the fix is starting a new client session, which spawns a fresh one; and after updating AgentCRM, start a new client session too, so the agent runs the new code rather than a server spawned before the update. A server you forget to restart notices on its own: it checks before every tool call that the database schema still matches the code it started with, and once the schema has changed (an update ran) every tool answers the error `stale_server` naming that same fix, and its job worker stands down so a current process advances runs.
 
 ## What works today
 
@@ -161,6 +161,10 @@ Every row below is backed by tests: 4,785 across the server (3,077), the web app
 - **Rule bound follow-ups.** When you prepare a send, you can attach up to five pre-written nudges with waits, by hand or from a saved sequence. The one approval covers their exact text, and the sequence is never consulted again after it.
 - **Follow-ups stop on their own.** They stop on any reply, bounce, opt out, or suppression. The server refuses to send before it has freshly synced the mailbox, and you can stop them at any time.
 - **Agents cannot send.** MCP, chat, and the CLI cannot approve or submit a send.
+
+### Restoring a backup
+
+Close the desktop app, API server, and MCP sessions using the database, then run `npm run restore -- <snapshot>`. Restore keeps the previous database files alongside the replacement. On startup, the API holds restored outbound messages and stops their follow-up rules. Check the sending mailbox, dismiss the old items, and prepare any messages still needed for fresh approval.
 
 ### What the browser extension does
 

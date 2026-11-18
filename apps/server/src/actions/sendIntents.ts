@@ -435,6 +435,7 @@ interface IntentRow {
   subject: string;
   body: string;
   payload_hash: string;
+  restore_held: number;
   status: string;
   approval_id: string | null;
   created_at: string;
@@ -525,6 +526,7 @@ export function approveSendReview(tx: Tx, approval: Approval): ApprovalOutcome {
       skipped.push({ intentId: row.id, personName: message.personName, reason: 'cancelled' });
       continue;
     }
+    if (row.restore_held) throw conflict('This send review was held after a backup restore. Reject it and check the sending mailbox before preparing a new send.');
     if (row.status !== 'awaiting_approval') {
       throw conflict(`A message in this approval is ${row.status.replace('_', ' ')}, so nothing was approved.`);
     }
@@ -1073,7 +1075,7 @@ async function reconcileIntentOnce(ctx: ActionContext, payload: Record<string, u
   const attempt = Number(payload.attempt ?? 0);
   const claim = mutate(ctx, (tx): ReconcileClaim | null => {
     const row = tx.db.prepare('SELECT * FROM send_intent WHERE id = ? AND workspace_id = ?').get(intentId, tx.workspaceId) as IntentRow | undefined;
-    if (!row || row.status !== 'unknown') return null;
+    if (!row || row.status !== 'unknown' || row.restore_held) return null;
     if (duplicateProtectionExpired(row, tx.now())) {
       stopCheckingIn(tx, row, windowEndedSentence(row.provider), checksAreReadOnly(row.provider) ? 'search_window_ended' : 'idempotency_expired');
       return null;
