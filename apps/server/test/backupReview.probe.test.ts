@@ -801,8 +801,8 @@ describe('9 migration 035', () => {
     try {
       db.exec('CREATE TABLE migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
       const files = readdirSync(migrationsDirectory).filter((name) => name.endsWith('.sql')).sort();
-      expect(files.at(-4)).toBe('035_backblaze.sql');
-      for (const file of files.slice(0, -4)) {
+      expect(files.at(-5)).toBe('035_backblaze.sql');
+      for (const file of files.slice(0, -5)) {
         db.exec(readFileSync(path.join(migrationsDirectory, file), 'utf8'));
         db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, ?)').run(file, '2026-01-01T00:00:00.000Z');
       }
