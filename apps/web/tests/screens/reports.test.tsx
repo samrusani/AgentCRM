@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Route, Routes, useLocation } from 'react-router-dom';
+import { handleServerEvent } from '../../src/api/events';
 import { Reports } from '../../src/screens/Reports';
 import { AppShell } from '../../src/shell/AppShell';
 import { Router } from '../helpers';
@@ -26,7 +27,8 @@ vi.mock('../../src/lib/ui', () => ({
   useMediaQuery: () => false,
   NARROW_QUERY: '(max-width: 899px)',
 }));
-vi.mock('../../src/api/events', () => ({
+vi.mock('../../src/api/events', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/api/events')>()),
   useServerEvents: () => {},
   useEventConnection: () => 'open',
 }));
@@ -87,8 +89,7 @@ function LocationProbe() {
   return <output data-testid="url">{location.pathname + location.search}</output>;
 }
 
-function renderAt(url: string) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderAt(url: string, client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   return render(
     <QueryClientProvider client={client}>
       <Router initialEntries={[url]}>
@@ -236,3 +237,18 @@ describe('Reports screen', () => {
     expect(screen.queryAllByRole('button')).toEqual([]);
   });
 });
+
+
+it.each(['record_updated', 'record_deleted', 'run_updated', 'approval_updated'] as const)(
+  'refreshes an open Reports screen after a %s event',
+  async (eventName) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderAt('/reports', client);
+    const pipeline = await screen.findByRole('region', { name: 'Pipeline now' });
+    expect(await within(pipeline).findByText(/4 open, /)).toBeInTheDocument();
+    reportBody = { ...FULL, pipeline: [{ ...FULL.pipeline[0], openCount: 9 }, FULL.pipeline[1]] };
+
+    handleServerEvent(client, eventName, { entityType: 'opportunity', entityId: 'opp_one', runId: 'run_one' });
+    expect(await within(pipeline).findByText(/9 open, /)).toBeInTheDocument();
+  },
+);

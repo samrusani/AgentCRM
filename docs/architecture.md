@@ -685,7 +685,7 @@ Values are fields, not a parallel system. In every fields envelope that edits a 
 
 ## Reports
 
-Reports answer, from the local database alone, how the pipeline and the intake are doing. Everything is computed live from existing tables at read time: no new tables, no snapshots, no migration, no model call, and no network. Numbers derived from list prices or usage estimates keep the word estimate next to them, as everywhere else.
+Reports answer, from the local database alone, how the pipeline and the intake are doing. Everything is computed live from existing tables at read time: no new tables, no snapshots, no migration, no model call, and no network. Numbers derived from list prices or usage estimates keep the word estimate next to them, as everywhere else. Record updates and deletions, run updates, and approval updates invalidate cached report queries so open Reports screens refetch.
 
 `GET /api/reports?days=&pipelineId=` answers one JSON shape for a period (`days` one of 30, 90, 365, or absent for all time; `pipelineId` scopes the pipeline sections and defaults to the first pipeline):
 

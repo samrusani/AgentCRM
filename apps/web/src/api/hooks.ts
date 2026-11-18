@@ -131,8 +131,7 @@ export function useHealth() {
   return useQuery({ queryKey: ['health'], queryFn: api.health });
 }
 
-// Reports are computed live on the server and never written to, so there is nothing to invalidate. A short stale
-// time keeps a period switch back and forth from refetching.
+// Record, run, and approval events refresh Reports. A short stale time reuses results when switching periods.
 export function useReports(days: number | null, pipelineId: string | undefined, enabled = true) {
   return useQuery({
     queryKey: ['reports', days, pipelineId ?? ''],
