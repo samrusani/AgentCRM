@@ -71,6 +71,8 @@ Rules:
 - Pause and cancel are user actions. Cancel is final.
 - Counts report `{ processed, found, flagged }` and update as steps complete. A run that cannot meet its requested scope finishes as `partial` with honest counts, never with invented results.
 
+The API closes open `/api/events` streams and removes their subscriptions during Fastify’s `preClose` hook, before it waits for connections to finish.
+
 ## The worker lease
 
 Several processes can run a worker tick against one database file: the API server, and every MCP server a client spawns. Job claims are atomic (one immediate transaction flips queued rows to running), so a job never runs twice, but without coordination any process can win a claim, and a long lived MCP process left over from before a deploy then executes steps with stale code. The worker lease removes that race: exactly one process's worker claims jobs at a time.
