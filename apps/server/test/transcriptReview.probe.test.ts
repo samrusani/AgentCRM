@@ -370,7 +370,7 @@ describe('2. verification bypass', () => {
 });
 
 describe('3. refactor drift between the post path and the transcript path', () => {
-  const entry = (extra: Record<string, unknown> = {}) => ({ kind: 'person' as const, name: 'Ada Quill', title: null, company: null, location: null, linkedinUrl: null as string | null, orgKind: null, quote: 'Ada Quill spoke.', ...extra });
+  const entry = (extra: { linkedinUrl?: string; email?: string } = {}) => ({ kind: 'person' as const, name: 'Ada Quill', title: null, company: null, location: null, linkedinUrl: null as string | null, orgKind: null, quote: 'Ada Quill spoke.', ...extra });
 
   it('KILLS: with post parameters an absent link DROPS the entry; with transcript parameters it only STRIPS the link', () => {
     const text = 'Ada Quill spoke.';
@@ -428,7 +428,7 @@ describe('4. money and the model call', () => {
       expect(rows).toHaveLength(2);
       expect(rows.every((row) => row.pending === 0)).toBe(true);
       const sum = rows.reduce((total, row) => total + row.estimated_usd, 0);
-      expect((detail.counts as Record<string, number>).estimatedUsd).toBeCloseTo(sum, 10);
+      expect(detail.counts.estimatedUsd).toBeCloseTo(sum, 10);
     } finally {
       await disconnectModelConnector(env.ctx, 'deepseek');
       setModelProvider(env.ctx, { kind: 'anthropic' });
@@ -455,7 +455,7 @@ describe('4. money and the model call', () => {
     const detail = detailOf(run.id);
     expect(detail.status).toBe('cancelled');
     expect(env.db.prepare('SELECT pending FROM model_call WHERE run_id = ?').all(run.id)).toEqual([{ pending: 0 }]);
-    expect((detail.counts as Record<string, number>).estimatedUsd).toBeGreaterThan(0);
+    expect(detail.counts.estimatedUsd).toBeGreaterThan(0);
     expect(detail.scope).not.toHaveProperty('transcriptText');
     expect(detail.scope).not.toHaveProperty('extraction');
     expect(detail.scope).not.toHaveProperty('extractionResult');

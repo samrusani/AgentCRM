@@ -314,7 +314,7 @@ describe('6. merge, re-point, delete interplay', () => {
       createActivity(e.ctx, { entityType: 'person', entityId: p.id, body: 'resetnote' });
       createTask(e.ctx, { title: 'resettask' });
       createMeeting(e.ctx, { title: 'resetmeeting', startsAt: start });
-      resetRecordData(e.db, e.workspaceId);
+      resetRecordData(e.db);
       const left = (t: string) => (e.db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n;
       console.log('PROBE after resetRecordData: activity', left('activity'), 'activity_search', left('activity_search'), 'task', left('task'), 'task_search', left('task_search'), 'meeting', left('meeting'), 'meeting_search', left('meeting_search'));
       expect(left('activity_search')).toBe(left('activity'));

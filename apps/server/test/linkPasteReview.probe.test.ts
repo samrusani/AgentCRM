@@ -178,7 +178,7 @@ const post1 = 'https://www.linkedin.com/posts/jane-doe_topic-activity-7100000000
 
 function fakeFetch(routes: Record<string, Route>) {
   const calls: string[] = [];
-  const impl = (async (input: RequestInfo | URL) => {
+  const impl = (async (input: Parameters<typeof fetch>[0]) => {
     const url = input instanceof URL ? input.href : String(input);
     calls.push(url);
     const route = routes[url];

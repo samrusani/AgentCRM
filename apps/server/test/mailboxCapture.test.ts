@@ -107,8 +107,8 @@ function promotions(env: TestEnvironment, personId: string): string[] {
 }
 
 function stagedRows(env: TestEnvironment, runId: string) {
-  const batch = env.db.prepare('SELECT * FROM import_batch WHERE run_id = ?').get(runId) as Record<string, string>;
-  const rows = env.db.prepare('SELECT * FROM import_row WHERE batch_id = ? ORDER BY seq').all(batch.id) as Record<string, string>[];
+  const batch = env.db.prepare('SELECT * FROM import_batch WHERE run_id = ?').get(runId) as { id: string; source_kind: string; source_ref: string };
+  const rows = env.db.prepare('SELECT * FROM import_row WHERE batch_id = ? ORDER BY seq').all(batch.id) as { raw: string; mapped: string; status: string; reason: string | null }[];
   return { batch, rows };
 }
 

@@ -2485,7 +2485,7 @@ describe('short link resolver', () => {
   function fakeFetch(routes: Record<string, Route>) {
     const calls: { url: string; init: RequestInit | undefined }[] = [];
     const bodyReads: string[] = [];
-    const impl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const impl = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       const url = input instanceof URL ? input.href : String(input);
       calls.push({ url, init });
       const route = routes[url];
@@ -2615,7 +2615,7 @@ describe('short link resolver', () => {
   it('fails on a timeout or a network error and does not retry', async () => {
     for (const name of ['TimeoutError', 'AbortError']) {
       const calls: string[] = [];
-      const timedOut = (async (input: RequestInfo | URL) => {
+      const timedOut = (async (input: Parameters<typeof fetch>[0]) => {
         calls.push(String(input));
         throw Object.assign(new Error('The operation timed out.'), { name });
       }) as typeof fetch;
@@ -2640,7 +2640,7 @@ describe('lead capture with a lnkd.in short link', () => {
 
   function useShortLinks(routes: Record<string, { status: number; location?: string }>) {
     fetched = [];
-    setShortLinkFetch((async (input: RequestInfo | URL) => {
+    setShortLinkFetch((async (input: Parameters<typeof fetch>[0]) => {
       const url = input instanceof URL ? input.href : String(input);
       fetched.push(url);
       const route = routes[url];
@@ -3020,7 +3020,7 @@ describe('pasted capture', () => {
 
     it('never fetches or resolves the provenance link, even a lnkd.in one', async () => {
       const fetched: string[] = [];
-      setShortLinkFetch((async (input: RequestInfo | URL) => {
+      setShortLinkFetch((async (input: Parameters<typeof fetch>[0]) => {
         fetched.push(String(input));
         throw new Error('The network must not be used.');
       }) as typeof fetch);
