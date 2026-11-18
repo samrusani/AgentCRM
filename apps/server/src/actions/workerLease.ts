@@ -31,6 +31,7 @@ export interface SettleWorkerLeaseOptions {
   // Tests replace the pid check and shorten the timeout. Production uses process.kill and the configured timeout.
   isPidAlive?: (pid: number) => boolean;
   timeoutMilliseconds?: number;
+  onTakeover?: (canRecover: boolean) => void;
 }
 
 // The holder token is unique per process start, so a restarted process never mistakes an old row for its own.
@@ -58,11 +59,13 @@ export function settleWorkerLease(
 ): boolean {
   const pidAlive = options.isPidAlive ?? isPidAlive;
   const timeout = options.timeoutMilliseconds ?? workerLeaseTimeoutMilliseconds;
-  return ctx.db
+  let takeover: boolean | undefined;
+  const held = ctx.db
     .transaction(() => {
       const now = ctx.now();
       const row = ctx.db.prepare("SELECT * FROM worker_lease WHERE id = 'worker'").get() as WorkerLeaseRow | undefined;
-      const take = (): boolean => {
+      const take = (canRecover: boolean): boolean => {
+        takeover = canRecover;
         ctx.db
           .prepare(
             "INSERT INTO worker_lease (id, holder, kind, pid, acquired_at, renewed_at) VALUES ('worker', ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET holder = excluded.holder, kind = excluded.kind, pid = excluded.pid, acquired_at = excluded.acquired_at, renewed_at = excluded.renewed_at",
@@ -70,7 +73,7 @@ export function settleWorkerLease(
           .run(identity.holder, identity.kind, identity.pid, now, now);
         return true;
       };
-      if (!row) return take();
+      if (!row) return take(true);
       if (row.holder === identity.holder) {
         ctx.db.prepare("UPDATE worker_lease SET renewed_at = ? WHERE id = 'worker' AND holder = ?").run(now, identity.holder);
         return true;
@@ -80,12 +83,14 @@ export function settleWorkerLease(
       // queue for longer than the timeout.
       const age = Date.parse(now) - Date.parse(row.renewed_at);
       const fresh = Math.abs(age) <= timeout;
-      if (!fresh || !pidAlive(row.pid)) return take();
+      if (!fresh || !pidAlive(row.pid)) return take(true);
       // The API server is the preferred worker, so it takes a fresh lease from an mcp process and from nobody else.
-      if (identity.kind === 'server' && row.kind === 'mcp') return take();
+      if (identity.kind === 'server' && row.kind === 'mcp') return take(false);
       return false;
     })
     .immediate();
+  if (takeover !== undefined) options.onTakeover?.(takeover);
+  return held;
 }
 
 // A clean stop hands the lease over on the next tick. A row held by someone else is left alone.

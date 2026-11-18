@@ -718,30 +718,35 @@ describe('scope', () => {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('crash recovery', () => {
-  it('ACCEPTED: a starting server re-queues a job an mcp holder is still running, then claims it, so both execute that step (documented step idempotence, but the contract wording is too strong)', async () => {
+  it('keeps a live MCP claim running when the preferred API worker takes over', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    // The mcp is the holder and is mid-job: its claim left the job in "running" (as claimDueJobs does).
     const mcp = startWorker(env.ctx, () => undefined, { recover: false, mail: false, leaseKind: 'mcp' });
     await vi.advanceTimersByTimeAsync(300);
-    expect(readWorkerLease(env.ctx)!.kind).toBe('mcp');
-    addJob('job_recover_midflight', 'demo_run_step', 'running', 1);
+    const id = 'job_recover_midflight';
+    addJob(id, 'demo_run_step', 'running', 1);
 
-    // The server starts. recoverStaleJobs runs inside startWorker, before any lease settle, and cannot tell whose job it is.
     const server = startWorker(env.ctx, () => undefined, { recover: true, mail: false, leaseKind: 'server' });
-    expect(jobRow('job_recover_midflight').status).toBe('queued');
-
-    // The server's first tick preempts the fresh mcp lease and claims the job the mcp has not finished.
+    expect(jobRow(id)).toEqual({ status: 'running', attempts: 1 });
     await vi.advanceTimersByTimeAsync(300);
     expect(readWorkerLease(env.ctx)!.kind).toBe('server');
-    expect(jobRow('job_recover_midflight').attempts).toBe(2);
-    mcp.stop();
-    server.stop();
-    // Reasoning: jobs.ts says "Steps are idempotent per run state, so retry it", and recovery has always re-queued every
-    // running row regardless of owner, so this predates the lease and is the same exposure two plain servers had.
-    // It is not a lease defect. But the contract sentence "jobs it already claimed finish on it, and the atomic claim
-    // keeps double execution impossible either way" is false across a recovery start: recovery un-claims the job.
-    // The contract should say: recovery at server startup re-queues running jobs, so a step in flight on another
-    // process can run twice; steps are written to tolerate that.
+    expect(jobRow(id)).toEqual({ status: 'running', attempts: 1 });
+    await mcp.stop();
+    await server.stop();
+  });
+
+  it('recovers abandoned jobs after the previous API worker lease expires', () => {
+    const timeout = 1000;
+    settle(ctxAt(0), serverA);
+    const id = 'job_abandoned';
+    addJob(id, 'demo_run_step', 'running', 1);
+    const tick = createWorkerTick(ctxAt(timeout + 1), serverB, (error) => { throw error; }, {
+      mail: false,
+      recover: true,
+      lease: { ...alive, timeoutMilliseconds: timeout },
+    });
+    tick();
+    expect(readWorkerLease(env.ctx)?.holder).toBe(serverB.holder);
+    expect(jobRow(id).attempts).toBe(2);
   });
 
   it('KILLS: an mcp worker (recover false) never re-queues running jobs at start', () => {

@@ -10,10 +10,12 @@ import {
   prepareSendIntents,
   recoverSubmittingIntents,
   tickFollowupRules,
+  newWorkerLeaseIdentity,
+  settleWorkerLease,
 } from '../src/actions/index.js';
 import { submitNextIntent } from '../src/actions/sendIntents.js';
 import { AppError } from '../src/errors.js';
-import { processMailJobs } from '../src/jobs/worker.js';
+import { processMailJobs, startWorker } from '../src/jobs/worker.js';
 import { getConnector } from '../src/queries/connectors.js';
 import { requireWorkspace } from '../src/queries/workspace.js';
 import { seedDatabase } from '../src/seed/seed.js';
@@ -106,6 +108,25 @@ it('holds restored mail even when the provider accepted it after the snapshot', 
     expect(stub.state.sendAttempts).toHaveLength(1);
   } finally {
     await server.close();
+  }
+});
+
+it('leaves a live worker’s in-flight send alone on a second startup', async () => {
+  const env = await freshEnv();
+  const intentId = queueOne(env, 'Maren', realAddress);
+  settleWorkerLease(env.ctx, newWorkerLeaseIdentity('server'));
+  stub.state.sendScript.push({ type: 'process_then_delay', delayMs: 500 });
+  const sending = submitNextIntent(env.ctx);
+  expect(statusOf(env, intentId)).toBe('submitting');
+
+  const second = startWorker(env.ctx, (error) => { throw error; });
+  try {
+    expect(statusOf(env, intentId)).toBe('submitting');
+    expect(await sending).toBe(true);
+    expect(statusOf(env, intentId)).toBe('accepted');
+    expect(stub.state.sendAttempts).toHaveLength(1);
+  } finally {
+    await second.stop();
   }
 });
 

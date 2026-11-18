@@ -29,6 +29,7 @@ import {
   processQueuedIntents,
   qualifyJobKind,
   reconcileIntent,
+  readWorkerLease,
   recoverStaleJobs,
   recoverSubmittingIntents,
   releaseWorkerLease,
@@ -166,8 +167,9 @@ export async function processDraftJobs(ctx: ActionContext): Promise<number> {
 
 // Mail sending is its own lane: queued messages one at a time, then reconciliation of sends with an unknown outcome.
 // The poll of the inbox is a separate lane (syncMailIfDue) because it can take several seconds.
-export async function processMailJobs(ctx: ActionContext): Promise<number> {
-  let handled = await processQueuedIntents(ctx);
+export async function processMailJobs(ctx: ActionContext, canClaim: () => boolean = () => true): Promise<number> {
+  let handled = await processQueuedIntents(ctx, 5, canClaim);
+  if (!canClaim()) return handled;
   const jobs = claimDueJobs(ctx, 10, { kinds: [mailReconcileJobKind] });
   for (const job of jobs) {
     const jobContext: ActionContext = { ...ctx, workspaceId: String(job.payload.workspaceId), actor: 'system' };
@@ -188,11 +190,12 @@ export async function processAllJobs(ctx: ActionContext): Promise<number> {
 }
 
 export interface Worker {
-  stop: () => void;
+  stop: () => Promise<void>;
 }
 
 export interface WorkerTickOptions {
   mail?: boolean;
+  recover?: boolean;
   // Tests pass these to fake pid liveness and a short timeout. Production uses the defaults.
   lease?: SettleWorkerLeaseOptions;
 }
@@ -204,17 +207,29 @@ export function createWorkerTick(
   identity: WorkerLeaseIdentity,
   onError: (error: unknown) => void,
   options: WorkerTickOptions = {},
-): () => void {
+) {
   const mail = options.mail ?? true;
   let apifyBusy = false;
   let leadCaptureBusy = false;
   let draftBusy = false;
-  let mailBusy = false;
+  let activeMail: Promise<unknown> | undefined;
+  let stopping = false;
+  let recoveryDue = false;
   let syncBusy = false;
   let backupBusy = false;
-  return () => {
+  const lease = {
+    ...options.lease,
+    onTakeover: (canRecover: boolean) => { recoveryDue = Boolean(options.recover && canRecover); },
+  };
+  const tick = () => {
+    if (stopping && !activeMail) return;
     try {
-      if (!settleWorkerLease(ctx, identity, options.lease)) return;
+      if (!settleWorkerLease(ctx, identity, lease) || stopping) return;
+      if (recoveryDue) {
+        recoverStaleJobs(ctx);
+        if (mail) recoverSubmittingIntents(ctx);
+        recoveryDue = false;
+      }
     } catch (error) {
       onError(error);
       return;
@@ -250,12 +265,11 @@ export function createWorkerTick(
           draftBusy = false;
         });
     }
-    if (mail && !mailBusy) {
-      mailBusy = true;
-      processMailJobs({ ...ctx, actor: 'system' })
+    if (mail && !activeMail) {
+      activeMail = processMailJobs({ ...ctx, actor: 'system' }, () => !stopping && readWorkerLease(ctx)?.holder === identity.holder)
         .catch(onError)
         .finally(() => {
-          mailBusy = false;
+          activeMail = undefined;
         });
     }
     // The follow-up lane is plain database work, so it runs inline. It keeps its own pace, which follows the mail poll.
@@ -284,9 +298,15 @@ export function createWorkerTick(
         });
     }
   };
+  return Object.assign(tick, {
+    stop: (): Promise<unknown> | undefined => {
+      stopping = true;
+      return activeMail;
+    },
+  });
 }
 
-// Only the main server process recovers jobs left in "running" by a crash. Other processes must not.
+// Only the main server process recovers abandoned claims.
 export function startWorker(
   ctx: ActionContext,
   onError: (error: unknown) => void,
@@ -295,13 +315,8 @@ export function startWorker(
   options: { recover?: boolean; mail?: boolean; leaseKind?: WorkerLeaseKind; guard?: { check(): void } } = {},
 ): Worker {
   const mail = options.mail ?? true;
-  if (options.recover ?? true) {
-    recoverStaleJobs(ctx);
-    // A message that was on the wire when the process stopped has an unknown outcome.
-    if (mail) recoverSubmittingIntents(ctx);
-  }
   const identity = newWorkerLeaseIdentity(options.leaseKind ?? 'server');
-  const tick = createWorkerTick(ctx, identity, onError, { mail });
+  const tick = createWorkerTick(ctx, identity, onError, { mail, recover: options.recover ?? true });
   let tripped = false;
   const release = (): void => {
     try {
@@ -324,11 +339,22 @@ export function startWorker(
     }
     tick();
   }, workerTickMilliseconds);
+  let stopped: Promise<void> | undefined;
+  const finish = () => {
+    clearInterval(timer);
+    if (tripped) release();
+    else releaseWorkerLease(ctx, identity);
+  };
   return {
     stop: () => {
-      clearInterval(timer);
-      if (tripped) release();
-      else releaseWorkerLease(ctx, identity);
+      if (stopped) return stopped;
+      const activeMail = tick.stop();
+      if (activeMail) stopped = activeMail.then(finish);
+      else {
+        finish();
+        stopped = Promise.resolve();
+      }
+      return stopped;
     },
   };
 }

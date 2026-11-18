@@ -48,9 +48,9 @@ export async function startServer(options: { port?: number; databasePath?: strin
   const stopWatcher = startExternalWatcher(db, bus);
 
   const close = async (): Promise<void> => {
-    worker.stop();
+    const stopped = worker.stop();
     stopWatcher();
-    await app.close();
+    await Promise.all([app.close(), stopped]);
     db.close();
   };
 

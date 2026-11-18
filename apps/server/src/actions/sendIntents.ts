@@ -1272,9 +1272,9 @@ export function staleSubmittingMilliseconds(): number {
 }
 
 // Submits queued intents one at a time, oldest first, up to `limit` per call.
-export async function processQueuedIntents(ctx: ActionContext, limit = 5): Promise<number> {
+export async function processQueuedIntents(ctx: ActionContext, limit = 5, canClaim: () => boolean = () => true): Promise<number> {
   recoverSubmittingIntents(ctx, staleSubmittingMilliseconds());
   let submitted = 0;
-  while (submitted < limit && (await submitNextIntent(ctx))) submitted += 1;
+  while (submitted < limit && canClaim() && (await submitNextIntent(ctx))) submitted += 1;
   return submitted;
 }

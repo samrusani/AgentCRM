@@ -160,6 +160,7 @@ Every row below is backed by tests: 4,785 across the server (3,077), the web app
 - **No double sends.** Submits reuse the provider's duplicate protection, so retries do not send twice within its roughly one day window. If an attempt stays unknown past that window, the app shows it to you. It never retries.
 - **Rule bound follow-ups.** When you prepare a send, you can attach up to five pre-written nudges with waits, by hand or from a saved sequence. The one approval covers their exact text, and the sequence is never consulted again after it.
 - **Follow-ups stop on their own.** They stop on any reply, bounce, opt out, or suppression. The server refuses to send before it has freshly synced the mailbox, and you can stop them at any time.
+- **One sending worker.** A second server waits for the database worker lease before it can recover interrupted sends.
 - **Agents cannot send.** MCP, chat, and the CLI cannot approve or submit a send.
 
 ### Restoring a backup
